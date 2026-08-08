@@ -1,7 +1,8 @@
 # P1-O01 JDK 25 Oracle Test 結果
 
-実行日時: 2026-08-08T00:00:42.800Z
+実行日時: 2026-08-08T01:37:07.221Z
 Dockerイメージ: gradle:9.6.1-jdk25
+対象: OracleP1.java
 
 ## java -version
 ```
