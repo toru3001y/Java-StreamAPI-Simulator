@@ -360,6 +360,162 @@ body {
   color: var(--color-passed);
 }
 
+/* ---- Phase 3: 操作固有状態（§11.2） ---- */
+.op-context-panel {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.op-context {
+  border-top: 1px dashed var(--color-border);
+  padding-top: 8px;
+}
+
+.op-context h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.op-context p {
+  margin: 4px 0;
+  font-size: 0.85rem;
+}
+
+.op-context-label {
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+.op-context-note {
+  color: var(--color-muted);
+  font-size: 0.8rem;
+}
+
+.op-context-code code {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.8rem;
+}
+
+.op-context-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+
+.op-context-list li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.op-context-list li.current {
+  border-color: var(--color-active);
+  background: var(--color-active-bg);
+}
+
+.op-context-key {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.badge-first {
+  border-color: var(--color-passed);
+  color: var(--color-passed);
+}
+
+.badge-duplicate {
+  border-color: var(--color-rejected);
+  color: var(--color-rejected);
+}
+
+.badge-shortcircuit {
+  border-color: var(--color-active);
+  color: var(--color-active);
+  font-weight: 700;
+}
+
+.infinite-source-note {
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  border: 1px dashed var(--color-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 0 0 8px;
+}
+
+/* ---- Phase 3: Side Effectビュー（§11.2。通常結果と視覚的に分離） ---- */
+.side-effect-panel {
+  border-left: 4px solid var(--color-active);
+  background: #fffaf2;
+}
+
+.side-effect-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.badge-side-effect {
+  border-color: var(--color-active);
+  color: var(--color-active);
+}
+
+.side-effect-note {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  margin: 0 0 8px;
+}
+
+.side-effect-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.side-effect-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 2px 8px;
+}
+
+.side-effect-seq {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.side-effect-message {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.85rem;
+  background: var(--color-code-bg);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+
+.side-effect-meta {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+}
+
 .disabled-operation-notes {
   margin: 8px 0 0;
   padding-left: 1.5em;

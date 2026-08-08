@@ -14,6 +14,10 @@ export type ValidationCode =
   | 'TEACHING_CONSTRAINT'
   | 'SNAPSHOT_BUDGET'
   | 'UNBOUNDED_SOURCE'
+  /** 無限sourceの必要要求件数を構造的に保証できない候補（Phase 3指示 §8.2） */
+  | 'UNSAFE_BOUNDEDNESS'
+  /** unordered sourceへのtakeWhile / dropWhile（Phase 3指示 §7.6・§7.7） */
+  | 'UNORDERED_WHILE'
 
 export interface ValidationIssue {
   readonly code: ValidationCode

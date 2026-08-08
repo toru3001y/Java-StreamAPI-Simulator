@@ -1,7 +1,10 @@
 import type { DslPredicate } from './ast'
+import type { ComparatorDsl } from './comparatorAst'
+import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
 import { EMPLOYEE_FIELDS } from '../model/employee'
+import { operatorToJava } from './javaCode'
 
 /**
  * 検証済みDSL / ASTからの自然文説明生成（§9.1）。
@@ -9,25 +12,28 @@ import { EMPLOYEE_FIELDS } from '../model/employee'
  */
 const OPERATOR_TEXT: Readonly<Record<string, string>> = {
   GTE: '以上',
+  LT: '未満',
 }
 
-/** 例: 「ageが30以上かを判定します」 */
+/** 例: 「ageが30以上かを判定します」「現在値nが5未満かを判定します」 */
 export function describePredicate(predicate: DslPredicate): string {
   const opText = OPERATOR_TEXT[predicate.operator]
   if (!opText) throw new Error(`unsupported operator: ${predicate.operator}`)
   if (predicate.value.type !== 'int') {
     throw new Error(`unsupported literal type: ${predicate.value.type}`)
   }
+  if (predicate.kind === 'currentValueCompare') {
+    return `現在値nが${predicate.value.value}${opText}かを判定します`
+  }
   return `${predicate.field}が${predicate.value.value}${opText}かを判定します`
 }
 
-/** 例: 「35 >= 30」（比較の実値表示、ASCII構文） */
+/** 例: 「35 >= 30」「6 < 5」（比較の実値表示、ASCII構文） */
 export function comparisonExpr(predicate: DslPredicate, fieldValue: number): string {
-  if (predicate.operator !== 'GTE') throw new Error(`unsupported operator: ${predicate.operator}`)
   if (predicate.value.type !== 'int') {
     throw new Error(`unsupported literal type: ${predicate.value.type}`)
   }
-  return `${fieldValue} >= ${predicate.value.value}`
+  return `${fieldValue} ${operatorToJava(predicate.operator)} ${predicate.value.value}`
 }
 
 /** 例: 「佐藤.age() → 35」（値遷移はUnicode矢印、§17.4） */
@@ -36,8 +42,32 @@ export function fieldValueFlow(
   elementName: string,
   fieldValue: number,
 ): string {
+  if (predicate.kind === 'currentValueCompare') {
+    return `n → ${fieldValue}`
+  }
   const accessor = EMPLOYEE_FIELDS[predicate.field]?.accessor ?? `${predicate.field}()`
   return `${elementName}.${accessor} → ${fieldValue}`
+}
+
+const DIRECTION_TEXT = { ASC: '昇順', DESC: '降順' } as const
+
+/** Comparator DSLの自然文説明（Phase 3指示 §6.3） */
+export function describeComparator(comparator: ComparatorDsl | null): string {
+  if (!comparator || comparator.kind === 'natural') {
+    return '要素の自然順序（Comparable）で並べ替えます'
+  }
+  const keys = comparator.keys
+    .map((key) => `${key.field}の${DIRECTION_TEXT[key.direction]}`)
+    .join('、次に')
+  return `Employeeを${keys}で並べ替えます`
+}
+
+/** Consumer DSLの自然文説明（Phase 3指示 §6.5） */
+export function describeConsumer(consumer: ConsumerDsl): string {
+  if (consumer.kind === 'printValue') {
+    return '現在値をSystem.out.printlnへ渡します（値は変更しません）'
+  }
+  return `Employeeの${consumer.field}()をSystem.out.printlnへ出力します（値は変更しません）`
 }
 
 /** mapperの自然文説明（Phase 2指示 §7.2） */

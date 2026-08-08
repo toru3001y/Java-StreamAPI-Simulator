@@ -2,9 +2,8 @@ import { OperationCatalog } from './operationCatalog'
 import type { OperationDefinition } from './operationCatalog'
 
 /**
- * Phase 2までのOperation Catalog（Draft v0.8 §7、Phase 2指示 §5）。
- * Phase 3以降の操作（distinct / sorted / limit / skip / takeWhile / dropWhile / peek、
- * 各種終端、Collector）は登録しない。
+ * Phase 3までのOperation Catalog（Draft v0.8 §7、Phase 3指示 §5）。
+ * Phase 4以降の操作（reduce等の終端、Collector）は登録しない。
  */
 
 // ---- source（§5.1） ----
@@ -30,6 +29,15 @@ export const OP_FLAT_MAP = 'flatMap'
 export const OP_FLAT_MAP_TO_INT = 'flatMapToInt'
 export const OP_FLAT_MAP_TO_LONG = 'flatMapToLong'
 export const OP_FLAT_MAP_TO_DOUBLE = 'flatMapToDouble'
+
+// ---- Phase 3 intermediate（指示§5.1） ----
+export const OP_DISTINCT = 'distinct'
+export const OP_SORTED = 'sorted'
+export const OP_LIMIT = 'limit'
+export const OP_SKIP = 'skip'
+export const OP_TAKE_WHILE = 'takeWhile'
+export const OP_DROP_WHILE = 'dropWhile'
+export const OP_PEEK = 'peek'
 
 // ---- terminal ----
 export const OP_TO_LIST = 'toList'
@@ -242,6 +250,125 @@ export function createDefaultCatalog(): OperationCatalog {
       ['各親要素からmapped DoubleStreamを生成し、double子要素を順にflattenする。'],
     ),
   )
+
+  // ---- Phase 3 intermediate（指示§5.1の必須traits） ----
+  catalog.register({
+    operationId: OP_DISTINCT,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATEFUL'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.distinct',
+    visualizationKind: '状態保持型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'REJECTED'],
+    jdkNotes: [
+      'distinctはequalsに基づき重複を除外するstateful中間操作である。',
+      'ordered Streamでは重複のうちencounter orderで最初の要素を保持する。unordered Streamでは安定性の保証はない。',
+      'DoubleStream.distinct()の等価判定はDouble.compare(double, double)と一致する。',
+    ],
+    sourceRefs: ['JDK25-STREAM', 'JDK25-DOUBLESTREAM'],
+    displayName: 'distinct',
+  })
+  catalog.register({
+    operationId: OP_SORTED,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATEFUL'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.sorted',
+    visualizationKind: '全体バッファ型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'BUFFERED'],
+    jdkNotes: [
+      'sortedは全入力をbufferしてから並べ替えるstateful中間操作であり、全要素を見るまで1件も結果を生成できない。',
+      'ordered Streamではsortはstable（同値キーはencounter order維持）。unordered Streamではstabilityの保証はない。',
+      'DoubleStream.sorted()の順序はDouble.compare(double, double)と一致する。',
+    ],
+    sourceRefs: ['JDK25-STREAM', 'JDK25-STREAM-PKG', 'JDK25-DOUBLESTREAM'],
+    displayName: 'sorted',
+  })
+  catalog.register({
+    operationId: OP_LIMIT,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATEFUL', 'SHORT_CIRCUITING'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.limit',
+    visualizationKind: '位置・件数制御型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED'],
+    jdkNotes: [
+      'limitはmaxSize件で切り詰めるshort-circuiting stateful中間操作である。引数型はlongである。',
+      '上限到達後の残り要素は評価されない（除外ではなく未評価のまま）。',
+    ],
+    sourceRefs: ['JDK25-STREAM'],
+    displayName: 'limit',
+  })
+  catalog.register({
+    operationId: OP_SKIP,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATEFUL'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.skip',
+    visualizationKind: '位置・件数制御型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'REJECTED'],
+    jdkNotes: [
+      'skipは最初のn件を破棄するstateful中間操作である。引数型はlongである。',
+      'skip自体はStream全体を短絡終了しない。n件に達した後の要素はそのまま通過する。',
+    ],
+    sourceRefs: ['JDK25-STREAM'],
+    displayName: 'skip',
+  })
+  catalog.register({
+    operationId: OP_TAKE_WHILE,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATEFUL', 'SHORT_CIRCUITING'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.takeWhile',
+    visualizationKind: '境界判定型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'REJECTED'],
+    jdkNotes: [
+      'takeWhileはPredicateがtrueである最長のprefixを取るshort-circuiting stateful中間操作である。',
+      '初版実行はsequential + orderedに限定する。unordered Streamでは任意のtrue部分集合になり得る。',
+      '最初のfalse以降の要素は評価されない（未評価のまま）。',
+    ],
+    sourceRefs: ['JDK25-STREAM'],
+    displayName: 'takeWhile',
+  })
+  catalog.register({
+    operationId: OP_DROP_WHILE,
+    category: 'intermediate',
+    // dropWhileはPredicate評価を途中で終了するがStream全体を短絡終了しない（指示§5.1）
+    traits: ['INTERMEDIATE', 'STATEFUL'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.dropWhile',
+    visualizationKind: '境界判定型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'REJECTED'],
+    jdkNotes: [
+      'dropWhileはPredicateがtrueである最長のprefixを捨てるstateful中間操作である。',
+      '初版実行はsequential + orderedに限定する。',
+      '通過モードへ入った後の要素にはPredicateを再評価しない。',
+    ],
+    sourceRefs: ['JDK25-STREAM'],
+    displayName: 'dropWhile',
+  })
+  catalog.register({
+    operationId: OP_PEEK,
+    category: 'intermediate',
+    traits: ['INTERMEDIATE', 'STATELESS'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'identity' },
+    handlerId: 'handler.peek',
+    visualizationKind: '観察型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED'],
+    jdkNotes: [
+      'peekは要素を変更せずConsumerを実行する観察用の中間操作である。',
+      'JDKでは最適化や短絡により、peekのactionが呼ばれない要素があり得る（count最適化等）。',
+    ],
+    sourceRefs: ['JDK25-STREAM'],
+    displayName: 'peek',
+  })
 
   // ---- terminal ----
   catalog.register({

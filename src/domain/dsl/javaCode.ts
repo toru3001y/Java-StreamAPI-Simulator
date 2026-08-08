@@ -1,4 +1,7 @@
 import type { DslPredicate } from './ast'
+import type { ComparatorDsl, ComparatorKey } from './comparatorAst'
+import { COMPARATOR_FIELD_JAVA_KIND } from './comparatorAst'
+import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
 import type { DatasetElement, EmployeeValue } from '../model/employee'
@@ -26,6 +29,9 @@ export interface JavaCodeNodeSource {
   readonly operationId: string
   readonly predicate: DslPredicate | null
   readonly mapper: MapperDsl | null
+  readonly comparator: ComparatorDsl | null
+  readonly consumer: ConsumerDsl | null
+  readonly count: number | null
 }
 
 export interface JavaCodeInput {
@@ -37,17 +43,99 @@ export interface JavaCodeInput {
 
 const OPERATOR_JAVA: Readonly<Record<string, string>> = {
   GTE: '>=',
+  LT: '<',
 }
 
-/** 表示用Java式（例: e -> e.age() >= 30） */
+export function operatorToJava(operator: string): string {
+  const op = OPERATOR_JAVA[operator]
+  if (!op) throw new Error(`unsupported operator: ${operator}`)
+  return op
+}
+
+/** 表示用Java式（例: e -> e.age() >= 30、n -> n < 5） */
 export function predicateToJavaExpr(predicate: DslPredicate): string {
-  const accessor = EMPLOYEE_FIELDS[predicate.field]?.accessor ?? `${predicate.field}()`
-  const op = OPERATOR_JAVA[predicate.operator]
-  if (!op) throw new Error(`unsupported operator: ${predicate.operator}`)
+  const op = operatorToJava(predicate.operator)
   if (predicate.value.type !== 'int') {
     throw new Error(`unsupported literal type: ${predicate.value.type}`)
   }
+  if (predicate.kind === 'currentValueCompare') {
+    return `n -> n ${op} ${predicate.value.value}`
+  }
+  const accessor = EMPLOYEE_FIELDS[predicate.field]?.accessor ?? `${predicate.field}()`
   return `e -> e.${accessor} ${op} ${predicate.value.value}`
+}
+
+/** Comparatorキーの抽出式（method referenceまたはネストfieldのlambda） */
+function comparatorKeyExtractor(key: ComparatorKey, first: boolean): string {
+  if (key.field === 'department.name' || key.field === 'department.division') {
+    const accessor = key.field === 'department.name' ? 'name()' : 'division()'
+    // 先頭キーは型推論のため明示的なlambda引数型が必要
+    return first ? `(Employee e) -> e.department().${accessor}` : `e -> e.department().${accessor}`
+  }
+  return `Employee::${key.field}`
+}
+
+/**
+ * Comparator DSLからのJavaコード生成（Phase 3指示 §6.3）。
+ * キー型に応じてComparator.comparing / comparingInt / comparingLong / comparingDouble、
+ * 必要なreversed() / thenComparing*を組み立てる。
+ */
+export function comparatorToJavaExpr(comparator: ComparatorDsl): string {
+  if (comparator.kind === 'natural') return 'Comparator.naturalOrder()'
+  const parts: string[] = []
+  comparator.keys.forEach((key, i) => {
+    const javaKind = COMPARATOR_FIELD_JAVA_KIND[key.field]
+    const extractor = comparatorKeyExtractor(key, i === 0)
+    if (i === 0) {
+      if (key.direction === 'DESC') {
+        if (comparator.keys.length === 1) {
+          // 単一キーDESCはreversed()で表現する
+          const method =
+            javaKind === 'int'
+              ? 'comparingInt'
+              : javaKind === 'long'
+                ? 'comparingLong'
+                : javaKind === 'double'
+                  ? 'comparingDouble'
+                  : 'comparing'
+          parts.push(`Comparator.${method}(${extractor}).reversed()`)
+        } else {
+          // 複合キーの先頭DESCは後続キーまで反転しないようreverseOrder比較子で表現する
+          parts.push(`Comparator.comparing(${extractor}, Comparator.reverseOrder())`)
+        }
+      } else {
+        const method =
+          javaKind === 'int'
+            ? 'comparingInt'
+            : javaKind === 'long'
+              ? 'comparingLong'
+              : javaKind === 'double'
+                ? 'comparingDouble'
+                : 'comparing'
+        parts.push(`Comparator.${method}(${extractor})`)
+      }
+    } else if (key.direction === 'DESC') {
+      parts.push(`.thenComparing(${extractor}, Comparator.reverseOrder())`)
+    } else {
+      const method =
+        javaKind === 'int'
+          ? 'thenComparingInt'
+          : javaKind === 'long'
+            ? 'thenComparingLong'
+            : javaKind === 'double'
+              ? 'thenComparingDouble'
+              : 'thenComparing'
+      parts.push(`.${method}(${extractor})`)
+    }
+  })
+  return parts.join('')
+}
+
+/** Consumer DSLからのJava式生成（Phase 3指示 §6.5） */
+export function consumerToJavaExpr(consumer: ConsumerDsl): string {
+  if (consumer.kind === 'printValue') return 'System.out::println'
+  const accessor = EMPLOYEE_FIELDS[consumer.field]?.accessor ?? `${consumer.field}()`
+  return `e -> System.out.println(e.${accessor})`
 }
 
 /** 表示用mapper式（例: Employee::name、n -> "No." + n） */
@@ -190,7 +278,7 @@ function sourceDeclLines(source: SourceDsl, employeeDataset: readonly DatasetEle
       return lines
     }
     case 'generate':
-      return ['AtomicInteger counter = new AtomicInteger();']
+      return ['AtomicInteger counter = new AtomicInteger(0);']
     default:
       return []
   }
@@ -217,6 +305,24 @@ function nodeLineText(node: JavaCodeNodeSource): string {
     case 'flatMapToDouble':
       if (!node.mapper) throw new Error(`node ${node.nodeId} has no mapper`)
       return `        .${node.operationId}(${mapperToJavaExpr(node.mapper)})`
+    case 'distinct':
+      return '        .distinct()'
+    case 'sorted':
+      return node.comparator && node.comparator.kind !== 'natural'
+        ? `        .sorted(${comparatorToJavaExpr(node.comparator)})`
+        : '        .sorted()'
+    case 'limit':
+    case 'skip':
+      // 引数型はlongだが、int literalはJava上正当（自動拡大変換）。DSLにない値を補わない
+      if (node.count === null) throw new Error(`node ${node.nodeId} has no count`)
+      return `        .${node.operationId}(${node.count})`
+    case 'takeWhile':
+    case 'dropWhile':
+      if (!node.predicate) throw new Error(`node ${node.nodeId} has no predicate`)
+      return `        .${node.operationId}(${predicateToJavaExpr(node.predicate)})`
+    case 'peek':
+      if (!node.consumer) throw new Error(`node ${node.nodeId} has no consumer`)
+      return `        .peek(${consumerToJavaExpr(node.consumer)})`
     default:
       throw new Error(`コード生成未対応のoperationです: ${node.operationId}`)
   }

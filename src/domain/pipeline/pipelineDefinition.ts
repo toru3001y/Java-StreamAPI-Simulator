@@ -1,6 +1,9 @@
 import type { DslPredicate } from '../dsl/ast'
+import type { ComparatorDsl } from '../dsl/comparatorAst'
+import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
+import type { BoundednessMeta } from './boundedness'
 import type { IterateCandidate, SourceElement } from '../dsl/materializeSource'
 import type { JavaCodeLine } from '../dsl/javaCode'
 import type { DatasetElement } from '../model/employee'
@@ -21,6 +24,12 @@ export interface PipelineNodeDef {
   readonly displayName: string
   readonly predicate: DslPredicate | null
   readonly mapper: MapperDsl | null
+  /** sorted(Comparator)の検証済みComparator DSL（Phase 3指示 §6.3） */
+  readonly comparator: ComparatorDsl | null
+  /** peekの検証済みConsumer DSL（Phase 3指示 §6.5） */
+  readonly consumer: ConsumerDsl | null
+  /** limit / skipの検証済み引数（Phase 3指示 §6.4。Java APIの引数型はlong） */
+  readonly count: number | null
   readonly inputType: TypeRef | null
   readonly outputType: TypeRef
   readonly lineId: LineId
@@ -51,4 +60,12 @@ export interface PipelineDefinition {
   readonly javaCode: readonly JavaCodeLine[]
   /** 事前実行で確定した正確なsnapshot件数（§9.3 手順6） */
   readonly snapshotCount: number
+  /** 順序メタデータ（Phase 3指示 §5.3）。encounter orderの扱いは各操作が維持する */
+  readonly orderMeta: {
+    readonly sourceOrdered: boolean
+    /** Pipeline結果のencounter orderが定義されるか（unordered sourceでは未定義のまま） */
+    readonly resultOrdered: boolean
+  }
+  /** 有限性メタデータ（Phase 3指示 §5.3・§8.2） */
+  readonly boundedness: BoundednessMeta
 }

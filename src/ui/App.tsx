@@ -4,6 +4,7 @@ import { createApp } from './appInstance'
 import { ScenarioControls } from './components/ScenarioControls'
 import { PipelineViewport } from './components/PipelineViewport'
 import { MainSimulation } from './components/MainSimulation'
+import { SideEffectPanel } from './components/SideEffectPanel'
 import { JavaCodePanel } from './components/JavaCodePanel'
 import { ExplanationPanel } from './components/ExplanationPanel'
 import { DetailsDisclosure } from './components/DetailsDisclosure'
@@ -26,12 +27,13 @@ export function App({ app: injectedApp }: { app?: AppInstance }) {
     <div className="app-root">
       <header className="app-header">
         <h1>Java Stream API 可視化シミュレーター</h1>
-        <p className="app-subtitle">Phase 2: Stream生成と変換操作（Java SE 25基準）</p>
+        <p className="app-subtitle">Phase 3: stateful中間操作と短絡（Java SE 25基準）</p>
       </header>
       <main className="app-main">
         <ScenarioControls app={app} state={state} />
         <PipelineViewport state={state} />
         <MainSimulation state={state} />
+        <SideEffectPanel state={state} />
         <div className="bottom-panels">
           <JavaCodePanel state={state} />
           <ExplanationPanel state={state} />

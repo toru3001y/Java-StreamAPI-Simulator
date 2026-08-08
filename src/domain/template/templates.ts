@@ -2,16 +2,22 @@ import type { ParameterSlot, PipelineTemplate, PipelineTemplateNode } from './pi
 import { TemplateRegistry } from './templateRegistry'
 import {
   OP_BOXED,
+  OP_DISTINCT,
+  OP_DROP_WHILE,
   OP_FILTER,
   OP_FLAT_MAP,
   OP_FLAT_MAP_TO_DOUBLE,
   OP_FLAT_MAP_TO_INT,
   OP_FLAT_MAP_TO_LONG,
+  OP_LIMIT,
   OP_MAP,
   OP_MAP_TO_DOUBLE,
   OP_MAP_TO_INT,
   OP_MAP_TO_LONG,
   OP_MAP_TO_OBJ,
+  OP_PEEK,
+  OP_SKIP,
+  OP_SORTED,
   OP_SOURCE_ARRAYS_STREAM,
   OP_SOURCE_COLLECTION_STREAM,
   OP_SOURCE_EMPTY,
@@ -21,8 +27,11 @@ import {
   OP_SOURCE_RANGE,
   OP_SOURCE_RANGE_CLOSED,
   OP_SOURCE_STREAM_OF,
+  OP_TAKE_WHILE,
   OP_TO_LIST,
 } from '../catalog/operations'
+import { CONSUMER_ALLOWED_FIELDS } from '../dsl/consumerAst'
+import { EMPLOYEE_COMPARATOR_FIELDS } from '../dsl/comparatorAst'
 
 /**
  * Phase 2までの定義済み教材template（§8、Phase 2指示 §8）。
@@ -31,7 +40,7 @@ import {
  */
 
 const PHASE3_LIMIT_REASON =
-  '無限Streamのため実行できません。Phase 3の有限化操作（limit()）の実装後に実行可能になります。'
+  '無限Streamのため、limit()を含まないこのtemplateは実行できません。limit付きtemplateを使用してください。'
 
 function srcNode(operationId: string): PipelineTemplateNode {
   return { nodeId: 'node-src', operationId, role: 'source', slotId: 'slot-source' }
@@ -573,6 +582,368 @@ export const FLAT_MAP_TO_DOUBLE_TEMPLATE = flatMapToPrimitiveTemplate(
   'flatMapToDouble（double[] → DoubleStream）',
 )
 
+// ---- Phase 3: stateful中間操作template（Phase 3指示 §9） ----
+
+const agePredicateSlot: ParameterSlot = {
+  slotId: 'slot-predicate-1',
+  targetNodeId: 'node-filter-1',
+  kind: 'predicate',
+  required: true,
+  allowedFields: ['age'],
+  allowedOperators: ['GTE'],
+}
+
+function currentValueSlot(targetNodeId: string): ParameterSlot {
+  return {
+    slotId: 'slot-predicate-1',
+    targetNodeId,
+    kind: 'predicate',
+    required: true,
+    allowedFields: [],
+    allowedOperators: ['LT'],
+  }
+}
+
+function countSlot(targetNodeId: string): ParameterSlot {
+  return { slotId: 'slot-count', targetNodeId, kind: 'count', required: true }
+}
+
+export const DISTINCT_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-distinct',
+  version: 1,
+  targetOperationId: OP_DISTINCT,
+  targetNodeId: 'node-distinct',
+  title: 'distinct（重複の除外）',
+  sourceDefinition: sourceSlotDef(['streamOf']),
+  nodes: [
+    srcNode(OP_SOURCE_STREAM_OF),
+    { nodeId: 'node-distinct', operationId: OP_DISTINCT, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'emptySource'],
+  jdkNotes: [
+    'distinctはequalsに基づき重複を除外する。ordered Streamでは最初の要素が保持される。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 40 },
+}
+
+export const DISTINCT_MID_EMPTY_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-distinct-midempty',
+  version: 1,
+  targetOperationId: OP_DISTINCT,
+  targetNodeId: 'node-distinct',
+  title: 'distinct（途中0件: filter併用）',
+  sourceDefinition: {
+    slotId: null,
+    defaultDsl: { kind: 'collection', collectionId: 'employees' },
+    allowedSourceKinds: ['collection'],
+  },
+  nodes: [
+    { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+    { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-1' },
+    { nodeId: 'node-distinct', operationId: OP_DISTINCT, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [agePredicateSlot],
+  allowedDslProfile: { predicateKinds: ['fieldCompare'] },
+  supportedModes: ['midEmpty'],
+  jdkNotes: ['前段のfilterで全件除外されると、distinctのseenは一度も更新されない。'],
+  snapshotBudget: { limit: 500, estimatedMax: 25 },
+}
+
+export const SORTED_NATURAL_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-sorted-natural',
+  version: 1,
+  targetOperationId: OP_SORTED,
+  targetNodeId: 'node-sorted',
+  title: 'sorted()（Stringの自然順序）',
+  sourceDefinition: sourceSlotDef(['streamOf']),
+  nodes: [
+    srcNode(OP_SOURCE_STREAM_OF),
+    { nodeId: 'node-sorted', operationId: OP_SORTED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'emptySource'],
+  jdkNotes: [
+    'sortedは全入力をbufferしてから並べ替える。ordered Streamのsortはstableである。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 40 },
+}
+
+export const SORTED_MID_EMPTY_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-sorted-midempty',
+  version: 1,
+  targetOperationId: OP_SORTED,
+  targetNodeId: 'node-sorted',
+  title: 'sorted（途中0件: filter併用・空buffer）',
+  sourceDefinition: {
+    slotId: null,
+    defaultDsl: { kind: 'collection', collectionId: 'employees' },
+    allowedSourceKinds: ['collection'],
+  },
+  nodes: [
+    { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+    { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-1' },
+    { nodeId: 'node-map', operationId: OP_MAP, role: 'intermediate', slotId: 'slot-mapper-1' },
+    { nodeId: 'node-sorted', operationId: OP_SORTED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [agePredicateSlot, mapperSlot('slot-mapper-1', 'node-map', ['fieldAccess'])],
+  allowedDslProfile: { predicateKinds: ['fieldCompare'] },
+  supportedModes: ['midEmpty'],
+  jdkNotes: ['前段が0件でも、sortedは空bufferの並べ替え確定を1回行う。'],
+  snapshotBudget: { limit: 500, estimatedMax: 25 },
+}
+
+export const SORTED_COMPARATOR_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-sorted-comparator',
+  version: 1,
+  targetOperationId: OP_SORTED,
+  targetNodeId: 'node-sorted',
+  title: 'sorted(Comparator)（Employeeのregion昇順）',
+  sourceDefinition: {
+    slotId: null,
+    defaultDsl: { kind: 'collection', collectionId: 'employees' },
+    allowedSourceKinds: ['collection'],
+  },
+  nodes: [
+    { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+    { nodeId: 'node-sorted', operationId: OP_SORTED, role: 'intermediate', slotId: 'slot-comparator' },
+    sinkNode(),
+  ],
+  parameterSlots: [
+    {
+      slotId: 'slot-comparator',
+      targetNodeId: 'node-sorted',
+      kind: 'comparator',
+      required: true,
+      allowedComparatorKinds: ['employeeKeys'],
+      allowedFields: EMPLOYEE_COMPARATOR_FIELDS,
+    },
+  ],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'emptySource'],
+  jdkNotes: [
+    'sorted(Comparator)は指定キーで並べ替える。ordered Streamでは同値キーの要素は元の順序を維持する（stable）。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 40 },
+}
+
+export const LIMIT_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-limit',
+  version: 1,
+  targetOperationId: OP_LIMIT,
+  targetNodeId: 'node-limit',
+  title: 'limit（有限source・最初のN件）',
+  sourceDefinition: sourceSlotDef(['rangeClosed']),
+  nodes: [
+    srcNode(OP_SOURCE_RANGE_CLOSED),
+    { nodeId: 'node-limit', operationId: OP_LIMIT, role: 'intermediate', slotId: 'slot-count' },
+    { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [countSlot('node-limit')],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'midEmpty', 'emptySource'],
+  jdkNotes: [
+    'limitは最初のmaxSize件だけを通す。上限到達後の残り要素は評価されない（未評価のまま）。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 35 },
+}
+
+export const LIMIT_GENERATE_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-limit-generate',
+  version: 1,
+  targetOperationId: OP_SOURCE_GENERATE,
+  targetNodeId: 'node-src',
+  title: 'Stream.generate() + limit（無限sourceの有限化）',
+  sourceDefinition: {
+    slotId: 'slot-source',
+    defaultDsl: { kind: 'generate', ruleId: 'supplier-counter' },
+    allowedSourceKinds: ['generate'],
+  },
+  nodes: [
+    srcNode(OP_SOURCE_GENERATE),
+    { nodeId: 'node-limit', operationId: OP_LIMIT, role: 'intermediate', slotId: 'slot-count' },
+    sinkNode(),
+  ],
+  parameterSlots: [countSlot('node-limit')],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard'],
+  jdkNotes: [
+    'Stream.generate()のsource自体は無限・unorderedのままであり、limitがPipelineを有限化している。',
+    'supplierは有限化に必要な回数だけ呼び出される。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 20 },
+}
+
+export const LIMIT_ITERATE2_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-limit-iterate2',
+  version: 1,
+  targetOperationId: OP_SOURCE_ITERATE2,
+  targetNodeId: 'node-src',
+  title: 'Stream.iterate(seed, operator) + limit（無限sourceの有限化）',
+  sourceDefinition: {
+    slotId: 'slot-source',
+    defaultDsl: { kind: 'iterate2', seed: 1, operator: { ruleId: 'increment', step: 1 } },
+    allowedSourceKinds: ['iterate2'],
+  },
+  nodes: [
+    srcNode(OP_SOURCE_ITERATE2),
+    { nodeId: 'node-limit', operationId: OP_LIMIT, role: 'intermediate', slotId: 'slot-count' },
+    sinkNode(),
+  ],
+  parameterSlots: [countSlot('node-limit')],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard'],
+  jdkNotes: [
+    '2引数iterateのsource自体は無限のままであり、limitがPipelineを有限化している。',
+    'operatorは有限化に必要な範囲だけ適用される。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 30 },
+}
+
+export const SKIP_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-skip',
+  version: 1,
+  targetOperationId: OP_SKIP,
+  targetNodeId: 'node-skip',
+  title: 'skip（最初のn件の除外）',
+  sourceDefinition: sourceSlotDef(['arrayPrimitive']),
+  nodes: [
+    srcNode(OP_SOURCE_ARRAYS_STREAM),
+    { nodeId: 'node-skip', operationId: OP_SKIP, role: 'intermediate', slotId: 'slot-count' },
+    { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [countSlot('node-skip')],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'midEmpty', 'emptySource'],
+  jdkNotes: [
+    'skipは最初のn件を除外し、その後の要素を判定なしで通す。skip自体は短絡終了しない。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 35 },
+}
+
+export const TAKE_WHILE_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-takewhile',
+  version: 1,
+  targetOperationId: OP_TAKE_WHILE,
+  targetNodeId: 'node-takewhile',
+  title: 'takeWhile（trueのprefixと短絡）',
+  sourceDefinition: sourceSlotDef(['arrayPrimitive']),
+  nodes: [
+    srcNode(OP_SOURCE_ARRAYS_STREAM),
+    { nodeId: 'node-takewhile', operationId: OP_TAKE_WHILE, role: 'intermediate', slotId: 'slot-predicate-1' },
+    { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [currentValueSlot('node-takewhile')],
+  allowedDslProfile: { predicateKinds: ['currentValueCompare'] },
+  supportedModes: ['standard', 'midEmpty', 'emptySource'],
+  jdkNotes: [
+    '初版実行はsequential + orderedに限定する。unorderedの意味論は補助説明のみ。',
+    '最初のfalseで短絡し、後続はPredicateならtrueとなる値でも評価されない。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 35 },
+}
+
+export const DROP_WHILE_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-dropwhile',
+  version: 1,
+  targetOperationId: OP_DROP_WHILE,
+  targetNodeId: 'node-dropwhile',
+  title: 'dropWhile（trueのprefix除外と通過モード）',
+  sourceDefinition: sourceSlotDef(['arrayPrimitive']),
+  nodes: [
+    srcNode(OP_SOURCE_ARRAYS_STREAM),
+    { nodeId: 'node-dropwhile', operationId: OP_DROP_WHILE, role: 'intermediate', slotId: 'slot-predicate-1' },
+    { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
+    sinkNode(),
+  ],
+  parameterSlots: [currentValueSlot('node-dropwhile')],
+  allowedDslProfile: { predicateKinds: ['currentValueCompare'] },
+  supportedModes: ['standard', 'midEmpty', 'emptySource'],
+  jdkNotes: [
+    '初版実行はsequential + orderedに限定する。',
+    '最初のfalse以降は通過モードとなり、Predicateを再評価しない。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 40 },
+}
+
+export const PEEK_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-peek',
+  version: 1,
+  targetOperationId: OP_PEEK,
+  targetNodeId: 'node-peek',
+  title: 'peek（Side Effectの観察）',
+  sourceDefinition: {
+    slotId: null,
+    defaultDsl: { kind: 'collection', collectionId: 'employees' },
+    allowedSourceKinds: ['collection'],
+  },
+  nodes: [
+    { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+    { nodeId: 'node-peek', operationId: OP_PEEK, role: 'intermediate', slotId: 'slot-consumer' },
+    sinkNode(),
+  ],
+  parameterSlots: [
+    {
+      slotId: 'slot-consumer',
+      targetNodeId: 'node-peek',
+      kind: 'consumer',
+      required: true,
+      allowedConsumerKinds: ['printValue', 'printField'],
+      allowedFields: CONSUMER_ALLOWED_FIELDS,
+    },
+  ],
+  allowedDslProfile: { predicateKinds: [] },
+  supportedModes: ['standard', 'emptySource'],
+  jdkNotes: [
+    'peekは値・型を変更せず、Consumer実行の履歴だけをSide Effectビューへ残す。',
+    'JDKでは最適化や短絡により、peekのactionが呼ばれない要素があり得る。',
+  ],
+  snapshotBudget: { limit: 500, estimatedMax: 30 },
+}
+
+export const PEEK_MID_EMPTY_TEMPLATE: PipelineTemplate = {
+  templateId: 'tmpl-peek-midempty',
+  version: 1,
+  targetOperationId: OP_PEEK,
+  targetNodeId: 'node-peek',
+  title: 'peek（途中0件: Consumer呼出し0回）',
+  sourceDefinition: {
+    slotId: null,
+    defaultDsl: { kind: 'collection', collectionId: 'employees' },
+    allowedSourceKinds: ['collection'],
+  },
+  nodes: [
+    { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+    { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-1' },
+    { nodeId: 'node-peek', operationId: OP_PEEK, role: 'intermediate', slotId: 'slot-consumer' },
+    sinkNode(),
+  ],
+  parameterSlots: [
+    agePredicateSlot,
+    {
+      slotId: 'slot-consumer',
+      targetNodeId: 'node-peek',
+      kind: 'consumer',
+      required: true,
+      allowedConsumerKinds: ['printValue', 'printField'],
+      allowedFields: CONSUMER_ALLOWED_FIELDS,
+    },
+  ],
+  allowedDslProfile: { predicateKinds: ['fieldCompare'] },
+  supportedModes: ['midEmpty'],
+  jdkNotes: ['前段のfilterで全件除外されると、peekのConsumerは一度も呼ばれない。'],
+  snapshotBudget: { limit: 500, estimatedMax: 25 },
+}
+
 export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   FILTER_BASIC_TEMPLATE,
   FILTER_CHAIN_TEMPLATE,
@@ -602,6 +973,20 @@ export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   FLAT_MAP_TO_INT_TEMPLATE,
   FLAT_MAP_TO_LONG_TEMPLATE,
   FLAT_MAP_TO_DOUBLE_TEMPLATE,
+  // ---- Phase 3 ----
+  DISTINCT_TEMPLATE,
+  DISTINCT_MID_EMPTY_TEMPLATE,
+  SORTED_NATURAL_TEMPLATE,
+  SORTED_MID_EMPTY_TEMPLATE,
+  SORTED_COMPARATOR_TEMPLATE,
+  LIMIT_TEMPLATE,
+  LIMIT_GENERATE_TEMPLATE,
+  LIMIT_ITERATE2_TEMPLATE,
+  SKIP_TEMPLATE,
+  TAKE_WHILE_TEMPLATE,
+  DROP_WHILE_TEMPLATE,
+  PEEK_TEMPLATE,
+  PEEK_MID_EMPTY_TEMPLATE,
 ]
 
 export function createDefaultTemplateRegistry(): TemplateRegistry {

@@ -46,6 +46,34 @@ export function evaluateIteratePredicate(
  */
 const ITERATE_SAFETY_CAP = 10_000
 
+/**
+ * 無限source（generate / iterate2）を、有限性解析で導出した必要件数だけ
+ * 決定的に具現化する（Phase 3指示 §8.2）。全件具現化はしない。
+ * demandは事前に検証済みのsource要求件数であり、supplier / operatorの
+ * 呼び出し回数はこの件数を超えない。
+ */
+export function materializeInfiniteSource(
+  dsl: Extract<SourceDsl, { kind: 'generate' | 'iterate2' }>,
+  demand: number,
+): MaterializedSource {
+  if (!Number.isSafeInteger(demand) || demand < 0) {
+    throw new Error(`無限sourceの要求件数が不正です: ${demand}`)
+  }
+  if (dsl.kind === 'generate') {
+    // supplier-counter: counter.incrementAndGet() → 1, 2, 3, ...
+    const values: SimValue[] = []
+    for (let i = 1; i <= demand; i++) values.push({ kind: 'boxedInt', value: i })
+    return { elements: seq('gen', values), iterateTrace: null }
+  }
+  const values: SimValue[] = []
+  let candidate = dsl.seed
+  for (let i = 0; i < demand; i++) {
+    values.push({ kind: 'boxedInt', value: candidate })
+    candidate += dsl.operator.step
+  }
+  return { elements: seq('it2', values), iterateTrace: null }
+}
+
 export function materializeSource(
   dsl: SourceDsl,
   employeeDataset: readonly DatasetElement[],

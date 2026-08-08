@@ -8,6 +8,8 @@ import { typeRefEquals, TYPE_INT } from '../types/typeRef'
  * DSL検証（§9.3の手順1・3・4に対応）。
  * 手順2（template / slot許可範囲）と手順5以降はtemplate/instantiate側で行う。
  */
+const INT32_MAX = 2_147_483_647
+const INT32_MIN = -2_147_483_648
 
 /** 手順1: JSON Schema相当の構造検証 */
 export function validateStructure(input: unknown, path = 'predicate'): Result<DslPredicate> {
@@ -15,13 +17,14 @@ export function validateStructure(input: unknown, path = 'predicate'): Result<Ds
     return fail([issue('STRUCTURE_INVALID', 'Predicateはオブジェクトである必要があります', path)])
   }
   const obj = input as Record<string, unknown>
-  if (obj['kind'] !== 'fieldCompare') {
+  const kind = obj['kind']
+  if (kind !== 'fieldCompare' && kind !== 'currentValueCompare') {
     return fail([
-      issue('STRUCTURE_UNKNOWN_KIND', `未知のkindです: ${String(obj['kind'])}`, `${path}.kind`),
+      issue('STRUCTURE_UNKNOWN_KIND', `未知のkindです: ${String(kind)}`, `${path}.kind`),
     ])
   }
   const issues: ValidationIssue[] = []
-  if (typeof obj['field'] !== 'string' || obj['field'] === '') {
+  if (kind === 'fieldCompare' && (typeof obj['field'] !== 'string' || obj['field'] === '')) {
     issues.push(issue('STRUCTURE_INVALID', 'fieldは文字列で必須です', `${path}.field`))
   }
   if (typeof obj['operator'] !== 'string' || obj['operator'] === '') {
@@ -35,6 +38,15 @@ export function validateStructure(input: unknown, path = 'predicate'): Result<Ds
     if (v['type'] === 'int') {
       if (typeof v['value'] !== 'number' || !Number.isInteger(v['value'])) {
         issues.push(issue('STRUCTURE_INVALID', 'int定数のvalueは整数が必要です', `${path}.value.value`))
+      } else if (v['value'] > INT32_MAX || v['value'] < INT32_MIN) {
+        // Java intの範囲外は不正なJavaコード（int literal）を生成し得るため事前拒否する（レビュー修正2）
+        issues.push(
+          issue(
+            'TYPE_MISMATCH',
+            `int定数はJava intの範囲（${INT32_MIN}〜${INT32_MAX}）が必要です: ${v['value']}`,
+            `${path}.value.value`,
+          ),
+        )
       }
     } else if (v['type'] === 'string') {
       if (typeof v['value'] !== 'string') {
@@ -60,7 +72,7 @@ export function validateWhitelist(
   if (!profile.predicateKinds.includes(predicate.kind)) {
     issues.push(issue('STRUCTURE_UNKNOWN_KIND', `許可されていないkindです: ${predicate.kind}`, `${path}.kind`))
   }
-  if (!profile.allowedFields.includes(predicate.field)) {
+  if (predicate.kind === 'fieldCompare' && !profile.allowedFields.includes(predicate.field)) {
     issues.push(
       issue('WHITELIST_FIELD', `許可されていないfieldです: ${predicate.field}`, `${path}.field`),
     )
@@ -80,6 +92,20 @@ export function validateWhitelist(
 
 /** 手順4: TypeRefによる型検証 */
 export function validateTypes(predicate: DslPredicate, path = 'predicate'): Result<DslPredicate> {
+  if (predicate.kind === 'currentValueCompare') {
+    // currentValueCompareのint定数は数値要素と比較する。要素型との整合は
+    // instantiate側のPipeline型遷移検証で確認する（Phase 3指示 §6.2）
+    if (predicate.value.type !== 'int') {
+      return fail([
+        issue(
+          'TYPE_MISMATCH',
+          `currentValueCompareは${predicate.value.type}定数と比較できません（int定数のみ）`,
+          `${path}.value`,
+        ),
+      ])
+    }
+    return ok(predicate)
+  }
   const fieldInfo = EMPLOYEE_FIELDS[predicate.field]
   if (!fieldInfo) {
     return fail([

@@ -29,6 +29,28 @@ export type ParameterSlot =
       readonly required: boolean
       readonly allowedSourceKinds: readonly string[]
     }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'comparator'
+      readonly required: boolean
+      readonly allowedComparatorKinds: readonly string[]
+      readonly allowedFields: readonly string[]
+    }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'consumer'
+      readonly required: boolean
+      readonly allowedConsumerKinds: readonly string[]
+      readonly allowedFields: readonly string[]
+    }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'count'
+      readonly required: boolean
+    }
 
 export interface PipelineTemplateNode {
   readonly nodeId: NodeId

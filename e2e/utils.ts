@@ -41,6 +41,37 @@ export async function expectPlaybackState(page: Page, state: string): Promise<vo
   await expect(page.getByTestId('playback-state')).toHaveAttribute('data-state', state)
 }
 
+/** 指定testidの要素が指定テキストを含むまで「進む」を繰り返す（Phase 3） */
+export async function forwardUntilText(
+  page: Page,
+  testId: string,
+  text: string,
+  maxSteps = 80,
+): Promise<void> {
+  const button = page.getByRole('button', { name: '進む' })
+  for (let i = 0; i < maxSteps; i++) {
+    const target = page.getByTestId(testId)
+    if ((await target.count()) > 0) {
+      const content = await target.first().textContent()
+      if (content?.includes(text)) return
+    }
+    if (await button.isDisabled()) break
+    await button.click()
+  }
+  throw new Error(`forwardUntilText: ${testId} に「${text}」が現れません`)
+}
+
+/** 指定testidの要素が出現するまで「進む」を繰り返す（Phase 3） */
+export async function forwardUntilVisible(page: Page, testId: string, maxSteps = 80): Promise<void> {
+  const button = page.getByRole('button', { name: '進む' })
+  for (let i = 0; i < maxSteps; i++) {
+    if ((await page.getByTestId(testId).count()) > 0) return
+    if (await button.isDisabled()) break
+    await button.click()
+  }
+  throw new Error(`forwardUntilVisible: ${testId} が現れません`)
+}
+
 /** 全パネルが同じsnapshot IDを描画していることを確認し、そのIDを返す */
 export async function snapshotIds(page: Page): Promise<string> {
   const ids = await page.evaluate(() =>

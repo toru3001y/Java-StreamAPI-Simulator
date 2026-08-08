@@ -4,6 +4,7 @@ import {
   ELEMENT_STATE_SYMBOLS,
 } from '../../domain/engine/snapshot'
 import { formatSimValue } from '../../domain/model/value'
+import { OperationStatePanel } from './OperationStatePanel'
 
 const INDEXED_SOURCE_KINDS = [
   'arrayObject',
@@ -25,6 +26,16 @@ export function MainSimulation({ state }: { state: SessionState }) {
   )
   const flatMapCtx = snapshot.flatMapContext
   const sourceCtx = snapshot.sourceContext
+  // 無限source（generate / iterate2）: source自体は無限のまま、limitで有限化済み（§5.3・§8.3）。
+  // 存在しない「残り全件」は表示せず、これまでに要求された要素だけを表示する
+  const infiniteSource = !scenario.source.finite
+  const requestedElements = infiniteSource
+    ? dataset.filter(
+        (element) =>
+          (snapshot.elementLatestStates[element.elementId] ?? 'UNEVALUATED') !== 'UNEVALUATED',
+      )
+    : dataset
+  const maxSourceDemand = scenario.pipeline.boundedness.maxSourceDemand
 
   return (
     <section
@@ -44,11 +55,22 @@ export function MainSimulation({ state }: { state: SessionState }) {
       <div className="simulation-columns">
         <div className="sim-column" data-testid="input-panel" aria-label="入力">
           <h3>入力</h3>
+          {infiniteSource && (
+            <p className="infinite-source-note" data-testid="infinite-source-note">
+              無限source（{scenario.source.ordered ? 'ordered' : 'unordered'}）をlimitで有限化した
+              Pipelineです。sourceは有限ではなく、有限化に必要な最大{maxSourceDemand}件だけを
+              要求します。表示されているのは要求済みの要素だけで、これ以上は要求していません。
+            </p>
+          )}
           {dataset.length === 0 ? (
             <p className="empty-note">入力は0件です（空ソース）</p>
+          ) : infiniteSource && requestedElements.length === 0 ? (
+            <p className="empty-note" data-testid="infinite-source-unrequested">
+              まだsourceへ要素を要求していません
+            </p>
           ) : (
             <ul className="element-list">
-              {dataset.map((element) => {
+              {requestedElements.map((element) => {
                 const stateKind = snapshot.elementLatestStates[element.elementId] ?? 'UNEVALUATED'
                 const isCurrent =
                   element.elementId === snapshot.currentElementId ||
@@ -111,11 +133,15 @@ export function MainSimulation({ state }: { state: SessionState }) {
               )}
               {sourceCtx && sourceCtx.note && (
                 <p className="source-context" data-testid="source-note">
-                  範囲: {sourceCtx.note}
+                  {scenario.pipeline.sourceDsl.kind === 'range' ||
+                  scenario.pipeline.sourceDsl.kind === 'rangeClosed'
+                    ? `範囲: ${sourceCtx.note}`
+                    : sourceCtx.note}
                 </p>
               )}
             </div>
           )}
+          <OperationStatePanel snapshot={snapshot} />
           {flatMapCtx && (
             <div className="flatmap-panel" data-testid="flatmap-panel">
               <h4>mapped Stream</h4>
