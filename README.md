@@ -3,7 +3,7 @@
 Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅延評価）を1ステップずつ可視化する学習教材アプリ。
 
 - 基準仕様: `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`（Draft v0.8 / Java SE 25基準）
-- 実装状況: **Phase 2 完了**（Stream生成 + map / mapToX / boxed / mapToObj / flatMap系。詳細は `docs/phase-2-completion-report.md`）
+- 実装状況: **Phase 2 完了**（Stream生成 + map / mapToX / boxed / mapToObj / flatMap系。詳細は `docs/phase-2-completion-report.md`）。Phase 3着手前判断として J-2 `sorted` を確定済み（`docs/phase-3-decisions.md`）
 - 実装指示: `docs/Claude_Code_Phase1_Implementation_Instructions.md` / `docs/Claude_Code_Phase2_Implementation_Instructions.md`
 
 ## 実装済み操作（Phase 2時点）
@@ -68,6 +68,7 @@ npm run test:oracle  # P1-O01 JDK 25照合（要: Docker + gradle:9.6.1-jdk25イ
 
 | ファイル | 内容 |
 |---|---|
+| `docs/phase-3-decisions.md` | Phase 3判断記録（J-2 `sorted`: 処理中1件原則の維持とsnapshot契約） |
 | `docs/phase-2-completion-report.md` | Phase 2完了報告（判定・証跡・52 ID対応表・TypeRef連鎖・Oracle結果） |
 | `docs/phase-2-decisions.md` | generate/iterate2境界・flatMap親子とJ-2・実装判断の記録 |
 | `docs/phase-1-completion-report.md` | Phase 1完了報告（判定・証跡・テスト対応表・仕様差異） |
