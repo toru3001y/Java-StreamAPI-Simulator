@@ -12,6 +12,27 @@ export async function selectTemplate(page: Page, templateId: string): Promise<vo
   await page.getByLabel('教材Pipelineテンプレート').selectOption(templateId)
 }
 
+export async function selectOperation(page: Page, operationId: string): Promise<void> {
+  await page.getByTestId('operation-select').selectOption(operationId)
+}
+
+/** 「進む」が無効になるまでクリックして完了状態へ進める */
+export async function forwardToEnd(page: Page, maxSteps = 120): Promise<void> {
+  const button = page.getByRole('button', { name: '進む' })
+  for (let i = 0; i < maxSteps; i++) {
+    if (await button.isDisabled()) return
+    await button.click()
+  }
+  throw new Error(`forwardToEnd: ${maxSteps}手を超えました`)
+}
+
+export async function outputLabels(page: Page): Promise<string[]> {
+  return page
+    .getByTestId('output-list')
+    .locator('li')
+    .allTextContents()
+}
+
 export async function selectMode(page: Page, mode: string): Promise<void> {
   await page.getByLabel('シナリオモード').selectOption(mode)
 }
