@@ -3,6 +3,15 @@ import {
   ELEMENT_STATE_LABELS,
   ELEMENT_STATE_SYMBOLS,
 } from '../../domain/engine/snapshot'
+import { formatSimValue } from '../../domain/model/value'
+
+const INDEXED_SOURCE_KINDS = [
+  'arrayObject',
+  'arrayPrimitive',
+  'streamOf',
+  'streamOfPrimitiveArrays',
+  'nestedStringList',
+] as const
 
 /**
  * MainSimulation（§17.1）: 全幅の入力 → 処理中 → 出力。
@@ -11,7 +20,11 @@ import {
 export function MainSimulation({ state }: { state: SessionState }) {
   const { snapshot, scenario } = state
   const dataset = scenario.pipeline.dataset
-  const byId = new Map(dataset.map((d) => [d.elementId, d]))
+  const showIndex = (INDEXED_SOURCE_KINDS as readonly string[]).includes(
+    scenario.pipeline.sourceDsl.kind,
+  )
+  const flatMapCtx = snapshot.flatMapContext
+  const sourceCtx = snapshot.sourceContext
 
   return (
     <section
@@ -37,7 +50,9 @@ export function MainSimulation({ state }: { state: SessionState }) {
             <ul className="element-list">
               {dataset.map((element) => {
                 const stateKind = snapshot.elementLatestStates[element.elementId] ?? 'UNEVALUATED'
-                const isCurrent = element.elementId === snapshot.currentElementId
+                const isCurrent =
+                  element.elementId === snapshot.currentElementId ||
+                  element.elementId === snapshot.parentElementId
                 return (
                   <li
                     key={element.elementId}
@@ -48,9 +63,8 @@ export function MainSimulation({ state }: { state: SessionState }) {
                     <span className="state-symbol" aria-hidden="true">
                       {ELEMENT_STATE_SYMBOLS[stateKind]}
                     </span>
-                    <span className="element-name">
-                      {element.value.name}（age={element.value.age}）
-                    </span>
+                    {showIndex && <span className="element-index">[{element.index}]</span>}
+                    <span className="element-name">{formatSimValue(element.value)}</span>
                     <span className="state-label">{ELEMENT_STATE_LABELS[stateKind]}</span>
                   </li>
                 )
@@ -85,29 +99,77 @@ export function MainSimulation({ state }: { state: SessionState }) {
                   {snapshot.processing.outcome}
                 </p>
               )}
+              {snapshot.typeTransition && (
+                <p className="type-transition" data-testid="type-transition">
+                  型: {snapshot.typeTransition}
+                </p>
+              )}
+              {sourceCtx && sourceCtx.index !== null && (
+                <p className="source-context" data-testid="source-index">
+                  index: {sourceCtx.index}
+                </p>
+              )}
+              {sourceCtx && sourceCtx.note && (
+                <p className="source-context" data-testid="source-note">
+                  範囲: {sourceCtx.note}
+                </p>
+              )}
+            </div>
+          )}
+          {flatMapCtx && (
+            <div className="flatmap-panel" data-testid="flatmap-panel">
+              <h4>mapped Stream</h4>
+              <p data-testid="flatmap-parent">
+                親: {flatMapCtx.parentLabel}
+                {flatMapCtx.closed && (
+                  <span className="badge badge-closed" data-testid="flatmap-closed">
+                    close済み
+                  </span>
+                )}
+              </p>
+              {flatMapCtx.children.length === 0 ? (
+                <p className="empty-note" data-testid="flatmap-children-empty">
+                  子要素は0件です
+                </p>
+              ) : (
+                <ol className="flatmap-children" data-testid="flatmap-children">
+                  {flatMapCtx.children.map((child, i) => {
+                    const emitted = i < flatMapCtx.emittedCount
+                    const isCurrent = child.id === snapshot.currentElementId
+                    return (
+                      <li
+                        key={child.id}
+                        data-element-id={child.id}
+                        data-emitted={emitted || undefined}
+                        className={isCurrent ? 'current' : undefined}
+                      >
+                        <span aria-hidden="true">{emitted ? '○' : '－'}</span> {child.label}
+                        <span className="state-label">{emitted ? '送出済み' : '未送出'}</span>
+                      </li>
+                    )
+                  })}
+                </ol>
+              )}
             </div>
           )}
         </div>
         <div className="sim-column" data-testid="output-panel" aria-label="出力">
           <h3>出力</h3>
-          <p className="output-type">
+          <p className="output-type" data-testid="output-type">
             {snapshot.output.resultTypeLabel}
             {snapshot.output.confirmed && <span className="badge badge-confirmed">確定</span>}
           </p>
-          {snapshot.output.elementIds.length === 0 ? (
+          {snapshot.output.items.length === 0 ? (
             <p className="empty-note" data-testid="output-empty">
               []（0件）
             </p>
           ) : (
             <ol className="element-list output-list" data-testid="output-list">
-              {snapshot.output.elementIds.map((elementId) => {
-                const element = byId.get(elementId)
-                return (
-                  <li key={elementId} data-element-id={elementId}>
-                    {element ? `${element.value.name}（age=${element.value.age}）` : elementId}
-                  </li>
-                )
-              })}
+              {snapshot.output.items.map((item) => (
+                <li key={item.id} data-element-id={item.id}>
+                  {item.label}
+                </li>
+              ))}
             </ol>
           )}
           <p className="output-count">{snapshot.output.count}件</p>

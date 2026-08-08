@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import type { SessionState } from '../../application/session'
 import { formatTypeRef } from '../../domain/types/typeRef'
-import { predicateToJavaExpr } from '../../domain/dsl/javaCode'
+import { mapperToJavaExpr, predicateToJavaExpr } from '../../domain/dsl/javaCode'
 import { usePrefersReducedMotion } from '../usePrefersReducedMotion'
 
 const ROLE_LABELS = { source: '生成', intermediate: '中間', terminal: '終端' } as const
@@ -50,6 +50,9 @@ export function PipelineViewport({ state }: { state: SessionState }) {
                   <span className="node-name">{node.displayName}</span>
                   {node.predicate && (
                     <code className="node-predicate">{predicateToJavaExpr(node.predicate)}</code>
+                  )}
+                  {node.mapper && (
+                    <code className="node-predicate">{mapperToJavaExpr(node.mapper)}</code>
                   )}
                   <span className="node-badges">
                     <span className="badge badge-role">{ROLE_LABELS[node.role]}</span>
