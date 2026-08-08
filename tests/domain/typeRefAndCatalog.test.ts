@@ -41,20 +41,21 @@ describe('P1-D02 OperationCatalog', () => {
 
   it('P1-D02: 拡張可能な登録方式（新規操作を登録・取得でき、重複登録は拒否する）', () => {
     const catalog = createDefaultCatalog()
+    // Phase 2でmapは標準登録されたため、拡張検証には未登録の操作IDを使用する
     catalog.register({
-      operationId: 'map',
+      operationId: 'custom.futureOp',
       category: 'intermediate',
       traits: ['INTERMEDIATE', 'STATELESS'],
       inputTypeRule: { kind: 'anyStream' },
       outputTypeRule: { kind: 'identity' },
-      handlerId: 'handler.map',
+      handlerId: 'handler.custom.futureOp',
       visualizationKind: '1→1変換型',
       legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED'],
       jdkNotes: [],
       sourceRefs: [],
-      displayName: 'map',
+      displayName: 'futureOp',
     })
-    expect(catalog.get('map').operationId).toBe('map')
+    expect(catalog.get('custom.futureOp').operationId).toBe('custom.futureOp')
     expect(() => catalog.get('unknown-op')).toThrow()
     expect(() =>
       catalog.register({

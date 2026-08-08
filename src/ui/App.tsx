@@ -26,7 +26,7 @@ export function App({ app: injectedApp }: { app?: AppInstance }) {
     <div className="app-root">
       <header className="app-header">
         <h1>Java Stream API 可視化シミュレーター</h1>
-        <p className="app-subtitle">Phase 1: filter縦断（Java SE 25基準）</p>
+        <p className="app-subtitle">Phase 2: Stream生成と変換操作（Java SE 25基準）</p>
       </header>
       <main className="app-main">
         <ScenarioControls app={app} state={state} />

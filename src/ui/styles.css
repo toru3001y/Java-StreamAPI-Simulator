@@ -302,6 +302,71 @@ body {
   font-size: 0.9rem;
 }
 
+.element-index {
+  color: var(--color-muted);
+  font-size: 0.75rem;
+  font-family: Consolas, 'Courier New', monospace;
+}
+
+.type-transition {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.85rem;
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.source-context {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}
+
+.flatmap-panel {
+  margin-top: 12px;
+  border-top: 1px dashed var(--color-border);
+  padding-top: 8px;
+}
+
+.flatmap-panel h4 {
+  margin: 0 0 6px;
+  font-size: 0.9rem;
+}
+
+.flatmap-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.flatmap-children li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+}
+
+.flatmap-children li.current {
+  border-color: var(--color-active);
+  background: var(--color-active-bg);
+}
+
+.badge-closed {
+  margin-left: 8px;
+  border-color: var(--color-passed);
+  color: var(--color-passed);
+}
+
+.disabled-operation-notes {
+  margin: 8px 0 0;
+  padding-left: 1.5em;
+  font-size: 0.8rem;
+  color: var(--color-muted);
+}
+
 .processing-title {
   font-weight: 600;
   margin: 0 0 6px;

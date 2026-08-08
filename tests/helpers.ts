@@ -1,4 +1,4 @@
-import { createDefaultCatalog, OP_FILTER } from '../src/domain/catalog/operations'
+import { createDefaultCatalog } from '../src/domain/catalog/operations'
 import { createDefaultTemplateRegistry } from '../src/domain/template/templates'
 import { FixtureScenarioProvider } from '../src/providers/fixtureScenarioProvider'
 import { buildScenario } from '../src/application/scenarioFactory'
@@ -17,10 +17,12 @@ export function makeScenario(
   const catalog = createDefaultCatalog()
   const registry = createDefaultTemplateRegistry()
   const provider = new FixtureScenarioProvider()
+  const template = registry.listAll().find((t) => t.templateId === templateId)
+  if (!template) throw new Error(`unknown template: ${templateId}`)
   const candidate = provider.generate({
-    targetOperationId: OP_FILTER,
+    targetOperationId: template.targetOperationId,
     mode,
-    allowedTemplateIds: ['tmpl-filter-basic', 'tmpl-filter-chain'],
+    allowedTemplateIds: [templateId],
     templateId,
     dslVersion: DSL_VERSION,
     currentScenarioRevision: null,
@@ -30,6 +32,18 @@ export function makeScenario(
     throw new Error(`scenario build failed: ${result.issues.map((i) => i.message).join(' / ')}`)
   }
   return result.value
+}
+
+/** 実行可能な全template × supportedModes の組（横断検証用） */
+export function executableTemplateModes(): readonly {
+  templateId: TemplateId
+  mode: ScenarioMode
+}[] {
+  const registry = createDefaultTemplateRegistry()
+  return registry
+    .listAll()
+    .filter((t) => t.executable !== false)
+    .flatMap((t) => t.supportedModes.map((mode) => ({ templateId: t.templateId, mode })))
 }
 
 export function makeDefinition(

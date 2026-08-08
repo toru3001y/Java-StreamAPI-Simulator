@@ -9,9 +9,11 @@ export type ValidationCode =
   | 'SLOT_MISSING'
   | 'WHITELIST_FIELD'
   | 'WHITELIST_OPERATOR'
+  | 'WHITELIST_KIND'
   | 'TYPE_MISMATCH'
   | 'TEACHING_CONSTRAINT'
   | 'SNAPSHOT_BUDGET'
+  | 'UNBOUNDED_SOURCE'
 
 export interface ValidationIssue {
   readonly code: ValidationCode
