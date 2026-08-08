@@ -164,11 +164,15 @@ export function validateSourceStructure(input: unknown, path = 'source'): Result
     }
     case 'range':
     case 'rangeClosed':
-      if (typeof obj['from'] !== 'number' || !Number.isInteger(obj['from'])) {
-        issues.push(issue('TYPE_MISMATCH', 'range境界fromはint定数が必要です', `${path}.from`))
+      if (!isInt32(obj['from'])) {
+        issues.push(
+          issue('TYPE_MISMATCH', 'range境界fromはJava int範囲のint定数が必要です', `${path}.from`),
+        )
       }
-      if (typeof obj['to'] !== 'number' || !Number.isInteger(obj['to'])) {
-        issues.push(issue('TYPE_MISMATCH', 'range境界toはint定数が必要です', `${path}.to`))
+      if (!isInt32(obj['to'])) {
+        issues.push(
+          issue('TYPE_MISMATCH', 'range境界toはJava int範囲のint定数が必要です', `${path}.to`),
+        )
       }
       break
     case 'empty':

@@ -274,6 +274,56 @@ describe('P2-D07 iterate 3引数', () => {
     if (!badSeed.ok) expect(badSeed.issues[0]?.code).toBe('TYPE_MISMATCH')
   })
 
+  it('P2-D07: int境界の有限な候補は受理し、実際にoverflowする場合だけ拒否する（再レビュー対応）', () => {
+    const run = (seed: number, operator: 'LTE' | 'LT', value: number, step: number) =>
+      instantiateTemplate(registry, catalog, {
+        templateId: 'tmpl-src-iterate3',
+        templateVersion: 1,
+        dataset: [],
+        dslParameters: {
+          'slot-source': {
+            kind: 'iterate3',
+            seed,
+            predicate: { operator, value },
+            operator: { ruleId: 'increment', step },
+          },
+        },
+        mode: 'standard',
+        revision: `test-boundary-${operator}-${value}-${step}`,
+      })
+
+    // a. seed=2147483640, n < 2147483647, step=7:
+    //    false候補は2147483647でint範囲内 → 受理、結果は[2147483640]
+    const a = run(2_147_483_640, 'LT', 2_147_483_647, 7)
+    expect(a.ok).toBe(true)
+    if (a.ok) {
+      expect(a.value.iterateTrace).toEqual([
+        { value: 2_147_483_640, passed: true },
+        { value: 2_147_483_647, passed: false },
+      ])
+      const last = runAllSnapshots(a.value).at(-1)
+      expect(last?.output.items.map((i) => i.label)).toEqual(['2147483640'])
+    }
+
+    // b. seed=2147483640, n <= 2147483645, step=7: 同じくfalse候補2147483647で終了 → 受理
+    const b = run(2_147_483_640, 'LTE', 2_147_483_645, 7)
+    expect(b.ok).toBe(true)
+    if (b.ok) {
+      expect(b.value.iterateTrace).toEqual([
+        { value: 2_147_483_640, passed: true },
+        { value: 2_147_483_647, passed: false },
+      ])
+      const last = runAllSnapshots(b.value).at(-1)
+      expect(last?.output.items.map((i) => i.label)).toEqual(['2147483640'])
+    }
+
+    // c. seed=2147483640, n <= 2147483647, step=7:
+    //    2147483647も通過候補となり、次のoperator適用でint overflowするため拒否
+    const c = run(2_147_483_640, 'LTE', 2_147_483_647, 7)
+    expect(c.ok).toBe(false)
+    if (!c.ok) expect(c.issues[0]?.code).toBe('TYPE_MISMATCH')
+  })
+
   it('P2-D07: seedが即falseの場合は空ソースになる', () => {
     const def = makeDefinition('tmpl-src-iterate3', 'emptySource')
     expect(def.dataset).toHaveLength(0)
@@ -301,6 +351,36 @@ describe('P2-D08 range / rangeClosed', () => {
     const def = makeDefinition('tmpl-src-range-closed', 'standard')
     const last = runAllSnapshots(def).at(-1)
     expect(last?.output.items.map((i) => i.label)).toEqual(['1', '2', '3', '4', '5'])
+  })
+
+  it('P2-D08: range/rangeClosedの境界はJava int範囲に限定される（再レビュー対応）', () => {
+    for (const kind of ['range', 'rangeClosed'] as const) {
+      // 構造検証で拒否
+      const badFrom = validateSourceStructure({ kind, from: 3_000_000_000, to: 5 })
+      expect(badFrom.ok, `${kind}:from`).toBe(false)
+      if (!badFrom.ok) expect(badFrom.issues[0]?.code).toBe('TYPE_MISMATCH')
+      const badTo = validateSourceStructure({ kind, from: 1, to: -3_000_000_000 })
+      expect(badTo.ok, `${kind}:to`).toBe(false)
+      if (!badTo.ok) expect(badTo.issues[0]?.code).toBe('TYPE_MISMATCH')
+      // int範囲内は受理
+      expect(validateSourceStructure({ kind, from: -2_147_483_648, to: 5 }).ok).toBe(true)
+    }
+    // instantiate経由でもPipelineDefinition生成前に拒否される（コンパイル不能なintリテラルを出力しない）
+    for (const [templateId, kind] of [
+      ['tmpl-src-range', 'range'],
+      ['tmpl-src-range-closed', 'rangeClosed'],
+    ] as const) {
+      const result = instantiateTemplate(registry, catalog, {
+        templateId,
+        templateVersion: 1,
+        dataset: [],
+        dslParameters: { 'slot-source': { kind, from: 1, to: 3_000_000_000 } },
+        mode: 'standard',
+        revision: `test-int32-${kind}`,
+      })
+      expect(result.ok, templateId).toBe(false)
+      if (!result.ok) expect(result.issues[0]?.code).toBe('TYPE_MISMATCH')
+    }
   })
 
   it('P2-D08: 空範囲は要素を送出しない', () => {

@@ -336,15 +336,22 @@ export function instantiateTemplate(
       ])
     }
     if (seedPasses) {
-      // 最終候補（predicateをfalseにする値）までJava int範囲に収まること
-      if (predicate.value + operator.step > INT32_MAX) {
+      // predicateを通過する正確な要素数
+      const bound = predicate.operator === 'LTE' ? predicate.value : predicate.value - 1
+      const passingCount = Math.floor((bound - seed) / operator.step) + 1
+      // 最終候補（predicateをfalseにする値 = seed + passingCount * step）が
+      // Java int範囲に収まること。predicate.value + stepではなく実際のfalse候補を基準にする
+      const maxSafeIncrements = Math.floor((INT32_MAX - seed) / operator.step)
+      if (passingCount > maxSafeIncrements) {
         return fail([
-          issue('TYPE_MISMATCH', 'iterateの候補値がJava intの範囲を超えます', 'source'),
+          issue(
+            'TYPE_MISMATCH',
+            `iterateの候補値がJava intの範囲を超えます（${passingCount}回目のoperator適用でoverflowします）`,
+            'source',
+          ),
         ])
       }
       // 予算の下限見積り（候補 + 判定 + 送出 + 追加 + 初期/確定/消費）で事前検証
-      const bound = predicate.operator === 'LTE' ? predicate.value : predicate.value - 1
-      const passingCount = Math.floor((bound - seed) / operator.step) + 1
       if (4 * passingCount + 5 > SNAPSHOT_LIMIT) {
         return fail([
           issue(

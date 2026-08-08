@@ -1,6 +1,6 @@
 # Phase 2 完了報告書
 
-- 報告日: 2026-08-08（最終レビュー指摘3件の修正を反映して同日更新）
+- 報告日: 2026-08-08（最終レビュー指摘3件 + 再レビューのsource境界値2件の修正を反映して同日更新）
 - 基準仕様: `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`（Draft v0.8、無編集）
 - 実装指示: `docs/Claude_Code_Phase2_Implementation_Instructions.md`
 - Phase 1記録（`docs/phase-1-completion-report.md` / `phase-1-decisions.md`）は保持・無変更
@@ -29,6 +29,23 @@
    `tmpl-src-arrays-double`（`double[] rates = { 1.5, 2.5, 4.0 }`）を各標準/空ソースmodeのfixture付きで追加し、
    教材Pipeline選択UIから選択可能にした。型・index・順序・Javaコード・boxed後結果を
    P2-D04 / P2-R03 / P2-E01の拡張で検証。snapshot予算一覧へ4行追加（各標準18 / 空3）。
+
+### 再レビュー指摘2件（source境界値）の修正（本報告へ反映済み）
+
+4. **iterate3のoverflow判定の修正**: 従来の `predicate.value + step > INT32_MAX` は実際の最終候補ではなく、
+   有限で正常な候補も誤って拒否していた。predicateを通過する正確な要素数 `passingCount` を先に計算し、
+   false候補への到達に必要なincrement回数（= passingCount）を
+   `maxSafeIncrements = Math.floor((INT32_MAX - seed) / step)` と比較して、
+   `passingCount > maxSafeIncrements` の場合だけJava int overflowとして拒否するよう修正。
+   P2-D07へ境界3ケースを追加:
+   - `seed=2147483640, n < 2147483647, step=7` → 受理、結果`[2147483640]`、false候補2147483647で終了
+   - `seed=2147483640, n <= 2147483645, step=7` → 受理、同上
+   - `seed=2147483640, n <= 2147483647, step=7` → 次のoperator適用でoverflowするため拒否
+   既存のstep=0 / 負step / snapshot予算 / int範囲外テストは全て維持・成功。
+5. **range / rangeClosedのJava int範囲検証**: `validateSourceStructure` でfrom / toの両方に
+   int32チェックを適用し、`3_000_000_000` / `-3_000_000_000` 等をTYPE_MISMATCHとして
+   PipelineDefinition生成前に拒否（コンパイル不能なintリテラルをJavaコードへ出力しない）。
+   P2-D08へrange / rangeClosed両方の検証（構造検証 + instantiate経由）を追加。
 
 ## 2. 基準mainコミットと作業ブランチ
 
@@ -102,7 +119,7 @@
 | 1 | `npm ci` | 成功、0 vulnerabilities |
 | 2 | `npm run lint`（oxlint） | 成功、警告0 |
 | 3 | `npm run typecheck`（`tsc -b`、strict） | 成功、エラー0 |
-| 4 | `npm run test:unit`（Vitest） | 17ファイル / 137テスト 全成功 |
+| 4 | `npm run test:unit`（Vitest） | 17ファイル / 139テスト 全成功 |
 | 5 | `npm run build` | 成功 |
 | 6 | `npx playwright test`（build + preview + E2E + 視覚回帰） | 25テスト全成功 |
 | 7 | `npm run test:oracle` | P1-O01 PASSED / P2-O01 PASSED |
@@ -114,15 +131,15 @@
 
 | 種別 | 総数 | 成功 | 失敗 | skip | 未実行 |
 |---|---|---|---|---|---|
-| Domain単体（Vitest） | 103 | 103 | 0 | 0 | 0 |
+| Domain単体（Vitest） | 105 | 105 | 0 | 0 | 0 |
 | 履歴・Application（Vitest） | 17 | 17 | 0 | 0 | 0 |
 | React統合（Vitest + RTL） | 17 | 17 | 0 | 0 | 0 |
 | E2E・視覚（Playwright PC 1280 / 狭幅 375） | 25 | 25 | 0 | 0 | 0 |
 | JDK 25 Oracle（Docker） | 2 | 2 | 0 | 0 | 0 |
-| **合計** | **164** | **164** | **0** | **0** | **0** |
+| **合計** | **166** | **166** | **0** | **0** | **0** |
 
-内訳: P1由来 65（unit）+ 13（E2E）+ 1（Oracle）、P2追加 72（unit、レビュー対応の回帰7件を含む）+
-12（E2E）+ 1（Oracle）。
+内訳: P1由来 65（unit）+ 13（E2E）+ 1（Oracle）、P2追加 74（unit、レビュー対応の回帰7件 +
+再レビュー対応の境界値2件を含む）+ 12（E2E）+ 1（Oracle）。
 
 ## 9. P2必須52テストIDの対応表
 
