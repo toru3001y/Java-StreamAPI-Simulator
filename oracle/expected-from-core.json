@@ -1,0 +1,7 @@
+{
+  "standard": ["佐藤", "高橋"],
+  "midEmpty": [],
+  "emptySource": [],
+  "chain": ["高橋"],
+  "standardUnmodifiable": true
+}
