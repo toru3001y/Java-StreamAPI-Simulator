@@ -389,9 +389,11 @@ J-2のうち`teeing`左右2系統の例外規定は**未決定のまま維持**�
 
 ## 25. push・PR・mergeについて
 
-Phase 3本体（`7c7acdb` / `001a6c6`）は、完了報告後のユーザー指示により
-`origin/phase-3`へpush済み。**Pull Request作成、mainへのmergeは行っていない。**
-レビュー修正commit（§26）はローカルのみで、pushしていない。
+- Phase 3本体commit（`7c7acdb` / `001a6c6`）は、完了報告後のユーザー指示により
+  `origin/phase-3`へpush済み。
+- レビュー修正commit `29a3975` と完了報告追記commit `b65d2c5`（§26）も、
+  ユーザー指示により`origin/phase-3`へpush済み。
+- **Pull Requestは未作成、mainへのmergeは未実施。**
 
 ## 26. レビュー対応（2026-08-08、HEAD `001a6c6`時点の指摘）
 
