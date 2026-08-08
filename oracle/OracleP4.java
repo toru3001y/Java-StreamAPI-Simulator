@@ -235,8 +235,10 @@ public class OracleP4 {
                 + statsDouble.getMin() + "," + statsDouble.getMax() + "," + statsDouble.getAverage() + "],"
                 + "\"statsIntEmpty\":[" + statsIntEmpty.getCount() + "," + statsIntEmpty.getSum() + ","
                 + statsIntEmpty.getMin() + "," + statsIntEmpty.getMax() + "," + statsIntEmpty.getAverage() + "],"
+                // 64bit境界値（Long.MAX_VALUE / Long.MIN_VALUE）はJavaScript numberの精度損失を
+                // 避けるため10進文字列として出力する（レビュー対応・P4-O02）
                 + "\"statsLongEmpty\":[" + statsLongEmpty.getCount() + "," + statsLongEmpty.getSum() + ","
-                + statsLongEmpty.getMin() + "," + statsLongEmpty.getMax() + "," + statsLongEmpty.getAverage() + "],"
+                + "\"" + statsLongEmpty.getMin() + "\",\"" + statsLongEmpty.getMax() + "\"," + statsLongEmpty.getAverage() + "],"
                 + "\"statsDoubleEmptyCount\":" + statsDoubleEmpty.getCount() + ","
                 + "\"statsDoubleEmptyMinIsPositiveInfinity\":"
                 + (statsDoubleEmpty.getMin() == Double.POSITIVE_INFINITY) + ","

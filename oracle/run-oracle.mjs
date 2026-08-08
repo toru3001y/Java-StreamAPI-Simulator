@@ -1,8 +1,12 @@
 /**
  * JDK 25 Oracle照合ランナー。
- * Docker上のJDK 25でOracleP1.java / OracleP2.java / OracleP3.javaを実行し、
+ * Docker上のJDK 25でOracleP1〜P4.javaを実行し、
  * Simulation Core由来の期待値（expected-*.json）と照合する。
  * 期待値ファイルとSimulation Coreの一致は tests/domain/*oracleSync* テストで保証する。
+ *
+ * P1〜P3は照合だけを行い、証跡ファイル（artifacts/phase-1〜3）へは書き込まない。
+ * 証跡を書き込むのは`writeReportPath`を持つsuite（P4のみ）である（oracle-lib.mjs参照）。
+ * いずれかのsuiteが失敗した場合はコマンド全体を失敗させる。
  *
  * 再実行手順: npm run test:oracle
  */
@@ -10,40 +14,22 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  allSuitesPassed,
+  buildReport,
+  compareOracle,
+  LONG_MAX_STRING,
+  LONG_MIN_STRING,
+  SUITES,
+  verifyLongBoundaryStrings,
+} from './oracle-lib.mjs'
 
 const oracleDir = path.dirname(fileURLToPath(import.meta.url))
 const projectRoot = path.dirname(oracleDir)
 const IMAGE = 'gradle:9.6.1-jdk25'
 const MARKER = '---RESULT---'
 
-const SUITES = [
-  {
-    id: 'P1-O01',
-    javaFile: 'OracleP1.java',
-    expectedFile: 'expected-from-core.json',
-    reportPath: ['artifacts', 'phase-1', 'oracle-result.md'],
-  },
-  {
-    id: 'P2-O01',
-    javaFile: 'OracleP2.java',
-    expectedFile: 'expected-p2-from-core.json',
-    reportPath: ['artifacts', 'phase-2', 'oracle-result.md'],
-  },
-  {
-    id: 'P3-O01',
-    javaFile: 'OracleP3.java',
-    expectedFile: 'expected-p3-from-core.json',
-    reportPath: ['artifacts', 'phase-3', 'oracle-result.md'],
-  },
-  {
-    id: 'P4-O01',
-    javaFile: 'OracleP4.java',
-    expectedFile: 'expected-p4-from-core.json',
-    reportPath: ['artifacts', 'phase-4', 'oracle-result.md'],
-  },
-]
-
-let allPassed = true
+const results = []
 
 for (const suite of SUITES) {
   const expected = JSON.parse(readFileSync(path.join(oracleDir, suite.expectedFile), 'utf8'))
@@ -85,45 +71,60 @@ for (const suite of SUITES) {
     process.exit(1)
   }
 
-  const expectedText = JSON.stringify(expected)
-  const actualText = JSON.stringify(actual)
-  const passed = expectedText === actualText
-  allPassed &&= passed
+  const comparison = compareOracle(expected, actual)
+  let passed = comparison.passed
+  const extraSections = []
 
-  const report = [
-    `# ${suite.id} JDK 25 Oracle Test 結果`,
-    '',
-    `実行日時: ${new Date().toISOString()}`,
-    `Dockerイメージ: ${IMAGE}`,
-    `対象: ${suite.javaFile}`,
-    '',
-    '## java -version',
-    '```',
-    (versionPart ?? '').trim(),
-    '```',
-    '',
-    '## 照合結果',
-    `- 期待値（Simulation Core由来）: ${expectedText}`,
-    `- 実測値（JDK 25実行結果）    : ${actualText}`,
-    `- 判定: ${passed ? 'PASS（完全一致）' : 'FAIL（不一致）'}`,
-    '',
-    ...(observations.length > 0
-      ? [
-          '## 観測記録（厳密比較の対象外。JDKの保証として扱わない）',
-          ...observations.map((line) => `- ${line.replace('OBSERVATION: ', '')}`),
-          '',
-        ]
-      : []),
-  ].join('\n')
+  // P4: 64bit境界値がstringのまま損失なく保持されていることを期待値・実測値の双方で検証する
+  if (suite.id === 'P4-O01') {
+    const expectedBoundary = verifyLongBoundaryStrings(expected)
+    const actualBoundary = verifyLongBoundaryStrings(actual)
+    if (!expectedBoundary.ok || !actualBoundary.ok) {
+      passed = false
+      console.error(`${suite.id} FAILED: Long境界値の検証に失敗しました。`)
+      if (!expectedBoundary.ok) console.error(`  expected: ${expectedBoundary.reason}`)
+      if (!actualBoundary.ok) console.error(`  actual: ${actualBoundary.reason}`)
+    }
+    extraSections.push(
+      '## Long境界値の照合（P4-O02の照合対象）',
+      `- Long.MAX_VALUE（空LongSummaryStatisticsのmin）: \`${LONG_MAX_STRING}\``,
+      `- Long.MIN_VALUE（空LongSummaryStatisticsのmax）: \`${LONG_MIN_STRING}\``,
+      '- 10進文字列として出力・比較し、JavaScript numberへ変換していない（1桁も損失しない）',
+      `- 期待値・実測値双方のstring型検証: ${expectedBoundary.ok && actualBoundary.ok ? 'PASS' : 'FAIL'}`,
+      '',
+      '## 関連する機械検証',
+      '- P4-O02（Long境界値の損失なし照合・近接誤値の不一致判定）: `tests/domain/p4-review.test.ts`',
+      '- P4-O03（P1〜P3は照合のみ・P4だけ証跡書込み）: `tests/domain/p4-review.test.ts`',
+      '- 期待値とSimulation Coreの一致: `tests/domain/p4-oracleSync.test.ts`',
+    )
+  }
 
-  const reportFile = path.join(projectRoot, ...suite.reportPath)
-  mkdirSync(path.dirname(reportFile), { recursive: true })
-  writeFileSync(reportFile, report, 'utf8')
+  results.push({ id: suite.id, passed })
+
+  const report = buildReport({
+    suiteId: suite.id,
+    image: IMAGE,
+    javaFile: suite.javaFile,
+    versionText: (versionPart ?? '').trim(),
+    expectedText: comparison.expectedText,
+    actualText: comparison.actualText,
+    passed,
+    observations,
+    extraSections,
+  })
+
+  // 証跡ファイルはwriteReportPathを持つsuite（P4）だけが更新する。
+  // P1〜P3は照合のみ（標準出力への表示だけを行い、artifactsへ書き込まない）
+  if (suite.writeReportPath) {
+    const reportFile = path.join(projectRoot, ...suite.writeReportPath)
+    mkdirSync(path.dirname(reportFile), { recursive: true })
+    writeFileSync(reportFile, report, 'utf8')
+  }
   console.log(report)
   console.log(passed ? `${suite.id} PASSED` : `${suite.id} FAILED`)
 }
 
-if (!allPassed) {
+if (!allSuitesPassed(results)) {
   console.error('Oracle照合に失敗したケースがあります。')
   process.exit(1)
 }

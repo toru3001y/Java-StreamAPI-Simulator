@@ -168,6 +168,52 @@ export function combinerToJavaExpr(identity: ReductionIdentity): string {
   }
 }
 
+/**
+ * Java文字列リテラルの生成（レビュー対応）。
+ * 元の文字列値を変更せず、同じ値を表す正当なJava 25文字列リテラルへエスケープする。
+ * 生の改行・未エスケープ引用符をJavaコード表示へ混入させない。
+ * 現時点の適用範囲はstring identityのみ（未確認の別DSLへは広げない）。
+ */
+function javaStringLiteral(value: string): string {
+  let escaped = ''
+  for (const ch of value) {
+    switch (ch) {
+      case '\\':
+        escaped += '\\\\'
+        break
+      case '"':
+        escaped += '\\"'
+        break
+      case '\n':
+        escaped += '\\n'
+        break
+      case '\r':
+        escaped += '\\r'
+        break
+      case '\t':
+        escaped += '\\t'
+        break
+      case '\b':
+        escaped += '\\b'
+        break
+      case '\f':
+        escaped += '\\f'
+        break
+      default: {
+        const code = ch.codePointAt(0) ?? 0
+        // その他の制御文字（C0 / DEL / C1）はunicode escapeで安全に表現する
+        if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+          escaped += `\\u${code.toString(16).padStart(4, '0')}`
+        } else {
+          escaped += ch
+        }
+        break
+      }
+    }
+  }
+  return `"${escaped}"`
+}
+
 /** identityのJava literal */
 export function identityToJavaLiteral(identity: ReductionIdentity): string {
   switch (identity.type) {
@@ -178,7 +224,7 @@ export function identityToJavaLiteral(identity: ReductionIdentity): string {
     case 'double':
       return formatDoubleLiteral(Number(identity.value))
     case 'string':
-      return `"${identity.value}"`
+      return javaStringLiteral(String(identity.value))
   }
 }
 

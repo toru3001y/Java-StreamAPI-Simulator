@@ -104,3 +104,74 @@
 
 - J-2のうち`teeing`左右2系統の例外規定は**未決定のまま維持**し、Phase 5着手前に判断する
   （`docs/phase-3-decisions.md` §6を無変更で保持）。Phase 4では判断・実装していない。
+
+## 9. Phase 4再レビュー対応（2026-08-08追記）
+
+再レビュー指摘4件への修正判断。§1〜§8の承認済み判断は変更していない。
+修正範囲は指摘4件に限定し、Phase 5の先行実装・推測によるリファクタリングは行っていない。
+
+### 9.1 Terminal DSLのclosed schema検証（指摘1）
+
+- ReductionDsl / ReductionIdentity / ArrayGeneratorDslを**closed schema**として検証する。
+  variantごとの許可キー以外の追加フィールドは、Draft v0.8 §9.1が禁止する
+  任意Javaコード文字列・関数本文の混入経路になり得るため拒否する。
+- variantごとの許可フィールド:
+  - `numericSum`: `kind`のみ
+  - `stringConcat`: `kind`のみ
+  - `employeeFieldSum`: `kind` / `field`のみ
+  - ReductionIdentity: `type` / `value`のみ
+  - ArrayGeneratorDsl: `kind` / `elementTypeName`のみ
+- 共通処理`unknownFieldIssues`（`validateTerminal.ts`）が実入力キーと許可キー集合を照合し、
+  未知フィールドを`STRUCTURE_INVALID`のValidationIssue（パスは`reduction.functionBody`等）
+  として返す。例外は送出しない。3つの検証関数へ重複実装していない。
+- 既存の必須フィールド・型・ホワイトリスト検証と正規fixtureの受理は維持（P4-D41で検証）。
+
+### 9.2 string identityのJava文字列リテラルエスケープ（指摘2）
+
+- `identityToJavaLiteral`のstring caseを、単純な二重引用符囲みから
+  `javaStringLiteral`（`javaCode.ts`のprivate関数）によるエスケープ生成へ変更した。
+- エスケープ対象: `\\` `"` LF CR タブ backspace form feed、その他の制御文字
+  （C0 / DEL / C1）は`\uXXXX`。通常のASCII / 非制御文字は変更しない。
+- エスケープはJavaコード生成時だけに適用し、`ReductionIdentity.value`自体は変更しない。
+- 適用範囲はPhase 4で確認されたstring identityのみ（他DSLへ推測で拡大しない）。
+- P4-D42で、生成リテラルへ生の改行が混入しないこと・エスケープ解釈が元の文字列へ
+  復元されることを検証。
+
+### 9.3 Long境界値の10進文字列Oracle比較（指摘3）
+
+- 空`LongSummaryStatistics`のmin / max（`Long.MAX_VALUE` = 9223372036854775807 /
+  `Long.MIN_VALUE` = -9223372036854775808）はIEEE 754倍精度で表現できず、
+  JSON数値のままではJSON.parse時に丸められ、近接誤値を同一視し得た。
+- OracleP4.javaのJSON出力・`expected-p4-from-core.json`の双方で、この2値を
+  **10進文字列**として保持し、JavaScript numberへ変換せず文字列のまま比較する。
+- ランナーは`verifyLongBoundaryStrings`（`oracle-lib.mjs`）で期待値・実測値の双方が
+  string型かつ正確な10進値であることを検証し、失敗時はsuiteをFAILにする。
+- Longの通常値（60L等、safe integer内）は変更していない。findAnyの観測要素・
+  peek + countの呼出し回数は引き続き厳密比較の対象外（観測記録のみ）。
+- P4-O02で境界値の正確一致・近接誤値（±1）の不一致判定・round-trip不変を検証。
+
+### 9.4 Oracle証跡の書込み対象をP4に限定（指摘4）
+
+- suite定義を`oracle-lib.mjs`へ抽出し、証跡を書き込むPhaseを`writeReportPath`で
+  **明示**する構造にした（P1〜P3は`null` = 照合のみ、P4だけ
+  `artifacts/phase-4/oracle-result.md`）。配列位置への暗黙依存はない。
+- P1〜P3は比較結果を標準出力へ表示するだけで、artifactsへ書き込まない。
+  「一度書き換えてからgit restoreする」従来運用は廃止した。
+- いずれかのsuiteが失敗した場合は`allSuitesPassed`によりコマンド全体を失敗させる。
+- P4-O03でsuite構成（4件照合・書込みはP4のみ）と失敗集約を機械検証し、
+  実行前後の`artifacts/phase-1〜3`のSHA-256一致も確認した。
+
+### 9.5 追加テストID
+
+- P4-D41 / P4-D42 / P4-O02 / P4-O03（`tests/domain/p4-review.test.ts`）。
+  既存のP4必須68 IDは変更・削除せず、合計72 IDとなる。
+
+### 9.6 既知の課題（今回の修正範囲外として記録）
+
+- `npm run test:e2e`に含まれるPhase 1〜3のキャプチャspec（`e2e/capture.spec.ts` /
+  `p2-capture.spec.ts`ほか。過去Phaseテスト本文のため今回の変更禁止範囲）は、
+  実行時に`artifacts/phase-1〜3`のキャプチャPNGを現行UIで再生成する。
+  Oracle側は書込みをP4へ限定済み（§9.4）だが、E2E側のPhase分離は未対応。
+  今回はE2E実行後にHEADの内容をファイル書き戻しで復元し、開始時とのSHA-256
+  完全一致を確認した。恒久対応（キャプチャspecの書込み先限定または実行条件化）は
+  過去Phaseテスト本文の変更を伴うため、次回のレビュー判断へ持ち越す。
