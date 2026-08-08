@@ -35,6 +35,12 @@ const SUITES = [
     expectedFile: 'expected-p3-from-core.json',
     reportPath: ['artifacts', 'phase-3', 'oracle-result.md'],
   },
+  {
+    id: 'P4-O01',
+    javaFile: 'OracleP4.java',
+    expectedFile: 'expected-p4-from-core.json',
+    reportPath: ['artifacts', 'phase-4', 'oracle-result.md'],
+  },
 ]
 
 let allPassed = true
@@ -67,7 +73,10 @@ for (const suite of SUITES) {
   }
 
   const [versionPart, resultPart] = output.split(MARKER)
-  const jsonLine = (resultPart ?? '').trim().split('\n').filter(Boolean).pop() ?? ''
+  const resultLines = (resultPart ?? '').trim().split('\n').filter(Boolean)
+  const jsonLine = resultLines.pop() ?? ''
+  // OBSERVATION行は厳密比較の対象外の観測記録（findAnyの要素、peek + countの呼出し回数等）
+  const observations = resultLines.filter((line) => line.startsWith('OBSERVATION:'))
   let actual
   try {
     actual = JSON.parse(jsonLine)
@@ -98,6 +107,13 @@ for (const suite of SUITES) {
     `- 実測値（JDK 25実行結果）    : ${actualText}`,
     `- 判定: ${passed ? 'PASS（完全一致）' : 'FAIL（不一致）'}`,
     '',
+    ...(observations.length > 0
+      ? [
+          '## 観測記録（厳密比較の対象外。JDKの保証として扱わない）',
+          ...observations.map((line) => `- ${line.replace('OBSERVATION: ', '')}`),
+          '',
+        ]
+      : []),
   ].join('\n')
 
   const reportFile = path.join(projectRoot, ...suite.reportPath)

@@ -51,6 +51,26 @@ export type ParameterSlot =
       readonly kind: 'count'
       readonly required: boolean
     }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'reduction'
+      readonly required: boolean
+      readonly allowedReductionKinds: readonly string[]
+    }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'identity'
+      readonly required: boolean
+    }
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'arrayGenerator'
+      readonly required: boolean
+      readonly allowedElementTypeNames: readonly string[]
+    }
 
 export interface PipelineTemplateNode {
   readonly nodeId: NodeId

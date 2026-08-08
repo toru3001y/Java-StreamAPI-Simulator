@@ -15,6 +15,125 @@ const INDEXED_SOURCE_KINDS = [
 ] as const
 
 /**
+ * 終端結果の表示（Phase 4指示 §7・§12）。
+ * UIはsnapshotへ確定済みのresult viewだけを描画し、独自計算しない。
+ */
+function TerminalResultOutput({ snapshot }: { snapshot: SessionState['snapshot'] }) {
+  const result = snapshot.output.result
+  switch (result.kind) {
+    case 'LIST':
+      return (
+        <>
+          {snapshot.output.items.length === 0 ? (
+            <p className="empty-note" data-testid="output-empty">
+              []（0件）
+            </p>
+          ) : (
+            <ol className="element-list output-list" data-testid="output-list">
+              {snapshot.output.items.map((item) => (
+                <li key={item.id} data-element-id={item.id}>
+                  {item.label}
+                </li>
+              ))}
+            </ol>
+          )}
+          <p className="output-count">{snapshot.output.count}件</p>
+        </>
+      )
+    case 'SCALAR':
+      return (
+        <p className="scalar-result" data-testid="output-scalar">
+          <code>{result.valueLabel}</code>
+          <span className="scalar-type">（{result.typeLabel}）</span>
+        </p>
+      )
+    case 'OPTIONAL':
+      return (
+        <div data-testid="output-optional" data-present={result.present || undefined}>
+          {result.present ? (
+            <p className="optional-result">
+              <code data-testid="optional-value">
+                {result.optionalTypeLabel}[{result.valueLabel}]
+              </code>
+              <span className="scalar-type">
+                （present
+                {result.elementTypeLabel ? ` / 要素型: ${result.elementTypeLabel}` : ''}）
+              </span>
+            </p>
+          ) : (
+            <p className="optional-result" data-testid="optional-empty">
+              <code>{result.optionalTypeLabel}.empty()</code>
+              <span className="scalar-type">（empty）</span>
+            </p>
+          )}
+        </div>
+      )
+    case 'ARRAY':
+      return (
+        <div data-testid="output-array">
+          <p className="array-meta" data-testid="array-meta">
+            component type: <code>{result.componentTypeLabel}</code> / length: {result.length}
+          </p>
+          {result.length === 0 ? (
+            <p className="empty-note">長さ0の{result.componentTypeLabel}[]です</p>
+          ) : (
+            <ol className="element-list output-list" data-testid="array-items" start={0}>
+              {result.items.map((item) => (
+                <li key={item.index} data-index={item.index}>
+                  <span className="element-index">[{item.index}]</span> {item.label}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      )
+    case 'STATISTICS':
+      return (
+        <table className="stats-table" data-testid="output-statistics">
+          <tbody>
+            <tr>
+              <th>count</th>
+              <td data-testid="stats-count">{result.countLabel}</td>
+            </tr>
+            <tr>
+              <th>sum</th>
+              <td data-testid="stats-sum">{result.sumLabel}</td>
+            </tr>
+            <tr>
+              <th>min</th>
+              <td data-testid="stats-min">{result.minLabel}</td>
+            </tr>
+            <tr>
+              <th>average</th>
+              <td data-testid="stats-average">{result.averageLabel}</td>
+            </tr>
+            <tr>
+              <th>max</th>
+              <td data-testid="stats-max">{result.maxLabel}</td>
+            </tr>
+            {result.emptyNote && (
+              <tr>
+                <td colSpan={2} className="empty-note" data-testid="stats-empty-note">
+                  {result.emptyNote}
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      )
+    case 'VOID':
+      return (
+        <p className="scalar-result" data-testid="output-void">
+          <code>void</code>
+          <span className="scalar-type">
+            （戻り値なし。Consumerの副作用はSide Effectビューを参照）
+          </span>
+        </p>
+      )
+  }
+}
+
+/**
  * MainSimulation（§17.1）: 全幅の入力 → 処理中 → 出力。
  * snapshot確定時に全列を同期し、UIは確定snapshotの値だけを描画する。
  */
@@ -185,20 +304,7 @@ export function MainSimulation({ state }: { state: SessionState }) {
             {snapshot.output.resultTypeLabel}
             {snapshot.output.confirmed && <span className="badge badge-confirmed">確定</span>}
           </p>
-          {snapshot.output.items.length === 0 ? (
-            <p className="empty-note" data-testid="output-empty">
-              []（0件）
-            </p>
-          ) : (
-            <ol className="element-list output-list" data-testid="output-list">
-              {snapshot.output.items.map((item) => (
-                <li key={item.id} data-element-id={item.id}>
-                  {item.label}
-                </li>
-              ))}
-            </ol>
-          )}
-          <p className="output-count">{snapshot.output.count}件</p>
+          <TerminalResultOutput snapshot={snapshot} />
         </div>
       </div>
     </section>

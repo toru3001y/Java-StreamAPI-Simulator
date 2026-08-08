@@ -55,6 +55,7 @@ export function ScenarioControls({ app, state }: { app: AppInstance; state: Sess
 
   const sourceCategory = app.operations.filter((op) => op.category === 'source')
   const intermediateCategory = app.operations.filter((op) => op.category === 'intermediate')
+  const terminalCategory = app.operations.filter((op) => op.category === 'terminal')
 
   return (
     <section
@@ -91,7 +92,14 @@ export function ScenarioControls({ app, state }: { app: AppInstance; state: Sess
                 </option>
               ))}
             </optgroup>
-            <optgroup label="未実装（Phase 3以降）">
+            <optgroup label={CATEGORY_LABELS['terminal'] ?? '終端'}>
+              {terminalCategory.map((op) => (
+                <option key={op.operationId} value={op.operationId}>
+                  {op.displayName}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="未実装（Phase 5以降）">
               {UNIMPLEMENTED_OPERATIONS.map((op) => (
                 <option key={op.name} value={`unimplemented-${op.name}`} disabled>
                   {op.name}（Phase {op.phase}で実装予定）

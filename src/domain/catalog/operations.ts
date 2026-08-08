@@ -42,6 +42,23 @@ export const OP_PEEK = 'peek'
 // ---- terminal ----
 export const OP_TO_LIST = 'toList'
 
+// ---- Phase 4 terminal（指示§6・§9） ----
+export const OP_REDUCE = 'reduce'
+export const OP_COUNT = 'count'
+export const OP_MIN = 'min'
+export const OP_MAX = 'max'
+export const OP_FIND_FIRST = 'findFirst'
+export const OP_FIND_ANY = 'findAny'
+export const OP_ANY_MATCH = 'anyMatch'
+export const OP_ALL_MATCH = 'allMatch'
+export const OP_NONE_MATCH = 'noneMatch'
+export const OP_SUM = 'sum'
+export const OP_AVERAGE = 'average'
+export const OP_SUMMARY_STATISTICS = 'summaryStatistics'
+export const OP_TO_ARRAY = 'toArray'
+export const OP_FOR_EACH = 'forEach'
+export const OP_FOR_EACH_ORDERED = 'forEachOrdered'
+
 function sourceDef(
   operationId: string,
   displayName: string,
@@ -384,6 +401,119 @@ export function createDefaultCatalog(): OperationCatalog {
     sourceRefs: ['JDK25-STREAM'],
     displayName: 'toList()',
   })
+
+  // ---- Phase 4 terminal（指示§9）。terminal内部の累積状態はJava API上の
+  // stateful intermediate operationとは別概念のため、STATEFUL traitは付けない ----
+  const terminalDef = (
+    operationId: string,
+    displayName: string,
+    shortCircuiting: boolean,
+    visualizationKind: string,
+    jdkNotes: readonly string[],
+    sourceRefs: readonly string[],
+    legendStates: OperationDefinition['legendStates'] = ['UNEVALUATED', 'PROCESSING', 'PASSED'],
+  ): OperationDefinition => ({
+    operationId,
+    category: 'terminal',
+    traits: shortCircuiting ? ['TERMINAL', 'SHORT_CIRCUITING'] : ['TERMINAL'],
+    inputTypeRule: { kind: 'anyStreamLike' },
+    outputTypeRule: { kind: 'fromTerminal' },
+    handlerId: `handler.${operationId}`,
+    visualizationKind,
+    legendStates,
+    jdkNotes,
+    sourceRefs,
+    displayName,
+  })
+
+  catalog.register(
+    terminalDef(OP_REDUCE, 'reduce', false, '累積リダクション型', [
+      'accumulatorは結合則（associativity）を満たす必要がある。',
+      'identityなしのreduceは空StreamでOptionalを返す。identityありは空Streamでidentityを返す。',
+      'combinerはparallel reductionで部分結果を結合するために必要となる。sequential実行では呼ばれない。',
+    ], ['JDK25-STREAM', 'JDK25-STREAM-PKG']),
+  )
+  catalog.register(
+    terminalDef(OP_COUNT, 'count', false, '累積リダクション型', [
+      'countは要素数をlongで返す。',
+      'JDKは結果を直接算出できる場合、Pipeline（peek等）の評価を省略することがある。常に省略される保証も、必ず評価される保証もない。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_MIN, 'min', false, '候補更新型', [
+      'minは現在候補と現在要素を比較し、小さい方を候補として維持する。空StreamはOptionalを返す。',
+    ], ['JDK25-STREAM', 'JDK25-INTSTREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_MAX, 'max', false, '候補更新型', [
+      'maxは現在候補と現在要素を比較し、大きい方を候補として維持する。空StreamはOptionalを返す。',
+    ], ['JDK25-STREAM', 'JDK25-INTSTREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_FIND_FIRST, 'findFirst', true, '短絡検索・判定型', [
+      'findFirstはordered Streamでencounter orderの最初の要素を返す。',
+      'encounter orderがないStreamでは、findFirstでも任意の要素が返り得る。',
+      '結果確定後の残り要素は評価されない（short-circuiting）。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_FIND_ANY, 'findAny', true, '短絡検索・判定型', [
+      'findAnyはどの要素が返るかをJDKが保証しない（特にparallel実行）。教材fixtureの選択は再現可能だが、JDKの保証ではない。',
+      '結果確定後の残り要素は評価されない（short-circuiting）。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_ANY_MATCH, 'anyMatch', true, '短絡検索・判定型', [
+      'anyMatchは最初のtrueで結果確定する。空Streamの結果はfalse。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_ALL_MATCH, 'allMatch', true, '短絡検索・判定型', [
+      'allMatchは最初のfalseで結果確定する。',
+      '空Streamの結果はtrue（vacuous truth: 反例が存在しないため）。Predicateは一度も評価されない。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_NONE_MATCH, 'noneMatch', true, '短絡検索・判定型', [
+      'noneMatchは最初のtrueで結果確定する（結果はfalse）。',
+      '空Streamの結果はtrue（vacuous truth: 該当が存在しないため）。Predicateは一度も評価されない。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_SUM, 'sum', false, '累積リダクション型', [
+      'sumは累積合計を返す。空Streamは型別の0（0 / 0L / 0.0）。',
+    ], ['JDK25-INTSTREAM', 'JDK25-LONGSTREAM', 'JDK25-DOUBLESTREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_AVERAGE, 'average', false, '累積リダクション型', [
+      'averageは合計と件数から平均を計算しOptionalDoubleを返す。空StreamはOptionalDouble.empty()。',
+    ], ['JDK25-INTSTREAM', 'JDK25-LONGSTREAM', 'JDK25-DOUBLESTREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_SUMMARY_STATISTICS, 'summaryStatistics', false, '累積リダクション型', [
+      'summaryStatisticsはcount / sum / min / average / maxを同時に集計する。',
+      '空Streamのmin / maxは型の正規初期値（MAX_VALUE / MIN_VALUE、doubleは正負Infinity）になる。',
+    ], ['JDK25-INTSTATS', 'JDK25-LONGSTATS', 'JDK25-DOUBLESTATS']),
+  )
+  catalog.register(
+    terminalDef(OP_TO_ARRAY, 'toArray', false, '結果化型', [
+      'Stream.toArray()はObject[]を返す。toArray(generator)は指定した型の配列を返す。',
+      'primitive StreamのtoArray()はint[] / long[] / double[]を返す。',
+      '空Streamは正しいcomponent typeの長さ0配列を返す。',
+    ], ['JDK25-STREAM', 'JDK25-INTSTREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_FOR_EACH, 'forEach', false, '結果化型', [
+      'forEachの戻り値はvoidで、Consumerの副作用だけが残る。',
+      'parallel Streamではforeachの実行順序は保証されない。順序が必要な場合はforEachOrderedを使う（初版はsequential実行のみ）。',
+    ], ['JDK25-STREAM']),
+  )
+  catalog.register(
+    terminalDef(OP_FOR_EACH_ORDERED, 'forEachOrdered', false, '結果化型', [
+      'forEachOrderedはencounter orderでConsumerを実行する。戻り値はvoid。',
+      'sequential実行ではforEachと同じ順序になるが、parallelでの順序保証の有無が両者の違いである（初版はsequential実行のみ）。',
+    ], ['JDK25-STREAM']),
+  )
 
   return catalog
 }

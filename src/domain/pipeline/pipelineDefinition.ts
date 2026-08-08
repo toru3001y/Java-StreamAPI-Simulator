@@ -3,6 +3,7 @@ import type { ComparatorDsl } from '../dsl/comparatorAst'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
+import type { ArrayGeneratorDsl, ReductionDsl, ReductionIdentity } from '../dsl/terminalAst'
 import type { BoundednessMeta } from './boundedness'
 import type { IterateCandidate, SourceElement } from '../dsl/materializeSource'
 import type { JavaCodeLine } from '../dsl/javaCode'
@@ -30,6 +31,14 @@ export interface PipelineNodeDef {
   readonly consumer: ConsumerDsl | null
   /** limit / skipの検証済み引数（Phase 3指示 §6.4。Java APIの引数型はlong） */
   readonly count: number | null
+  /** reduceの検証済みReduction DSL（Phase 4指示 §8） */
+  readonly reduction: ReductionDsl | null
+  /** reduceの型付きidentity（identityなしはnull） */
+  readonly identity: ReductionIdentity | null
+  /** 3引数reduce（combinerあり）か */
+  readonly hasCombiner: boolean
+  /** toArray(generator)の検証済みgenerator（Phase 4指示 §8） */
+  readonly arrayGenerator: ArrayGeneratorDsl | null
   readonly inputType: TypeRef | null
   readonly outputType: TypeRef
   readonly lineId: LineId

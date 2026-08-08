@@ -1,21 +1,33 @@
 import type { ParameterSlot, PipelineTemplate, PipelineTemplateNode } from './pipelineTemplate'
 import { TemplateRegistry } from './templateRegistry'
 import {
+  OP_ALL_MATCH,
+  OP_ANY_MATCH,
+  OP_AVERAGE,
   OP_BOXED,
+  OP_COUNT,
   OP_DISTINCT,
   OP_DROP_WHILE,
   OP_FILTER,
+  OP_FIND_ANY,
+  OP_FIND_FIRST,
   OP_FLAT_MAP,
   OP_FLAT_MAP_TO_DOUBLE,
   OP_FLAT_MAP_TO_INT,
   OP_FLAT_MAP_TO_LONG,
+  OP_FOR_EACH,
+  OP_FOR_EACH_ORDERED,
   OP_LIMIT,
   OP_MAP,
   OP_MAP_TO_DOUBLE,
   OP_MAP_TO_INT,
   OP_MAP_TO_LONG,
   OP_MAP_TO_OBJ,
+  OP_MAX,
+  OP_MIN,
+  OP_NONE_MATCH,
   OP_PEEK,
+  OP_REDUCE,
   OP_SKIP,
   OP_SORTED,
   OP_SOURCE_ARRAYS_STREAM,
@@ -27,7 +39,10 @@ import {
   OP_SOURCE_RANGE,
   OP_SOURCE_RANGE_CLOSED,
   OP_SOURCE_STREAM_OF,
+  OP_SUM,
+  OP_SUMMARY_STATISTICS,
   OP_TAKE_WHILE,
+  OP_TO_ARRAY,
   OP_TO_LIST,
 } from '../catalog/operations'
 import { CONSUMER_ALLOWED_FIELDS } from '../dsl/consumerAst'
@@ -944,6 +959,459 @@ export const PEEK_MID_EMPTY_TEMPLATE: PipelineTemplate = {
   snapshotBudget: { limit: 500, estimatedMax: 25 },
 }
 
+// ---- Phase 4: 終端操作template（Phase 4指示 §11） ----
+
+/** terminalノード（Phase 4）。nodeIdはtoListと同じ'node-sink'で安定させる */
+function termNode(operationId: string, slotId: string | null = null) {
+  return { nodeId: 'node-sink', operationId, role: 'terminal' as const, slotId }
+}
+
+const employeeSource = {
+  slotId: null,
+  defaultDsl: { kind: 'collection', collectionId: 'employees' } as const,
+  allowedSourceKinds: ['collection'],
+}
+
+function p4Template(
+  templateId: string,
+  targetOperationId: string,
+  title: string,
+  sourceDefinition: PipelineTemplate['sourceDefinition'],
+  nodes: PipelineTemplate['nodes'],
+  parameterSlots: PipelineTemplate['parameterSlots'],
+  supportedModes: PipelineTemplate['supportedModes'],
+  jdkNotes: readonly string[],
+  predicateKinds: readonly string[] = [],
+): PipelineTemplate {
+  return {
+    templateId,
+    version: 1,
+    targetOperationId,
+    targetNodeId: 'node-sink',
+    title,
+    sourceDefinition,
+    nodes,
+    parameterSlots,
+    allowedDslProfile: { predicateKinds },
+    supportedModes,
+    jdkNotes,
+    snapshotBudget: { limit: 500, estimatedMax: 40 },
+  }
+}
+
+const reductionSlot = (kinds: readonly string[]): ParameterSlot => ({
+  slotId: 'slot-reduction',
+  targetNodeId: 'node-sink',
+  kind: 'reduction',
+  required: true,
+  allowedReductionKinds: kinds,
+})
+
+const identitySlot: ParameterSlot = {
+  slotId: 'slot-identity',
+  targetNodeId: 'node-sink',
+  kind: 'identity',
+  required: true,
+}
+
+const terminalComparatorSlot: ParameterSlot = {
+  slotId: 'slot-comparator',
+  targetNodeId: 'node-sink',
+  kind: 'comparator',
+  required: true,
+  allowedComparatorKinds: ['employeeKeys'],
+  allowedFields: EMPLOYEE_COMPARATOR_FIELDS,
+}
+
+const matchPredicateSlot: ParameterSlot = {
+  slotId: 'slot-predicate-1',
+  targetNodeId: 'node-sink',
+  kind: 'predicate',
+  required: true,
+  allowedFields: ['age'],
+  allowedOperators: ['GTE'],
+}
+
+const terminalConsumerSlot: ParameterSlot = {
+  slotId: 'slot-consumer',
+  targetNodeId: 'node-sink',
+  kind: 'consumer',
+  required: true,
+  allowedConsumerKinds: ['printValue', 'printField'],
+  allowedFields: CONSUMER_ALLOWED_FIELDS,
+}
+
+export const P4_TEMPLATES: readonly PipelineTemplate[] = [
+  // ---- reduce（§6.1） ----
+  p4Template(
+    'tmpl-reduce-concat',
+    OP_REDUCE,
+    'reduce（String連結・identityなし）',
+    sourceSlotDef(['streamOf']),
+    [srcNode(OP_SOURCE_STREAM_OF), termNode(OP_REDUCE, 'slot-reduction')],
+    [reductionSlot(['stringConcat'])],
+    ['standard', 'emptySource'],
+    ['identityなしのreduceは最初の要素を初期累積値とし、空StreamではOptional.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-reduce-concat-midempty',
+    OP_REDUCE,
+    'reduce（途中0件: filter併用でOptional.empty）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-f' },
+      { nodeId: 'node-map', operationId: OP_MAP, role: 'intermediate', slotId: 'slot-mapper-1' },
+      termNode(OP_REDUCE, 'slot-reduction'),
+    ],
+    [
+      {
+        slotId: 'slot-predicate-f',
+        targetNodeId: 'node-filter-1',
+        kind: 'predicate',
+        required: true,
+        allowedFields: ['age'],
+        allowedOperators: ['GTE'],
+      },
+      mapperSlot('slot-mapper-1', 'node-map', ['fieldAccess']),
+      reductionSlot(['stringConcat']),
+    ],
+    ['midEmpty'],
+    ['途中0件では要素が1件も到達せず、identityなしreduceの結果はOptional.empty()になる。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-reduce-int',
+    OP_REDUCE,
+    'IntStream.reduce（加算・identityなし）',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_REDUCE, 'slot-reduction')],
+    [reductionSlot(['numericSum'])],
+    ['standard', 'emptySource'],
+    ['identityなしのIntStream.reduceは空StreamでOptionalInt.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-reduce-int-identity',
+    OP_REDUCE,
+    'IntStream.reduce（加算・identityあり）',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_REDUCE, 'slot-reduction')],
+    [reductionSlot(['numericSum']), identitySlot],
+    ['standard', 'emptySource'],
+    ['identityありのreduceは空Streamでidentityを返す。'],
+  ),
+  p4Template(
+    'tmpl-reduce-salary',
+    OP_REDUCE,
+    '3引数reduce（Employeeのsalary合計）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_REDUCE, 'slot-reduction'),
+    ],
+    [reductionSlot(['employeeFieldSum']), identitySlot],
+    ['standard', 'emptySource'],
+    [
+      '3引数reduceは累積型U（long）が要素型T（Employee）と異なる場合に使う。',
+      'combinerはparallel reductionで必要となる。sequential実行では呼ばれない（呼出し0回）。',
+    ],
+  ),
+  // ---- count・min・max（§6.2） ----
+  p4Template(
+    'tmpl-count',
+    OP_COUNT,
+    'count（要素数の集計）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_COUNT),
+    ],
+    [],
+    ['standard', 'emptySource'],
+    ['JDKは結果を直接算出できる場合、Pipeline（peek等）の評価を省略することがある。'],
+  ),
+  p4Template(
+    'tmpl-count-midempty',
+    OP_COUNT,
+    'count（途中0件: filter併用で0L）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-f' },
+      termNode(OP_COUNT),
+    ],
+    [
+      {
+        slotId: 'slot-predicate-f',
+        targetNodeId: 'node-filter-1',
+        kind: 'predicate',
+        required: true,
+        allowedFields: ['age'],
+        allowedOperators: ['GTE'],
+      },
+    ],
+    ['midEmpty'],
+    ['途中0件のcountは0Lを返す。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-min-age',
+    OP_MIN,
+    'Stream.min（Employeeのage Comparator）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_MIN, 'slot-comparator'),
+    ],
+    [terminalComparatorSlot],
+    ['standard', 'emptySource'],
+    ['Stream.min(Comparator)は空StreamでOptional.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-max-age',
+    OP_MAX,
+    'Stream.max（Employeeのage Comparator）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_MAX, 'slot-comparator'),
+    ],
+    [terminalComparatorSlot],
+    ['standard', 'emptySource'],
+    ['Stream.max(Comparator)は空StreamでOptional.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-min-int',
+    OP_MIN,
+    'IntStream.min()',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_MIN)],
+    [],
+    ['standard', 'emptySource'],
+    ['IntStream.min()は空StreamでOptionalInt.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-max-long',
+    OP_MAX,
+    'LongStream.max()',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_MAX)],
+    [],
+    ['standard', 'emptySource'],
+    ['LongStream.max()は空StreamでOptionalLong.empty()を返す。'],
+  ),
+  p4Template(
+    'tmpl-min-double',
+    OP_MIN,
+    'DoubleStream.min()',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_MIN)],
+    [],
+    ['standard', 'emptySource'],
+    ['DoubleStream.min()は空StreamでOptionalDouble.empty()を返す。'],
+  ),
+  // ---- find・match（§6.3） ----
+  p4Template(
+    'tmpl-findfirst',
+    OP_FIND_FIRST,
+    'findFirst（最初の該当で短絡）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-f' },
+      termNode(OP_FIND_FIRST),
+    ],
+    [
+      {
+        slotId: 'slot-predicate-f',
+        targetNodeId: 'node-filter-1',
+        kind: 'predicate',
+        required: true,
+        allowedFields: ['age'],
+        allowedOperators: ['GTE'],
+      },
+    ],
+    ['standard', 'midEmpty', 'emptySource'],
+    ['findFirstはordered Streamで最初の要素を返し、結果確定後の残りは評価されない。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-findany',
+    OP_FIND_ANY,
+    'findAny（決定的fixtureと非保証注記）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      { nodeId: 'node-filter-1', operationId: OP_FILTER, role: 'intermediate', slotId: 'slot-predicate-f' },
+      termNode(OP_FIND_ANY),
+    ],
+    [
+      {
+        slotId: 'slot-predicate-f',
+        targetNodeId: 'node-filter-1',
+        kind: 'predicate',
+        required: true,
+        allowedFields: ['age'],
+        allowedOperators: ['GTE'],
+      },
+    ],
+    ['standard', 'emptySource'],
+    ['findAnyはどの要素が返るかをJDKが保証しない。fixtureの選択は再現可能だが移植可能な保証ではない。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-anymatch',
+    OP_ANY_MATCH,
+    'anyMatch（最初のtrueで停止）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_ANY_MATCH, 'slot-predicate-1'),
+    ],
+    [matchPredicateSlot],
+    ['standard', 'emptySource'],
+    ['anyMatchは最初のtrueで結果確定する。空Streamの結果はfalse。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-allmatch',
+    OP_ALL_MATCH,
+    'allMatch（最初のfalseで停止・vacuous truth）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_ALL_MATCH, 'slot-predicate-1'),
+    ],
+    [matchPredicateSlot],
+    ['standard', 'emptySource'],
+    ['allMatchは最初のfalseで結果確定する。空Streamの結果はtrue（vacuous truth）。'],
+    ['fieldCompare'],
+  ),
+  p4Template(
+    'tmpl-nonematch',
+    OP_NONE_MATCH,
+    'noneMatch（最初のtrueで停止・vacuous truth）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_NONE_MATCH, 'slot-predicate-1'),
+    ],
+    [matchPredicateSlot],
+    ['standard', 'emptySource'],
+    ['noneMatchは最初のtrueで結果確定する（結果false）。空Streamの結果はtrue（vacuous truth）。'],
+    ['fieldCompare'],
+  ),
+  // ---- primitive集計（§6.4） ----
+  ...(['int', 'long', 'double'] as const).flatMap((primitive) => [
+    p4Template(
+      `tmpl-sum-${primitive}`,
+      OP_SUM,
+      `${primitive === 'int' ? 'IntStream' : primitive === 'long' ? 'LongStream' : 'DoubleStream'}.sum()`,
+      sourceSlotDef(['arrayPrimitive']),
+      [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_SUM)],
+      [],
+      ['standard', 'emptySource'],
+      [`空Streamのsum()は${primitive === 'int' ? '0' : primitive === 'long' ? '0L' : '0.0'}を返す。`],
+    ),
+    p4Template(
+      `tmpl-average-${primitive}`,
+      OP_AVERAGE,
+      `${primitive === 'int' ? 'IntStream' : primitive === 'long' ? 'LongStream' : 'DoubleStream'}.average()`,
+      sourceSlotDef(['arrayPrimitive']),
+      [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_AVERAGE)],
+      [],
+      ['standard', 'emptySource'],
+      ['空Streamのaverage()はOptionalDouble.empty()を返す。'],
+    ),
+    p4Template(
+      `tmpl-stats-${primitive}`,
+      OP_SUMMARY_STATISTICS,
+      `${primitive === 'int' ? 'IntStream' : primitive === 'long' ? 'LongStream' : 'DoubleStream'}.summaryStatistics()`,
+      sourceSlotDef(['arrayPrimitive']),
+      [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_SUMMARY_STATISTICS)],
+      [],
+      ['standard', 'emptySource'],
+      ['空Streamのmin / maxは型の正規初期値（MAX_VALUE / MIN_VALUE、doubleは正負Infinity）になる。'],
+    ),
+  ]),
+  // ---- 結果化・副作用（§6.5） ----
+  p4Template(
+    'tmpl-toarray-object',
+    OP_TO_ARRAY,
+    'Stream.toArray()（Object[]）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_TO_ARRAY),
+    ],
+    [],
+    ['standard', 'emptySource'],
+    ['Stream.toArray()はObject[]を返す。空Streamは長さ0のObject[]。'],
+  ),
+  ...(['int', 'long', 'double'] as const).map((primitive) =>
+    p4Template(
+      `tmpl-toarray-${primitive}`,
+      OP_TO_ARRAY,
+      `${primitive === 'int' ? 'IntStream' : primitive === 'long' ? 'LongStream' : 'DoubleStream'}.toArray()（${primitive}[]）`,
+      sourceSlotDef(['arrayPrimitive']),
+      [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_TO_ARRAY)],
+      [],
+      ['standard', 'emptySource'],
+      [`primitive StreamのtoArray()は${primitive}[]を返す。`],
+    ),
+  ),
+  p4Template(
+    'tmpl-toarray-generator',
+    OP_TO_ARRAY,
+    'Stream.toArray(String[]::new)（型付き配列）',
+    sourceSlotDef(['streamOf']),
+    [srcNode(OP_SOURCE_STREAM_OF), termNode(OP_TO_ARRAY, 'slot-generator')],
+    [
+      {
+        slotId: 'slot-generator',
+        targetNodeId: 'node-sink',
+        kind: 'arrayGenerator',
+        required: true,
+        allowedElementTypeNames: ['String'],
+      },
+    ],
+    ['standard', 'emptySource'],
+    ['toArray(generator)は指定した型の配列（String[]等）を返す。空Streamでも正しいcomponent typeを持つ。'],
+  ),
+  p4Template(
+    'tmpl-foreach',
+    OP_FOR_EACH,
+    'forEach（Side Effectとvoid）',
+    employeeSource,
+    [
+      { nodeId: 'node-src', operationId: OP_SOURCE_COLLECTION_STREAM, role: 'source', slotId: null },
+      termNode(OP_FOR_EACH, 'slot-consumer'),
+    ],
+    [terminalConsumerSlot],
+    ['standard', 'emptySource'],
+    ['forEachの戻り値はvoid。parallel実行では順序を保証しない（初版はsequentialのみ）。'],
+  ),
+  p4Template(
+    'tmpl-foreachordered',
+    OP_FOR_EACH_ORDERED,
+    'forEachOrdered（encounter order保証）',
+    sourceSlotDef(['arrayPrimitive']),
+    [srcNode(OP_SOURCE_ARRAYS_STREAM), termNode(OP_FOR_EACH_ORDERED, 'slot-consumer')],
+    [
+      {
+        slotId: 'slot-consumer',
+        targetNodeId: 'node-sink',
+        kind: 'consumer',
+        required: true,
+        allowedConsumerKinds: ['printValue'],
+        allowedFields: [],
+      },
+    ],
+    ['standard', 'emptySource'],
+    ['forEachOrderedはparallelでもencounter orderを保証する。sequential実行ではforEachと同順。'],
+  ),
+]
+
 export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   FILTER_BASIC_TEMPLATE,
   FILTER_CHAIN_TEMPLATE,
@@ -987,6 +1455,8 @@ export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   DROP_WHILE_TEMPLATE,
   PEEK_TEMPLATE,
   PEEK_MID_EMPTY_TEMPLATE,
+  // ---- Phase 4 ----
+  ...P4_TEMPLATES,
 ]
 
 export function createDefaultTemplateRegistry(): TemplateRegistry {

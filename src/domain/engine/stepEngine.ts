@@ -6,9 +6,10 @@ import {
   predicateComparisonValue,
 } from '../dsl/evaluate'
 import { evaluateFlatMapper, evaluateMapper } from '../dsl/evaluateMapper'
-import { comparatorKeyLabel, sortBuffer } from '../dsl/evaluateComparator'
+import { compareByComparator, comparatorKeyLabel, sortBuffer } from '../dsl/evaluateComparator'
 import { evaluateConsumerMessage } from '../dsl/evaluateConsumer'
 import { consumerActionLabel } from '../dsl/consumerAst'
+import { applyReduction, identityToSimValue } from '../dsl/evaluateReduction'
 import {
   comparisonExpr,
   describeComparator,
@@ -20,11 +21,18 @@ import {
 import {
   comparatorToJavaExpr,
   consumerToJavaExpr,
+  identityToJavaLiteral,
   mapperToJavaExpr,
   predicateToJavaExpr,
+  reductionToJavaExpr,
 } from '../dsl/javaCode'
 import { distinctKeyOf } from './distinctKey'
-import { formatSimValue, type SimValue } from '../model/value'
+import {
+  formatDoubleLiteral,
+  formatLongLiteral,
+  formatSimValue,
+  type SimValue,
+} from '../model/value'
 import { formatTypeRef } from '../types/typeRef'
 import type { ElementId, NodeId } from '../types/ids'
 import { snapshotIdFor } from '../types/ids'
@@ -39,6 +47,7 @@ import type {
   SnapshotOutputItem,
   SortedOrderEntry,
   SourceContextView,
+  TerminalResultView,
 } from './snapshot'
 
 /**
@@ -183,6 +192,7 @@ interface Draft {
   perNode: Record<ElementId, Record<string, ElementStateKind>>
   latest: Record<ElementId, ElementStateKind>
   outputItems: SnapshotOutputItem[]
+  terminalResult: TerminalResultView
   confirmed: boolean
   completion: 'NONE' | 'STREAM_CONSUMED'
 }
@@ -209,6 +219,8 @@ class TimelineBuilder {
   private readonly outputItems: SnapshotOutputItem[] = []
   private readonly contexts: Record<NodeId, OperationContextView> = {}
   private readonly sideEffects: SideEffectEntry[] = []
+  /** 終端結果の現在view（Phase 4指示 §7。terminal runtimeが更新する） */
+  terminalResult: TerminalResultView = { kind: 'LIST' }
   private flatMapCtx: MutableFlatMapCtx | null = null
   /** 短絡確定により入力を受け付けなくなったchain index（上流はこれ以上要素を送らない） */
   cancelIdx: number | null = null
@@ -293,6 +305,7 @@ class TimelineBuilder {
       perNode: structuredClone(this.perNode),
       latest: structuredClone(this.latest),
       outputItems: [...this.outputItems],
+      terminalResult: structuredClone(this.terminalResult),
       confirmed: input.confirmed ?? false,
       completion: input.completion ?? 'NONE',
     })
@@ -437,6 +450,330 @@ function contextViewOf(rt: NodeRuntime, def: PipelineDefinition): OperationConte
   }
 }
 
+// ---- Phase 4: terminal runtime（指示§10）。終端は1 Pipelineに1つ ----
+
+interface TerminalRuntime {
+  readonly node: PipelineNodeDef
+  /** 入力primitive Streamの要素型（object Streamではnull） */
+  readonly primitive: 'int' | 'long' | 'double' | null
+  // reduce
+  acc: SimValue | null
+  stepCount: number
+  readonly history: {
+    seq: number
+    inputLabel: string
+    beforeLabel: string | null
+    afterLabel: string
+  }[]
+  // count
+  count: number
+  // min / max
+  candidate: { id: ElementId; value: SimValue } | null
+  updateCount: number
+  // match / find
+  decided: boolean
+  resultValue: boolean | null
+  evaluatedCount: number
+  selected: { id: ElementId; label: string } | null
+  // sum / average / statistics
+  aggCount: number
+  aggSum: number
+  aggMin: number | null
+  aggMax: number | null
+  // toArray
+  readonly stored: { index: number; label: string }[]
+  // forEach系
+  callCount: number
+  // short-circuit（find / match）
+  pendingShortCircuit: boolean
+  upstreamStopped: boolean
+}
+
+function createTerminalRuntime(node: PipelineNodeDef): TerminalRuntime {
+  const primitive =
+    node.inputType?.kind === 'primitiveStream'
+      ? node.inputType.name === 'IntStream'
+        ? 'int'
+        : node.inputType.name === 'LongStream'
+          ? 'long'
+          : 'double'
+      : null
+  return {
+    node,
+    primitive,
+    acc: null,
+    stepCount: 0,
+    history: [],
+    count: 0,
+    candidate: null,
+    updateCount: 0,
+    decided: false,
+    resultValue: null,
+    evaluatedCount: 0,
+    selected: null,
+    aggCount: 0,
+    aggSum: 0,
+    aggMin: null,
+    aggMax: null,
+    stored: [],
+    callCount: 0,
+    pendingShortCircuit: false,
+    upstreamStopped: false,
+  }
+}
+
+function primitiveValueLabel(primitive: 'int' | 'long' | 'double', n: number): string {
+  return primitive === 'int' ? String(n) : primitive === 'long' ? formatLongLiteral(n) : formatDoubleLiteral(n)
+}
+
+const COUNT_ELISION_NOTE =
+  'JDKは結果を直接算出できる場合、Pipeline（peek等）の評価を省略することがあります。常に省略される保証も、必ず評価される保証もありません。'
+
+const FIND_ANY_NOTE =
+  '教材fixtureでは毎回同じ要素を選択しますが、JDKはfindAnyでどの要素が返るかを保証しません（特にparallel実行）。'
+
+const FIND_FIRST_UNORDERED_NOTE =
+  'このsourceにはencounter orderがないため、findFirstでも任意の要素になり得ます。'
+
+/** reduceのJava式表示（identity / combinerを含む） */
+function reduceExpression(node: PipelineNodeDef): string {
+  if (!node.reduction) throw new EngineInvariantError(`node ${node.nodeId} にreductionがありません`)
+  const parts: string[] = []
+  if (node.identity) parts.push(identityToJavaLiteral(node.identity))
+  parts.push(reductionToJavaExpr(node.reduction))
+  if (node.hasCombiner && node.identity) {
+    parts.push(
+      node.identity.type === 'int'
+        ? 'Integer::sum'
+        : node.identity.type === 'long'
+          ? 'Long::sum'
+          : node.identity.type === 'double'
+            ? 'Double::sum'
+            : 'String::concat',
+    )
+  }
+  return `.reduce(${parts.join(', ')})`
+}
+
+/** terminal固有contextのview（§12） */
+function terminalContextView(rt: TerminalRuntime, def: PipelineDefinition): OperationContextView | null {
+  const node = rt.node
+  switch (node.operationId) {
+    case 'reduce':
+      return {
+        kind: 'reduce',
+        nodeId: node.nodeId,
+        expression: reduceExpression(node),
+        identityLabel: node.identity ? identityToJavaLiteral(node.identity) : null,
+        hasCombiner: node.hasCombiner,
+        combinerCallCount: 0,
+        accumulatorLabel: rt.acc ? formatSimValue(rt.acc) : null,
+        stepCount: rt.stepCount,
+        history: rt.history.map((h) => ({ ...h })),
+      }
+    case 'count':
+      return { kind: 'count', nodeId: node.nodeId, currentCount: rt.count, elisionNote: COUNT_ELISION_NOTE }
+    case 'min':
+    case 'max':
+      return {
+        kind: 'minmax',
+        nodeId: node.nodeId,
+        op: node.operationId,
+        comparatorLabel: node.comparator
+          ? comparatorToJavaExpr(node.comparator)
+          : 'primitive比較（数値の大小）',
+        candidateLabel: rt.candidate ? formatSimValue(rt.candidate.value) : null,
+        candidateElementId: rt.candidate?.id ?? null,
+        updateCount: rt.updateCount,
+      }
+    case 'anyMatch':
+    case 'allMatch':
+    case 'noneMatch':
+      return {
+        kind: 'match',
+        nodeId: node.nodeId,
+        op: node.operationId,
+        predicateText: node.predicate ? predicateToJavaExpr(node.predicate) : '',
+        evaluatedCount: rt.evaluatedCount,
+        decided: rt.decided,
+        resultValue: rt.resultValue,
+        vacuousNote:
+          rt.evaluatedCount === 0 && rt.resultValue === true
+            ? node.operationId === 'allMatch'
+              ? '空Streamでは反例が存在しないため、allMatchはtrueです（vacuous truth）。Predicateは一度も評価されていません。'
+              : '空Streamでは該当が存在しないため、noneMatchはtrueです（vacuous truth）。Predicateは一度も評価されていません。'
+            : null,
+      }
+    case 'findFirst':
+    case 'findAny':
+      return {
+        kind: 'find',
+        nodeId: node.nodeId,
+        op: node.operationId,
+        decided: rt.decided,
+        selectedLabel: rt.selected?.label ?? null,
+        selectedElementId: rt.selected?.id ?? null,
+        nondeterminismNote:
+          node.operationId === 'findAny'
+            ? FIND_ANY_NOTE
+            : def.orderMeta.sourceOrdered
+              ? null
+              : FIND_FIRST_UNORDERED_NOTE,
+      }
+    case 'sum':
+    case 'average':
+    case 'summaryStatistics': {
+      const primitive = rt.primitive ?? 'int'
+      return {
+        kind: 'aggregate',
+        nodeId: node.nodeId,
+        op: node.operationId,
+        primitive,
+        count: rt.aggCount,
+        sumLabel:
+          node.operationId === 'summaryStatistics' && primitive === 'int'
+            ? formatLongLiteral(rt.aggSum)
+            : primitiveValueLabel(primitive, rt.aggSum),
+        minLabel: rt.aggMin === null ? null : primitiveValueLabel(primitive, rt.aggMin),
+        maxLabel: rt.aggMax === null ? null : primitiveValueLabel(primitive, rt.aggMax),
+        averageLabel: rt.aggCount === 0 ? null : formatDoubleLiteral(rt.aggSum / rt.aggCount),
+      }
+    }
+    case 'toArray':
+      return {
+        kind: 'array',
+        nodeId: node.nodeId,
+        componentTypeLabel:
+          def.resultType.kind === 'array' ? formatTypeRef(def.resultType.elementType) : '?',
+        storedCount: rt.stored.length,
+      }
+    case 'forEach':
+    case 'forEachOrdered':
+      return {
+        kind: 'forEach',
+        nodeId: node.nodeId,
+        op: node.operationId,
+        consumerText: node.consumer ? consumerToJavaExpr(node.consumer) : '',
+        callCount: rt.callCount,
+        orderingNote:
+          node.operationId === 'forEach'
+            ? 'parallel StreamのforEachは実行順序を保証しません。sequential実行（初版）では記述順に実行されます。'
+            : 'forEachOrderedはparallelでもencounter orderを保証します。sequential実行（初版）ではforEachと同じ順序です。',
+      }
+    default:
+      return null
+  }
+}
+
+/** 空SummaryStatisticsの正規初期値ラベル（§6.4） */
+function emptyStatsLabels(primitive: 'int' | 'long' | 'double'): {
+  min: string
+  max: string
+  sum: string
+} {
+  if (primitive === 'int') return { min: 'Integer.MAX_VALUE', max: 'Integer.MIN_VALUE', sum: '0L' }
+  if (primitive === 'long') return { min: 'Long.MAX_VALUE', max: 'Long.MIN_VALUE', sum: '0L' }
+  return { min: 'Double.POSITIVE_INFINITY', max: 'Double.NEGATIVE_INFINITY', sum: '0.0' }
+}
+
+/** 終端結果の構造化view（§7）。UIはこの確定値だけを描画する */
+function terminalResultView(rt: TerminalRuntime, def: PipelineDefinition): TerminalResultView {
+  const node = rt.node
+  const resultType = def.resultType
+  const optionalView = (
+    present: boolean,
+    valueLabel: string | null,
+    valueElementId: ElementId | null,
+  ): TerminalResultView => ({
+    kind: 'OPTIONAL',
+    optionalTypeLabel: resultType.kind === 'primitiveOptional' ? resultType.name : 'Optional',
+    elementTypeLabel:
+      resultType.kind === 'optional' ? formatTypeRef(resultType.elementType) : null,
+    present,
+    valueLabel,
+    valueElementId,
+  })
+  switch (node.operationId) {
+    case 'count':
+      return { kind: 'SCALAR', typeLabel: 'long', valueLabel: formatLongLiteral(rt.count) }
+    case 'reduce':
+      if (node.identity) {
+        return {
+          kind: 'SCALAR',
+          typeLabel: formatTypeRef(resultType),
+          valueLabel: rt.acc ? formatSimValue(rt.acc) : identityToJavaLiteral(node.identity),
+        }
+      }
+      return optionalView(rt.acc !== null, rt.acc ? formatSimValue(rt.acc) : null, null)
+    case 'min':
+    case 'max':
+      return optionalView(
+        rt.candidate !== null,
+        rt.candidate ? formatSimValue(rt.candidate.value) : null,
+        rt.candidate?.id ?? null,
+      )
+    case 'findFirst':
+    case 'findAny':
+      return optionalView(rt.selected !== null, rt.selected?.label ?? null, rt.selected?.id ?? null)
+    case 'anyMatch':
+    case 'allMatch':
+    case 'noneMatch':
+      return {
+        kind: 'SCALAR',
+        typeLabel: 'boolean',
+        valueLabel: rt.resultValue === null ? '未確定' : String(rt.resultValue),
+      }
+    case 'sum': {
+      const primitive = rt.primitive ?? 'int'
+      return {
+        kind: 'SCALAR',
+        typeLabel: primitive,
+        valueLabel: primitiveValueLabel(primitive, rt.aggSum),
+      }
+    }
+    case 'average':
+      return optionalView(
+        rt.aggCount > 0,
+        rt.aggCount > 0 ? formatDoubleLiteral(rt.aggSum / rt.aggCount) : null,
+        null,
+      )
+    case 'summaryStatistics': {
+      const primitive = rt.primitive ?? 'int'
+      const empty = rt.aggCount === 0
+      const labels = emptyStatsLabels(primitive)
+      return {
+        kind: 'STATISTICS',
+        statisticsTypeLabel: formatTypeRef(resultType),
+        countLabel: String(rt.aggCount),
+        sumLabel: empty
+          ? labels.sum
+          : primitive === 'int'
+            ? formatLongLiteral(rt.aggSum)
+            : primitiveValueLabel(primitive, rt.aggSum),
+        minLabel: empty ? labels.min : primitiveValueLabel(primitive, rt.aggMin ?? 0),
+        maxLabel: empty ? labels.max : primitiveValueLabel(primitive, rt.aggMax ?? 0),
+        averageLabel: empty ? '0.0' : formatDoubleLiteral(rt.aggSum / rt.aggCount),
+        emptyNote: empty
+          ? '空Streamの正規初期値です（min / maxは型のMAX_VALUE / MIN_VALUE、doubleは正負Infinity）。'
+          : null,
+      }
+    }
+    case 'toArray':
+      return {
+        kind: 'ARRAY',
+        componentTypeLabel:
+          resultType.kind === 'array' ? formatTypeRef(resultType.elementType) : '?',
+        length: rt.stored.length,
+        items: rt.stored.map((s) => ({ index: s.index, label: s.label })),
+      }
+    case 'forEach':
+    case 'forEachOrdered':
+      return { kind: 'VOID' }
+    default:
+      return { kind: 'LIST' }
+  }
+}
+
 function createRuntime(node: PipelineNodeDef): NodeRuntime | null {
   switch (node.operationId) {
     case 'distinct':
@@ -482,6 +819,16 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
 
   for (const element of def.dataset) b.registerElement(element.elementId)
 
+  // Phase 4 terminal runtime（toList以外の終端。§10）
+  const terminalRt = sink.operationId === 'toList' ? null : createTerminalRuntime(sink)
+  const syncTerminal = (): void => {
+    if (!terminalRt) return
+    const ctx = terminalContextView(terminalRt, def)
+    if (ctx) b.setContext(sink.nodeId, ctx)
+    b.terminalResult = terminalResultView(terminalRt, def)
+  }
+  syncTerminal()
+
   b.push({
     kind: 'INITIAL',
     activeNode: null,
@@ -493,10 +840,33 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   }
 
   /**
-   * 短絡が確定したlimitノードのSHORT_CIRCUIT_CONFIRMEDを独立snapshotとして確定し、
-   * 上流への追加要求を停止する（§7.4）。要素が後段を流れ切った後に呼ぶ。
+   * 短絡が確定したlimitノード / terminal（find・match）のSHORT_CIRCUIT_CONFIRMEDを
+   * 独立snapshotとして確定し、上流への追加要求を停止する（§7.4、Phase 4指示§10）。
+   * 要素が後段を流れ切った後に呼ぶ。limitとterminal短絡が組み合わさった場合は、
+   * より早い確定位置（chain順で最初のpending）から停止する。
    */
   const confirmPendingShortCircuits = (): void => {
+    if (terminalRt?.pendingShortCircuit && !terminalRt.upstreamStopped) {
+      terminalRt.pendingShortCircuit = false
+      terminalRt.upstreamStopped = true
+      syncTerminal()
+      b.push({
+        kind: 'SHORT_CIRCUIT_CONFIRMED',
+        activeNode: sink,
+        currentElementId: null,
+        processing: {
+          title: `short-circuit確定（${sink.displayName}）`,
+          inputLabel: null,
+          expression: null,
+          evaluation: null,
+          outcome: '終端結果が確定したため、上流への要素要求を停止します',
+        },
+        currentText: `${sink.displayName}の結果が確定しました。これ以上の要素は要求されず、残りは未評価のままです。`,
+        jdkNote: `${sink.displayName}はshort-circuiting終端操作であり、結果確定後の残り要素は評価されません。`,
+      })
+      // terminalの短絡は全上流（source・sorted放出・flatMap子送出）を停止する
+      b.cancelAt(chain.length)
+    }
     chain.forEach((node, i) => {
       const rt = runtimes.get(node.nodeId)
       if (rt?.kind === 'limit' && rt.pendingShortCircuit && !rt.upstreamStopped) {
@@ -520,6 +890,369 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
         b.cancelAt(i)
       }
     })
+  }
+
+  /**
+   * 終端へ到達した1要素の処理（Phase 4指示§6・§10）。
+   * terminal内部状態を更新し、対応する独立snapshotを1件確定する。
+   */
+  const handleTerminalElement = (
+    elementId: ElementId,
+    value: SimValue,
+    parentElementId: ElementId | null,
+  ): boolean => {
+    const label = formatSimValue(value)
+    const name = shortLabel(value)
+    b.setState(elementId, sink.nodeId, 'PASSED')
+    b.setLatest(elementId, 'PASSED')
+
+    // toList: Phase 1からの既存動作を維持
+    if (!terminalRt) {
+      b.addOutput(elementId, label)
+      b.push({
+        kind: 'SINK_APPENDED',
+        activeNode: sink,
+        currentElementId: elementId,
+        parentElementId,
+        processing: {
+          title: 'toListへの要素追加',
+          inputLabel: `${name} → List`,
+          expression: null,
+          evaluation: null,
+          outcome: 'Listへ追加されました',
+        },
+        currentText: `${name}がtoListのListへ追加されます。`,
+      })
+      return true
+    }
+
+    const rt = terminalRt
+    switch (sink.operationId) {
+      case 'reduce': {
+        const reduction = sink.reduction
+        if (!reduction) throw new EngineInvariantError('reduceにreductionがありません')
+        const expression = reduceExpression(sink)
+        const contribution =
+          reduction.kind === 'employeeFieldSum' && value.kind === 'employee'
+            ? reduction.field === 'salary'
+              ? formatLongLiteral(value.value.salary)
+              : String(value.value.age)
+            : label
+        const inputLabel =
+          reduction.kind === 'employeeFieldSum' && value.kind === 'employee'
+            ? `${name}.${reduction.field}() → ${contribution}`
+            : label
+        if (rt.acc === null) {
+          // identityなし: 最初の要素を初期累積値として独立して表示する（§6.1）
+          rt.acc = value
+          rt.stepCount += 1
+          rt.history.push({ seq: rt.stepCount, inputLabel, beforeLabel: null, afterLabel: label })
+          syncTerminal()
+          b.push({
+            kind: 'REDUCTION_INITIALIZED',
+            activeNode: sink,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '累積値の初期化（最初の要素）',
+              inputLabel,
+              expression,
+              evaluation: `accumulator初期値 = ${label}`,
+              outcome: 'identityがないため、最初の要素が初期累積値になります',
+            },
+            currentText: `identityなしのreduceでは最初の要素${name}がそのまま初期累積値になります。`,
+            jdkNote: 'accumulatorは結合則（associativity）を満たす必要があります。',
+          })
+          return true
+        }
+        const beforeLabel = formatSimValue(rt.acc)
+        rt.acc = applyReduction(reduction, rt.acc, value)
+        const afterLabel = formatSimValue(rt.acc)
+        rt.stepCount += 1
+        rt.history.push({ seq: rt.stepCount, inputLabel, beforeLabel, afterLabel })
+        syncTerminal()
+        b.push({
+          kind: 'ACCUMULATOR_UPDATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'accumulator更新確定',
+            inputLabel,
+            expression,
+            evaluation: `${beforeLabel} + ${contribution} → ${afterLabel}`,
+            outcome: `累積値が${afterLabel}になりました`,
+          },
+          currentText: `accumulatorが${beforeLabel}と${contribution}から新しい累積値${afterLabel}を作りました。`,
+          jdkNote: 'accumulatorは結合則（associativity）を満たす必要があります。',
+        })
+        return true
+      }
+      case 'count': {
+        rt.count += 1
+        syncTerminal()
+        b.push({
+          kind: 'COUNT_UPDATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '件数の更新確定（概念上の寄与）',
+            inputLabel: label,
+            expression: '.count()',
+            evaluation: `現在件数 ${rt.count}`,
+            outcome: `${name}が1件として数えられました`,
+          },
+          currentText: `${name}が数えられ、現在件数は${rt.count}です。`,
+          jdkNote: COUNT_ELISION_NOTE,
+        })
+        return true
+      }
+      case 'min':
+      case 'max': {
+        const op = sink.operationId
+        const expression = sink.comparator
+          ? `.${op}(${comparatorToJavaExpr(sink.comparator)})`
+          : `.${op}()`
+        if (rt.candidate === null) {
+          rt.candidate = { id: elementId, value }
+          rt.updateCount += 1
+          syncTerminal()
+          b.push({
+            kind: 'CANDIDATE_UPDATED',
+            activeNode: sink,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '候補の初期化',
+              inputLabel: label,
+              expression,
+              evaluation: `現在候補 = ${label}`,
+              outcome: '最初の要素が現在候補になります',
+            },
+            currentText: `最初の要素${name}が${op}の現在候補になります。`,
+          })
+          return true
+        }
+        const cmp = sink.comparator
+          ? compareByComparator(sink.comparator, value, rt.candidate.value)
+          : (() => {
+              const a = value as { value: number }
+              const candidate = rt.candidate.value as { value: number }
+              return a.value < candidate.value ? -1 : a.value > candidate.value ? 1 : 0
+            })()
+        const better = op === 'min' ? cmp < 0 : cmp > 0
+        const candidateLabel = formatSimValue(rt.candidate.value)
+        const comparisonText = sink.comparator
+          ? `Comparator比較: ${comparatorKeyLabel(sink.comparator, value)} vs ${comparatorKeyLabel(sink.comparator, rt.candidate.value)}`
+          : `${label} ${cmp < 0 ? '<' : cmp > 0 ? '>' : '=='} ${candidateLabel}`
+        if (better) {
+          rt.candidate = { id: elementId, value }
+          rt.updateCount += 1
+        }
+        syncTerminal()
+        b.push({
+          kind: 'CANDIDATE_UPDATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: better ? '候補の更新確定' : '候補の維持確定',
+            inputLabel: `${label}（現在候補: ${candidateLabel}）`,
+            expression,
+            evaluation: comparisonText,
+            outcome: better
+              ? `候補が${label}へ更新されました`
+              : `候補${candidateLabel}を維持します`,
+          },
+          currentText: better
+            ? `${name}が現在候補より${op === 'min' ? '小さい' : '大きい'}ため、候補が更新されました。`
+            : `${name}は現在候補を上回らないため、候補は維持されます。`,
+        })
+        return true
+      }
+      case 'anyMatch':
+      case 'allMatch':
+      case 'noneMatch': {
+        const op = sink.operationId
+        const predicate = sink.predicate
+        if (!predicate) throw new EngineInvariantError('match系にPredicateがありません')
+        const predicateExpr = predicateToJavaExpr(predicate)
+        const numeric = predicateComparisonValue(predicate, value)
+        const matched = evaluateValuePredicate(predicate, value)
+        rt.evaluatedCount += 1
+        // 決定条件: any→true / all→false / none→true
+        const decisive = op === 'anyMatch' ? matched : op === 'allMatch' ? !matched : matched
+        if (decisive) {
+          rt.decided = true
+          rt.resultValue = op === 'anyMatch' ? true : false
+          rt.pendingShortCircuit = true
+        }
+        syncTerminal()
+        b.push({
+          kind: 'MATCH_EVALUATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: `Predicate評価確定（${op}）`,
+            inputLabel: fieldValueFlow(predicate, name, numeric),
+            expression: predicateExpr,
+            evaluation: `${comparisonExpr(predicate, numeric)} → ${matched}`,
+            outcome: decisive
+              ? `結果が${rt.resultValue}に確定しました（この要素で決定）`
+              : '結果は未確定のため、次の要素を評価します',
+          },
+          currentText: decisive
+            ? `${name}の評価が${matched}となり、${op}の結果が${rt.resultValue}に確定しました。`
+            : `${name}の評価は${matched}です。${op}の結果はまだ確定しません。`,
+        })
+        return true
+      }
+      case 'findFirst':
+      case 'findAny': {
+        const op = sink.operationId
+        rt.decided = true
+        rt.selected = { id: elementId, label }
+        rt.pendingShortCircuit = true
+        syncTerminal()
+        b.push({
+          kind: 'FIND_SELECTED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: `要素の選択確定（${op}）`,
+            inputLabel: label,
+            expression: `.${op}()`,
+            evaluation: null,
+            outcome: `${label}が結果として選択されました`,
+          },
+          currentText:
+            op === 'findFirst'
+              ? `${name}が最初の要素として選択され、findFirstの結果が確定しました。`
+              : `${name}が選択され、findAnyの結果が確定しました（このfixtureでは決定的に同じ要素を選択します）。`,
+          jdkNote: op === 'findAny' ? FIND_ANY_NOTE : def.orderMeta.sourceOrdered ? null : FIND_FIRST_UNORDERED_NOTE,
+        })
+        return true
+      }
+      case 'sum': {
+        const primitive = rt.primitive
+        if (!primitive || (value.kind !== 'int' && value.kind !== 'long' && value.kind !== 'double')) {
+          throw new EngineInvariantError('sumはprimitive要素が必要です')
+        }
+        rt.aggCount += 1
+        rt.aggSum += value.value
+        syncTerminal()
+        b.push({
+          kind: 'ACCUMULATOR_UPDATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '累積合計の更新確定',
+            inputLabel: label,
+            expression: '.sum()',
+            evaluation: `累積合計 → ${primitiveValueLabel(primitive, rt.aggSum)}`,
+            outcome: `合計が${primitiveValueLabel(primitive, rt.aggSum)}になりました`,
+          },
+          currentText: `${label}が加算され、累積合計は${primitiveValueLabel(primitive, rt.aggSum)}です。`,
+        })
+        return true
+      }
+      case 'average':
+      case 'summaryStatistics': {
+        const primitive = rt.primitive
+        if (!primitive || (value.kind !== 'int' && value.kind !== 'long' && value.kind !== 'double')) {
+          throw new EngineInvariantError(`${sink.operationId}はprimitive要素が必要です`)
+        }
+        rt.aggCount += 1
+        rt.aggSum += value.value
+        rt.aggMin = rt.aggMin === null ? value.value : Math.min(rt.aggMin, value.value)
+        rt.aggMax = rt.aggMax === null ? value.value : Math.max(rt.aggMax, value.value)
+        syncTerminal()
+        const avgLabel = formatDoubleLiteral(rt.aggSum / rt.aggCount)
+        b.push({
+          kind: 'STATISTICS_UPDATED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: sink.operationId === 'average' ? '合計・件数の更新確定' : '統計値の更新確定',
+            inputLabel: label,
+            expression: `.${sink.operationId}()`,
+            evaluation:
+              sink.operationId === 'average'
+                ? `合計 ${primitiveValueLabel(primitive, rt.aggSum)} / 件数 ${rt.aggCount} → 平均 ${avgLabel}`
+                : `count=${rt.aggCount}, sum=${primitiveValueLabel(primitive, rt.aggSum)}, min=${primitiveValueLabel(primitive, rt.aggMin ?? 0)}, max=${primitiveValueLabel(primitive, rt.aggMax ?? 0)}, average=${avgLabel}`,
+            outcome: null,
+          },
+          currentText:
+            sink.operationId === 'average'
+              ? `${label}が加算されました。現在の平均は${avgLabel}（合計${primitiveValueLabel(primitive, rt.aggSum)} / ${rt.aggCount}件）です。`
+              : `${label}を取り込み、count / sum / min / average / maxを同時に更新しました。`,
+        })
+        return true
+      }
+      case 'toArray': {
+        const index = rt.stored.length
+        rt.stored.push({ index, label })
+        syncTerminal()
+        const componentLabel =
+          def.resultType.kind === 'array' ? formatTypeRef(def.resultType.elementType) : '?'
+        b.push({
+          kind: 'ARRAY_ELEMENT_STORED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '配列への格納確定',
+            inputLabel: `${label} → [${index}]`,
+            expression: sink.arrayGenerator
+              ? `.toArray(${sink.arrayGenerator.elementTypeName}[]::new)`
+              : '.toArray()',
+            evaluation: `${componentLabel}[] の index ${index} へ格納`,
+            outcome: `配列の要素数は${rt.stored.length}になりました`,
+          },
+          currentText: `${name}が${componentLabel}[]のindex ${index}へ格納されました。`,
+        })
+        return true
+      }
+      case 'forEach':
+      case 'forEachOrdered': {
+        const consumer = sink.consumer
+        if (!consumer) throw new EngineInvariantError('forEach系にConsumerがありません')
+        const consumerExpr = consumerToJavaExpr(consumer)
+        const message = evaluateConsumerMessage(consumer, value)
+        const entry = b.addSideEffect({
+          nodeId: sink.nodeId,
+          elementId,
+          inputLabel: label,
+          actionExpr: consumerExpr,
+          actionLabel: consumerActionLabel(consumer),
+          message,
+        })
+        rt.callCount += 1
+        syncTerminal()
+        b.push({
+          kind: 'CONSUMER_ACTION_PERFORMED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: `Consumer実行確定（${sink.displayName}）`,
+            inputLabel: label,
+            expression: consumerExpr,
+            evaluation: `Side Effect出力: ${message}`,
+            outcome: '戻り値はvoidで、Consumerの副作用だけが残ります',
+          },
+          currentText: `${sink.displayName}のConsumerを実行しました（${entry.seq}回目。出力: ${message}）。`,
+        })
+        return true
+      }
+      default:
+        throw new EngineInvariantError(`未対応のterminal操作です: ${sink.operationId}`)
+    }
   }
 
   /** 中間チェーンを chainIdx から処理し、要素が終端まで到達したらtrueを返す */
@@ -1267,27 +2000,8 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
       throw new EngineInvariantError(`未対応のoperationです: ${node.operationId}`)
     }
 
-    // 終端（toList）へ到達
-    const finalLabel = formatSimValue(value)
-    const finalName = shortLabel(value)
-    b.setState(elementId, sink.nodeId, 'PASSED')
-    b.setLatest(elementId, 'PASSED')
-    b.addOutput(elementId, finalLabel)
-    b.push({
-      kind: 'SINK_APPENDED',
-      activeNode: sink,
-      currentElementId: elementId,
-      parentElementId,
-      processing: {
-        title: 'toListへの要素追加',
-        inputLabel: `${finalName} → List`,
-        expression: null,
-        evaluation: null,
-        outcome: 'Listへ追加されました',
-      },
-      currentText: `${finalName}がtoListのListへ追加されます。`,
-    })
-    return true
+    // 終端へ到達
+    return handleTerminalElement(elementId, value, parentElementId)
   }
 
   const emitAndProcess = (
@@ -1316,6 +2030,35 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     b.setState(element.elementId, src.nodeId, 'PASSED')
     processThroughChain(element.elementId, element.value, 0, null)
     confirmPendingShortCircuits()
+  }
+
+  // ---- identityありreduce: 実行開始時にidentityを累積初期値として常時表示する（§6.1） ----
+  if (terminalRt && sink.operationId === 'reduce' && sink.identity && sink.reduction) {
+    terminalRt.acc = identityToSimValue(
+      sink.identity,
+      sink.reduction,
+      (terminalRt.primitive ?? 'string') as SimValue['kind'],
+    )
+    syncTerminal()
+    const identityLiteral = identityToJavaLiteral(sink.identity)
+    b.push({
+      kind: 'REDUCTION_INITIALIZED',
+      activeNode: sink,
+      currentElementId: null,
+      processing: {
+        title: '累積値の初期化（identity）',
+        inputLabel: `identity = ${identityLiteral}`,
+        expression: reduceExpression(sink),
+        evaluation: `accumulator初期値 = ${identityLiteral}`,
+        outcome: sink.hasCombiner
+          ? 'identityが初期累積値です。combinerはparallel reductionで必要となり、sequential実行では呼ばれません'
+          : 'identityが初期累積値です。空Streamの結果はidentityになります',
+      },
+      currentText: `identity ${identityLiteral} が初期累積値になります。空Streamの場合、結果はidentityです。`,
+      jdkNote: sink.hasCombiner
+        ? 'combinerはparallel reductionで部分結果を結合するために必要です。sequential実行では呼ばれません。'
+        : 'accumulatorは結合則（associativity）を満たす必要があります。',
+    })
   }
 
   // ---- limit(0): source要素を1件も要求せず、処理中要素0件で短絡を確定する（§7.4） ----
@@ -1518,20 +2261,92 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   }
 
   b.clearFlatMapCtx()
-  b.push({
-    kind: 'RESULT_CONFIRMED',
-    activeNode: sink,
-    processing: {
-      title: '終端結果確定',
-      inputLabel: null,
-      expression: null,
-      evaluation: null,
-      outcome: `結果のList（${formatTypeRef(def.resultType)}）が確定しました`,
-    },
-    currentText: `終端結果が確定しました。結果は${formatTypeRef(def.resultType)}（${b.outputCount}件）です。`,
-    jdkNote: 'Stream.toList()が返すListはunmodifiableです。',
-    confirmed: true,
-  })
+  if (!terminalRt) {
+    b.push({
+      kind: 'RESULT_CONFIRMED',
+      activeNode: sink,
+      processing: {
+        title: '終端結果確定',
+        inputLabel: null,
+        expression: null,
+        evaluation: null,
+        outcome: `結果のList（${formatTypeRef(def.resultType)}）が確定しました`,
+      },
+      currentText: `終端結果が確定しました。結果は${formatTypeRef(def.resultType)}（${b.outputCount}件）です。`,
+      jdkNote: 'Stream.toList()が返すListはunmodifiableです。',
+      confirmed: true,
+    })
+  } else {
+    // ---- terminal結果の最終確定（空Stream結果を含む。§6） ----
+    const rt = terminalRt
+    let resultLabel: string
+    let extraText = ''
+    let jdkNote: string | null = null
+    const op = sink.operationId
+    if ((op === 'anyMatch' || op === 'allMatch' || op === 'noneMatch') && !rt.decided) {
+      // 全要素評価またはPredicate 0回（空Stream）で決定要素が現れなかった場合の結果
+      rt.resultValue = op === 'anyMatch' ? false : true
+      rt.decided = true
+      if (rt.evaluatedCount === 0 && rt.resultValue) {
+        extraText =
+          op === 'allMatch'
+            ? '空Streamでは反例が存在しないため、allMatchはtrue（vacuous truth）です。Predicateは一度も評価されていません。'
+            : '空Streamでは該当が存在しないため、noneMatchはtrue（vacuous truth）です。Predicateは一度も評価されていません。'
+        jdkNote = 'anyMatchの空Stream結果はfalse、allMatch / noneMatchの空Stream結果はtrue（vacuous truth）です。'
+      }
+    }
+    syncTerminal()
+    const view = b.terminalResult
+    switch (view.kind) {
+      case 'SCALAR':
+        resultLabel = `${view.typeLabel} = ${view.valueLabel}`
+        break
+      case 'OPTIONAL':
+        resultLabel = view.present
+          ? `${view.optionalTypeLabel}[${view.valueLabel}]`
+          : `${view.optionalTypeLabel}.empty()`
+        break
+      case 'ARRAY':
+        resultLabel = `${view.componentTypeLabel}[]（length=${view.length}）`
+        break
+      case 'STATISTICS':
+        resultLabel = `${view.statisticsTypeLabel}（count=${view.countLabel}, sum=${view.sumLabel}, min=${view.minLabel}, average=${view.averageLabel}, max=${view.maxLabel}）`
+        break
+      case 'VOID':
+        resultLabel = `void（Consumer呼出し${rt.callCount}回）`
+        break
+      default:
+        resultLabel = formatTypeRef(def.resultType)
+    }
+    if (op === 'count') {
+      jdkNote = COUNT_ELISION_NOTE
+    } else if (op === 'findAny') {
+      jdkNote = FIND_ANY_NOTE
+    } else if (op === 'summaryStatistics' && rt.aggCount === 0) {
+      jdkNote =
+        '空Streamのmin / maxは型の正規初期値（MAX_VALUE / MIN_VALUE、doubleは正負Infinity）です。'
+    } else if (op === 'average' && rt.aggCount === 0) {
+      jdkNote = '空Streamのaverage()はOptionalDouble.empty()を返します。'
+    } else if (op === 'reduce' && !sink.identity && rt.acc === null) {
+      jdkNote = 'identityなしのreduceは、空Streamで型に応じた空Optionalを返します。'
+    } else if (op === 'reduce' && sink.hasCombiner) {
+      jdkNote = `sequential実行のためcombinerは呼ばれませんでした（呼出し0回）。combinerはparallel reductionで必要になります。`
+    }
+    b.push({
+      kind: 'RESULT_CONFIRMED',
+      activeNode: sink,
+      processing: {
+        title: '終端結果確定',
+        inputLabel: null,
+        expression: null,
+        evaluation: null,
+        outcome: `結果（${formatTypeRef(def.resultType)}）が確定しました: ${resultLabel}`,
+      },
+      currentText: `終端結果が確定しました。結果は${resultLabel}です。${extraText}`,
+      jdkNote,
+      confirmed: true,
+    })
+  }
   b.push({
     kind: 'STREAM_CONSUMED',
     activeNode: sink,
@@ -1587,6 +2402,7 @@ function materialize(def: PipelineDefinition, drafts: readonly Draft[]): Snapsho
         count: draft.outputItems.length,
         confirmed: draft.confirmed,
         resultTypeLabel: formatTypeRef(def.resultType),
+        result: draft.terminalResult,
       },
       processing: draft.processing,
       explanation: {
@@ -1644,6 +2460,7 @@ export function createInitialSnapshot(def: PipelineDefinition): Snapshot {
           count: 0,
           confirmed: false,
           resultTypeLabel: formatTypeRef(def.resultType),
+          result: { kind: 'LIST' },
         },
         processing: null,
         explanation: {
