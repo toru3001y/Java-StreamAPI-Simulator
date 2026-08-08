@@ -250,8 +250,12 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
 - 最終テスト実数（第2回是正後）: Vitest **310件**（36ファイル、失敗・skip・todo 0）/
   Playwright **50件**（失敗・skip 0）/ Oracle P1-O01〜P4-O01 + P4-O02 / O03 すべてPASS
 - 第2回report-only commit: `d8ab9ae`
-- 第3回再レビュー是正commit（§18）のSHAと最終テスト実数は、本欄へのreport-only commitで
-  追記する（作成時点で未確定のSHAはファイルへ記載しない）。
+- 第3回再レビュー是正commit（§18）: `17af764`（P4-O03のsuite構成厳密判定 +
+  テスト拡張 + 判断記録§11 + Oracle証跡 + 報告件数訂正 + P4証跡更新。
+  13ファイル・+203 / -16行）
+- 最終テスト実数（第3回是正後）: Vitest **311件**（36ファイル、失敗・skip・todo 0）/
+  Playwright **50件**（失敗・skip 0）/ Oracle P1-O01〜P4-O01 + P4-O02 / O03 すべてPASS
+- 最終HEADは本欄を追記したreport-only commit（`git log`先頭）。SHAは最終回答で報告する。
 
 ## 15. push・PR・mergeの状態
 
