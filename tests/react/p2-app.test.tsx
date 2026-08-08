@@ -25,14 +25,6 @@ async function selectOperation(user: ReturnType<typeof userEvent.setup>, operati
   await user.selectOptions(screen.getByTestId('operation-select'), operationId)
 }
 
-async function selectTemplate(user: ReturnType<typeof userEvent.setup>, templateId: string) {
-  await user.selectOptions(screen.getByTestId('template-select'), templateId)
-}
-
-async function selectMode(user: ReturnType<typeof userEvent.setup>, mode: string) {
-  await user.selectOptions(screen.getByTestId('mode-select'), mode)
-}
-
 afterEach(() => {
   cleanup()
 })
