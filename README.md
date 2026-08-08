@@ -5,6 +5,9 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
 - 基準仕様: `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`（Draft v0.8 / Java SE 25基準）
 - 実装状況: **Phase 4 完了**（終端操作 reduce / count / min・max / find / match / sum / average /
   summaryStatistics / toArray / forEach系。詳細は `docs/phase-4-completion-report.md`）
+- **Phase 5（Collector系）は本体未着手**。着手前の判断事項 J-2（`Collectors.teeing` の
+  左右2系統と処理中要素数の関係）は **Phase 5着手前に仕様確定済み**
+  （`docs/phase-5-decisions.md`。teeingでも「処理中要素は最大1件」の例外なし）
 - 実装指示: `docs/Claude_Code_Phase1_Implementation_Instructions.md` / `docs/Claude_Code_Phase2_Implementation_Instructions.md` / `docs/Claude_Code_Phase3_Implementation_Instructions.md`
 
 ## 実装済み操作（Phase 4時点）
@@ -83,6 +86,7 @@ npm run test:oracle  # JDK 25照合 P1-O01/P2-O01/P3-O01（要: Docker + gradle:
 
 | ファイル | 内容 |
 |---|---|
+| `docs/phase-5-decisions.md` | J-2 `Collectors.teeing` の仕様確定記録（Phase 5着手前判断。本体は未実装） |
 | `docs/phase-3-completion-report.md` | Phase 3完了報告（判定・証跡・60 ID対応表・J-2不変条件・Oracle結果・差異記録） |
 | `docs/phase-3-decisions.md` | Phase 3判断記録（J-2 `sorted`確定 + Phase 3本体の実装判断） |
 | `docs/phase-2-completion-report.md` | Phase 2完了報告（判定・証跡・52 ID対応表・TypeRef連鎖・Oracle結果） |
