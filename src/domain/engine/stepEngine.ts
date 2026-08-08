@@ -399,10 +399,10 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           closed: children.length === 0,
         })
         for (const child of children) b.registerElement(child.id)
-        if (children.length === 0) {
-          b.setState(elementId, node.nodeId, 'PASSED')
-          b.setLatest(elementId, 'PASSED')
-        }
+        // 親のflatMap評価はmapped Stream生成で確定する。以降、親はparentElementIdの
+        // 文脈情報としてのみ保持し、子と同時に「処理中」2件にはしない（§6.2、§12.6）
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
         b.push({
           kind: 'MAPPED_STREAM_CREATED',
           activeNode: node,
@@ -451,8 +451,6 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           if (ci === children.length - 1) {
             // 最後の子の処理完了後、mapped Streamのclose状態を該当snapshotの詳細へ反映する（§9.3）
             ctx.closed = true
-            b.setState(elementId, node.nodeId, 'PASSED')
-            b.setLatest(elementId, 'PASSED')
             b.patchLastDraft()
           }
         })
