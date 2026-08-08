@@ -21,8 +21,8 @@ function coreResultNames(templateId: TemplateId, mode: ScenarioMode): string[] {
   if (!last) throw new Error('snapshotがありません')
   return last.output.elementIds.map((id) => {
     const element = def.dataset.find((d) => d.elementId === id)
-    if (!element) throw new Error(`unknown element: ${id}`)
-    return element.value.name
+    if (!element || element.value.kind !== 'employee') throw new Error(`unknown element: ${id}`)
+    return element.value.value.name
   })
 }
 

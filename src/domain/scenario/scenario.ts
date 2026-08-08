@@ -19,7 +19,8 @@ export interface ScenarioProvenance {
 }
 
 export interface ScenarioSourceInfo {
-  readonly kind: 'collectionStream'
+  /** source操作のoperationId */
+  readonly kind: string
   readonly ordered: boolean
   readonly finite: boolean
 }

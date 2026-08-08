@@ -38,4 +38,8 @@ export class TemplateRegistry {
   listByTargetOperation(operationId: OperationId): readonly PipelineTemplate[] {
     return this.byTarget.get(operationId) ?? []
   }
+
+  listAll(): readonly PipelineTemplate[] {
+    return [...this.byId.values()]
+  }
 }

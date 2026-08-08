@@ -22,13 +22,31 @@ export type ElementStateKind =
   | 'REJECTED'
   | 'BUFFERED'
 
-/** TypeRefの入出力規則（§7）。宣言的に保持し、resolveTypeRuleで解決する。 */
+/**
+ * TypeRefの入出力規則（§7）。宣言的に保持する。
+ * fromSource / fromMapper / boxedWrapper は文脈（SourceDsl / MapperDsl）を要するため
+ * instantiate側で解決し、単純な規則はresolveTypeRuleで解決する。
+ */
 export type TypeRule =
   | { readonly kind: 'none' }
   | { readonly kind: 'fixed'; readonly type: TypeRef }
   | { readonly kind: 'anyStream' }
+  | { readonly kind: 'anyPrimitiveStream' }
   | { readonly kind: 'identity' }
   | { readonly kind: 'streamToList' }
+  | { readonly kind: 'fromSource' }
+  | { readonly kind: 'fromMapper' }
+  | {
+      readonly kind: 'fixedPrimitiveStream'
+      readonly name: 'IntStream' | 'LongStream' | 'DoubleStream'
+    }
+  | { readonly kind: 'boxedWrapper' }
+
+/** Stream生成操作の順序・有限性メタデータ（Phase 2指示 §5.1） */
+export interface SourceMeta {
+  readonly ordered: boolean
+  readonly bounded: 'finite' | 'infinite' | 'conditionallyFinite'
+}
 
 export interface OperationDefinition {
   readonly operationId: OperationId
@@ -42,6 +60,7 @@ export interface OperationDefinition {
   readonly jdkNotes: readonly string[]
   readonly sourceRefs: readonly string[]
   readonly displayName: string
+  readonly sourceMeta?: SourceMeta
 }
 
 export class OperationCatalog {
@@ -69,7 +88,7 @@ export class OperationCatalog {
   }
 }
 
-/** 入力型からTypeRuleに従い出力型を解決する。 */
+/** 文脈を要しないTypeRuleを入力型から解決する。 */
 export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): TypeRef {
   switch (rule.kind) {
     case 'fixed':
@@ -82,8 +101,14 @@ export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): Type
         throw new Error('streamToList rule requires Stream input')
       }
       return listOf(inputType.elementType)
+    case 'fixedPrimitiveStream':
+      return { kind: 'primitiveStream', name: rule.name }
     case 'anyStream':
+    case 'anyPrimitiveStream':
     case 'none':
-      throw new Error(`rule ${rule.kind} does not produce an output type`)
+    case 'fromSource':
+    case 'fromMapper':
+    case 'boxedWrapper':
+      throw new Error(`rule ${rule.kind} はこの関数では解決できません`)
   }
 }

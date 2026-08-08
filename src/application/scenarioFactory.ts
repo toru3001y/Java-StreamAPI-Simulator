@@ -27,6 +27,8 @@ export function buildScenario(
   })
   if (!definitionResult.ok) return fail(definitionResult.issues)
   if (!template) return fail([])
+  const sourceNode = definitionResult.value.nodes.find((n) => n.role === 'source')
+  const sourceMeta = sourceNode ? catalog.get(sourceNode.operationId).sourceMeta : undefined
   const scenario: Scenario = {
     scenarioId: `${candidate.templateId}:${candidate.mode}:${candidate.revision}`,
     title: candidate.title,
@@ -34,9 +36,10 @@ export function buildScenario(
     targetOperationId: template.targetOperationId,
     mode: candidate.mode,
     source: {
-      kind: template.sourceDefinition.kind,
-      ordered: template.sourceDefinition.ordered,
-      finite: template.sourceDefinition.finite,
+      kind: sourceNode?.operationId ?? 'unknown',
+      ordered: sourceMeta?.ordered ?? true,
+      // conditionallyFiniteは具現化済み（iterate3のpredicateで有限化）のため有限として扱う
+      finite: sourceMeta ? sourceMeta.bounded !== 'infinite' : true,
     },
     targetNodeId: template.targetNodeId,
     pipeline: definitionResult.value,

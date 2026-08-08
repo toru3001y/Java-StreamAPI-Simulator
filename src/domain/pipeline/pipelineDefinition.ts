@@ -1,10 +1,10 @@
 import type { DslPredicate } from '../dsl/ast'
+import type { MapperDsl } from '../dsl/mapperAst'
+import type { SourceDsl } from '../dsl/sourceAst'
+import type { IterateCandidate, SourceElement } from '../dsl/materializeSource'
 import type { JavaCodeLine } from '../dsl/javaCode'
 import type { DatasetElement } from '../model/employee'
-import type {
-  ElementStateKind,
-  OperationTrait,
-} from '../catalog/operationCatalog'
+import type { ElementStateKind, OperationTrait } from '../catalog/operationCatalog'
 import type { LineId, NodeId, OperationId, ScenarioRevision, TemplateId } from '../types/ids'
 import type { TypeRef } from '../types/typeRef'
 import type { ScenarioMode } from '../scenario/scenario'
@@ -20,6 +20,7 @@ export interface PipelineNodeDef {
   readonly traits: readonly OperationTrait[]
   readonly displayName: string
   readonly predicate: DslPredicate | null
+  readonly mapper: MapperDsl | null
   readonly inputType: TypeRef | null
   readonly outputType: TypeRef
   readonly lineId: LineId
@@ -35,8 +36,17 @@ export interface PipelineDefinition {
   readonly templateVersion: number
   readonly mode: ScenarioMode
   readonly revision: ScenarioRevision
+  /** 教材上の主対象ノード（凡例・教材制約の基準） */
+  readonly targetNodeId: NodeId
   readonly nodes: readonly PipelineNodeDef[]
-  readonly dataset: readonly DatasetElement[]
+  /** 検証済みsource DSL */
+  readonly sourceDsl: SourceDsl
+  /** 具現化済みのsource送出要素（安定ID付き） */
+  readonly dataset: readonly SourceElement[]
+  /** iterate 3引数の候補判定トレース（該当sourceのみ） */
+  readonly iterateTrace: readonly IterateCandidate[] | null
+  /** Javaコード生成に使用したEmployee dataset（collection source時のみ非空） */
+  readonly employeeDataset: readonly DatasetElement[]
   readonly resultType: TypeRef
   readonly javaCode: readonly JavaCodeLine[]
   /** 事前実行で確定した正確なsnapshot件数（§9.3 手順6） */
