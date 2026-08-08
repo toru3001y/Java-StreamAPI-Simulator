@@ -362,12 +362,13 @@ Phase 3分の抜粋（初期snapshot含む・すべて500以内、最大33件）
 
 ## 22. 既知の問題とPhase 4への持越し
 
-- 既知の問題: なし（全テスト成功・仕様差異は§20の2点のみで解消済み）。
+- 既知の問題: なし（レビュー指摘2件は§26のとおり修正・再検証済み。全テスト成功・
+  仕様差異は§20の2点のみで解消済み）。
 - Phase 4への持越し:
   - 終端操作（reduce / count / min / max / find / match / sum / average / statistics /
     toArray / forEach系）の実装。現在の終端はtoListのみ。
-  - takeWhile / dropWhileのfieldCompare（Employee）template（DSL・型規則は対応済みだが
-    教材templateは数値のみ）。
+  - takeWhile / dropWhileのfieldCompare（Employee）**教材template**の追加
+    （DSL・型規則・Step Engine実行はレビュー修正1で対応済み。教材templateは数値のみ）。
   - Phase 4の短絡終端（find / match）実装時は、Phase 3で導入した短絡キャンセル構造
     （cancelIdx + confirmPendingShortCircuits）を終端起点へ一般化する。
 
@@ -388,5 +389,67 @@ J-2のうち`teeing`左右2系統の例外規定は**未決定のまま維持**�
 
 ## 25. push・PR・mergeについて
 
-**push、Pull Request作成、mainへのmergeは行っていない。** Phase 3本体の変更はローカルの
-`phase-3`ブランチへのcommitのみである。
+Phase 3本体（`7c7acdb` / `001a6c6`）は、完了報告後のユーザー指示により
+`origin/phase-3`へpush済み。**Pull Request作成、mainへのmergeは行っていない。**
+レビュー修正commit（§26）はローカルのみで、pushしていない。
+
+## 26. レビュー対応（2026-08-08、HEAD `001a6c6`時点の指摘）
+
+Phase 3完了レビューの修正必須2件へ、既存コミットのamend / squash / rebaseなしの
+追加commitで対応した。承認済みのP2-R01新仕様対応・P1-E11 / P2-E10基準画像更新は
+元へ戻していない。
+
+### 修正1: takeWhile / dropWhileのEmployee fieldCompare実行
+
+- 問題: instantiateは`Stream<Employee>` + fieldCompareを正当なPipelineとして受理するが、
+  stepEngineのtakeWhile / dropWhileが`numericValueOf(value)`を無条件に呼び出すため、
+  実行時に「currentValueCompareへemployee要素は適用できません」で失敗していた。
+- 修正: Predicate種別に応じて比較対象値を取得する共通関数
+  `predicateComparisonValue`（`src/domain/dsl/evaluate.ts`）を追加。
+  currentValueCompareは要素自身の数値、fieldCompareはEmployeeの許可済みfield値
+  （現在の許可範囲ではage）を返す。`evaluateValuePredicate`と
+  stepEngineのtakeWhile / dropWhile双方がこの同一関数を参照し（重複実装なし）、
+  評価結果・`fieldValueFlow`・`comparisonExpr`・処理中表示が同じ値を参照する。
+- 追加テスト（`tests/domain/p3-review.test.ts`）:
+  1. `Stream<Employee>.takeWhile(e -> e.age() >= 30)`（STANDARD_EMPLOYEES: 35, 27, 42, 29）で
+     佐藤だけ通過、鈴木が境界（REJECTED）、高橋・田中は未評価。Predicate評価2回・
+     source送出2件・SHORT_CIRCUIT_CONFIRMED確認。
+  2. `Stream<Employee>.dropWhile(e -> e.age() >= 30)`で佐藤をdrop、鈴木で
+     DROP_MODE_ENTERED、出力は[鈴木, 高橋, 田中]。Predicate評価2回。
+  3. Java式が`e -> e.age() >= 30`（Javaコード行にも反映）。
+  4. snapshot表示が「佐藤.age() → 35」「35 >= 30 → true」。
+  5. 全snapshotでPROCESSING最大1件。
+- 教材templateの追加はPhase 4持越しのまま（§22）。
+
+### 修正2: DSLのint定数をJava int範囲に制限
+
+- 問題: fieldCompare / currentValueCompareの`{ type: 'int', value }`が
+  `Number.isInteger`のみの検証で、Java int範囲（-2147483648〜2147483647）外を受理し、
+  不正なJava int literalを生成し得た。
+- 修正: `validateStructure`（`src/domain/dsl/validate.ts`）で範囲チェックを追加。
+  範囲外は例外ではなく`TYPE_MISMATCH`のValidationIssueとして返す（両Predicate種別に適用）。
+- 追加テスト（同ファイル）: INT32_MIN / INT32_MAXは受理、INT32_MIN-1 / INT32_MAX+1は
+  fieldCompare / currentValueCompareの両方で`TYPE_MISMATCH`拒否。範囲外は
+  PipelineDefinition生成前に拒否され不正なJavaコードを生成しないこと、
+  境界値からは正当なJava式が生成されることを確認。
+
+### 再検証結果（レビュー修正後）
+
+| コマンド | 結果 |
+|---|---|
+| `npm run lint` / `npm run typecheck` | 成功 |
+| `npm run test:unit` | 成功（27 files / **230 tests**、+5件。失敗・skip 0） |
+| `npm run build` | 成功 |
+| `npm run test:e2e` | 成功（37 passed） |
+| `npm run test:oracle` | P1-O01 / P2-O01 / P3-O01 すべてPASSED |
+| `git diff --check` | 問題なし |
+
+- 全template / modeの500 snapshot以内・PROCESSING最大1件はP3-D28 / D31（横断検証）で
+  引き続き成功。過去Phaseのテストは削除・skip・緩和していない
+  （snapshot列・教材templateに変更はなく、`artifacts/phase-1` / `phase-2`も無変更）。
+- E2E初回実行時に`capture.spec.ts`（P1キャプチャ）が1件
+  `page.screenshot: Protocol error (Page.captureScreenshot)`で失敗したが、
+  ブラウザプロトコルレベルの一時エラーであり、単体再実行・スイート全体の再実行
+  （37 passed）ともに成功。アプリ・テストの問題ではないと判断した。
+- レビュー修正commit SHA: `29a3975`（修正1・2のコード / テスト / Phase 3証跡再生成）。
+  本節（§26）の追記はその後のdocs commit（`git log`先頭）。
