@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { captureArtifact } from './capture-helper'
 import { forward, selectOperation } from './utils'
 
 /** P2-E09: 狭幅（375px、chromium-narrowプロジェクト）での型ラベルを含む長いPipeline検証 */
@@ -63,8 +64,8 @@ test('P2-E09: 型ラベルを含む長いPipelineの横スクロール・active�
 test('p2-capture-narrow: Phase 2狭幅キャプチャを保存する', async ({ page }) => {
   await selectOperation(page, 'flatMap')
   await forward(page, 4)
-  await page.screenshot({ path: 'artifacts/phase-2/capture-narrow-flatmap.png', fullPage: true })
+  await captureArtifact(page, 2, 'capture-narrow-flatmap.png')
   await selectOperation(page, 'mapToInt')
   await forward(page, 3)
-  await page.screenshot({ path: 'artifacts/phase-2/capture-narrow-maptoint.png', fullPage: true })
+  await captureArtifact(page, 2, 'capture-narrow-maptoint.png')
 })

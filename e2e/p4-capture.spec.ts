@@ -1,4 +1,5 @@
 import { test } from '@playwright/test'
+import { captureArtifact } from './capture-helper'
 import {
   forwardToEnd,
   forwardUntilText,
@@ -15,35 +16,35 @@ test('p4-capture-pc: PC幅の画面キャプチャを保存する', async ({ pag
   await selectOperation(page, 'reduce')
   await selectTemplate(page, 'tmpl-reduce-salary')
   await forwardUntilVisible(page, 'reduce-history')
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-reduce.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-reduce.png')
 
   await selectOperation(page, 'count')
   await forwardToEnd(page)
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-count.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-count.png')
 
   await selectOperation(page, 'min')
   await forwardUntilText(page, 'minmax-candidate', '鈴木')
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-min.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-min.png')
 
   await selectOperation(page, 'anyMatch')
   await forwardUntilText(page, 'match-decided', 'STOP')
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-anymatch.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-anymatch.png')
 
   await selectOperation(page, 'summaryStatistics')
   await forwardToEnd(page)
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-statistics.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-statistics.png')
 
   await selectOperation(page, 'toArray')
   await selectTemplate(page, 'tmpl-toarray-generator')
   await forwardToEnd(page)
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-toarray.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-toarray.png')
 
   await selectOperation(page, 'forEach')
   await forwardToEnd(page)
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-foreach.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-foreach.png')
 
   await selectOperation(page, 'reduce')
   await selectMode(page, 'emptySource')
   await forwardToEnd(page)
-  await page.screenshot({ path: 'artifacts/phase-4/capture-pc-optional-empty.png', fullPage: true })
+  await captureArtifact(page, 4, 'capture-pc-optional-empty.png')
 })

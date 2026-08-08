@@ -81,6 +81,59 @@ export function allSuitesPassed(results) {
   return results.length > 0 && results.every((result) => result.passed)
 }
 
+/**
+ * P4必須Oracle ID（P4-O01〜O03）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
+ * - P4-O01: P4 suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
+ * - P4-O02: verifyLongBoundaryStringsの実結果（期待値・実測値の双方がstringかつ正確な10進値）
+ * - P4-O03: suite構成（P1〜P3はwriteReportPath: nullで照合のみ）と、
+ *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果
+ */
+export function evaluateOracleIds({
+  suiteResults,
+  expectedBoundary,
+  actualBoundary,
+  pastArtifactsUnchanged,
+  suites = SUITES,
+}) {
+  const o01Passed = suiteResults.some((result) => result.id === 'P4-O01' && result.passed === true)
+  const o02Passed = expectedBoundary?.ok === true && actualBoundary?.ok === true
+  const writers = suites.filter((suite) => suite.writeReportPath != null)
+  const configOnlyP4Writes =
+    writers.length === 1 &&
+    writers[0].id === 'P4-O01' &&
+    suites.filter((suite) => suite.id !== 'P4-O01').every((suite) => suite.writeReportPath === null)
+  const o03Passed = configOnlyP4Writes && pastArtifactsUnchanged === true
+  return {
+    o01Passed,
+    o02Passed,
+    o03Passed,
+    configOnlyP4Writes,
+    overallPassed: o01Passed && o02Passed && o03Passed,
+  }
+}
+
+const verdictOf = (passed) => (passed ? 'PASS' : 'FAIL')
+
+/**
+ * oracle-result.mdへ出力するP4-O01〜O03の結果セクション。
+ * evaluateOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
+ */
+export function buildOracleIdSection({ evaluation, expectedBoundary, actualBoundary, pastArtifactsUnchanged }) {
+  return [
+    '## P4必須Oracle IDの結果（P4-O01〜O03）',
+    `- P4-O01: ${verdictOf(evaluation.o01Passed)}（JDK 25実測値とSimulation Core期待値のJSON完全一致）`,
+    `- P4-O02: ${verdictOf(evaluation.o02Passed)}（Long境界値の損失なし照合）`,
+    `  - Long.MAX_VALUE（空LongSummaryStatisticsのmin）: \`${LONG_MAX_STRING}\``,
+    `  - Long.MIN_VALUE（空LongSummaryStatisticsのmax）: \`${LONG_MIN_STRING}\``,
+    '  - 比較方式: 10進文字列のまま完全一致比較（JavaScript numberへ変換せず、1桁も損失しない）',
+    `  - string型・正確値の検証（期待値 / 実測値）: ${verdictOf(expectedBoundary?.ok === true)} / ${verdictOf(actualBoundary?.ok === true)}`,
+    `- P4-O03: ${verdictOf(evaluation.o03Passed)}（Oracle証跡書込みのP4限定）`,
+    `  - suite構成: P1〜P3はwriteReportPath: nullの照合のみ（過去Phase artifactsへ書き込まない）: ${verdictOf(evaluation.configOnlyP4Writes)}`,
+    `  - 実行前後でartifacts/phase-1〜3のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
+    `- 総合判定: ${verdictOf(evaluation.overallPassed)}（P4-O01〜O03のいずれかがFAILなら総合もFAIL）`,
+  ]
+}
+
 /** Oracleレポート本文の生成（書込み対象suiteのみファイル化される） */
 export function buildReport({
   suiteId,

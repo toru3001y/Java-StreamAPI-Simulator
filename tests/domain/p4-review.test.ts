@@ -9,7 +9,10 @@ import {
 import { identityToJavaLiteral } from '../../src/domain/dsl/javaCode'
 import {
   allSuitesPassed,
+  buildOracleIdSection,
+  buildReport,
   compareOracle,
+  evaluateOracleIds,
   LONG_MAX_STRING,
   LONG_MIN_STRING,
   SUITES,
@@ -193,6 +196,57 @@ describe('P4-O02 Long境界値の損失なしOracle照合', () => {
     expect(compareOracle(expected, tampered).passed).toBe(false)
   })
 
+  it('P4-O02: oracle-result.mdの結果欄がverifyLongBoundaryStringsの実結果から生成される', () => {
+    const allPassed = [
+      { id: 'P1-O01', passed: true },
+      { id: 'P2-O01', passed: true },
+      { id: 'P3-O01', passed: true },
+      { id: 'P4-O01', passed: true },
+    ]
+    const okBoundary = verifyLongBoundaryStrings(expected)
+    expect(okBoundary.ok).toBe(true)
+    // PASS側: 実際のverify結果からPASSが導出される
+    const passEval = evaluateOracleIds({
+      suiteResults: allPassed,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    })
+    expect(passEval.o02Passed).toBe(true)
+    const passSection = buildOracleIdSection({
+      evaluation: passEval,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    }).join('\n')
+    expect(passSection).toContain('P4-O02: PASS')
+    // 正確な10進値と比較方式が明示される
+    expect(passSection).toContain(LONG_MAX_STRING)
+    expect(passSection).toContain(LONG_MIN_STRING)
+    expect(passSection).toContain('10進文字列のまま完全一致比較')
+    // FAIL側: 近接誤値のverify失敗がそのままFAILと総合FAILへ伝播する（固定文字列PASSではない）
+    const wrongBoundary = verifyLongBoundaryStrings({
+      statsLongEmpty: [0, 0, '9223372036854775806', LONG_MIN_STRING, 0],
+    })
+    expect(wrongBoundary.ok).toBe(false)
+    const failEval = evaluateOracleIds({
+      suiteResults: allPassed,
+      expectedBoundary: okBoundary,
+      actualBoundary: wrongBoundary,
+      pastArtifactsUnchanged: true,
+    })
+    expect(failEval.o02Passed).toBe(false)
+    expect(failEval.overallPassed).toBe(false)
+    const failSection = buildOracleIdSection({
+      evaluation: failEval,
+      expectedBoundary: okBoundary,
+      actualBoundary: wrongBoundary,
+      pastArtifactsUnchanged: true,
+    }).join('\n')
+    expect(failSection).toContain('P4-O02: FAIL')
+    expect(failSection).toContain('総合判定: FAIL')
+  })
+
   it('P4-O02: Coreの空LongSummaryStatistics表示がLong.MAX_VALUE / MIN_VALUEの意味と一致する', () => {
     const result = finalSnapshot(makeDefinition('tmpl-stats-long', 'emptySource')).output.result
     expect(result).toMatchObject({ minLabel: 'Long.MAX_VALUE', maxLabel: 'Long.MIN_VALUE' })
@@ -245,5 +299,86 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
     }
     // 空の結果は成功扱いにしない
     expect(allSuitesPassed([])).toBe(false)
+  })
+
+  it('P4-O03: 結果欄がsuite構成とP1〜P3証跡不変の実結果から生成され、レポートへ組み込まれる', () => {
+    const okBoundary = { ok: true, reason: null }
+    const allPassed = [
+      { id: 'P1-O01', passed: true },
+      { id: 'P2-O01', passed: true },
+      { id: 'P3-O01', passed: true },
+      { id: 'P4-O01', passed: true },
+    ]
+    // PASS側: 実SUITES構成（P4のみ書込み）+ SHA-256不変の実測true
+    const passEval = evaluateOracleIds({
+      suiteResults: allPassed,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    })
+    expect(passEval).toMatchObject({
+      o01Passed: true,
+      o02Passed: true,
+      o03Passed: true,
+      configOnlyP4Writes: true,
+      overallPassed: true,
+    })
+    // FAIL側1: 実行前後で過去Phase証跡が変化した実測結果はO03と総合をFAILにする
+    const changedEval = evaluateOracleIds({
+      suiteResults: allPassed,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: false,
+    })
+    expect(changedEval.o03Passed).toBe(false)
+    expect(changedEval.overallPassed).toBe(false)
+    // FAIL側2: P1〜P3へ書き込むsuite構成はO03をFAILにする
+    const badSuites = SUITES.map((suite) =>
+      suite.id === 'P1-O01'
+        ? { ...suite, writeReportPath: ['artifacts', 'phase-1', 'oracle-result.md'] }
+        : suite,
+    )
+    const badConfigEval = evaluateOracleIds({
+      suiteResults: allPassed,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+      suites: badSuites,
+    })
+    expect(badConfigEval.configOnlyP4Writes).toBe(false)
+    expect(badConfigEval.o03Passed).toBe(false)
+    // FAIL側3: P4-O01の照合失敗は総合をFAILにする
+    const o01FailEval = evaluateOracleIds({
+      suiteResults: allPassed.map((r) => (r.id === 'P4-O01' ? { ...r, passed: false } : r)),
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    })
+    expect(o01FailEval.o01Passed).toBe(false)
+    expect(o01FailEval.overallPassed).toBe(false)
+    // レポート統合: oracle-result.md本文にP4-O01〜O03の結果と総合判定が含まれる
+    const report = buildReport({
+      suiteId: 'P4-O01',
+      image: 'gradle:9.6.1-jdk25',
+      javaFile: 'OracleP4.java',
+      versionText: 'openjdk version "25.0.3"',
+      expectedText: '{}',
+      actualText: '{}',
+      passed: true,
+      observations: [],
+      extraSections: buildOracleIdSection({
+        evaluation: passEval,
+        expectedBoundary: okBoundary,
+        actualBoundary: okBoundary,
+        pastArtifactsUnchanged: true,
+      }),
+    })
+    expect(report).toContain('## P4必須Oracle IDの結果（P4-O01〜O03）')
+    expect(report).toContain('P4-O01: PASS')
+    expect(report).toContain('P4-O02: PASS')
+    expect(report).toContain('P4-O03: PASS')
+    expect(report).toContain('総合判定: PASS')
+    expect(report).toContain('照合のみ')
+    expect(report).toContain('SHA-256が不変')
   })
 })

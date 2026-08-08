@@ -1,6 +1,6 @@
 # P4-O01 JDK 25 Oracle Test 結果
 
-実行日時: 2026-08-08T13:02:14.748Z
+実行日時: 2026-08-08T13:36:00.498Z
 Dockerイメージ: gradle:9.6.1-jdk25
 対象: OracleP4.java
 
@@ -21,13 +21,19 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
 - findAnyObservedElement=佐藤（JDKは特定要素を保証しない。教材fixtureの選択は移植可能な保証ではない）
 - peekCallsDuringCount=0（count結果=2。評価省略は仕様上可能だが必須の動作ではなく、今回のJDKでの観測結果である）
 
-## Long境界値の照合（P4-O02の照合対象）
-- Long.MAX_VALUE（空LongSummaryStatisticsのmin）: `9223372036854775807`
-- Long.MIN_VALUE（空LongSummaryStatisticsのmax）: `-9223372036854775808`
-- 10進文字列として出力・比較し、JavaScript numberへ変換していない（1桁も損失しない）
-- 期待値・実測値双方のstring型検証: PASS
+## P4必須Oracle IDの結果（P4-O01〜O03）
+- P4-O01: PASS（JDK 25実測値とSimulation Core期待値のJSON完全一致）
+- P4-O02: PASS（Long境界値の損失なし照合）
+  - Long.MAX_VALUE（空LongSummaryStatisticsのmin）: `9223372036854775807`
+  - Long.MIN_VALUE（空LongSummaryStatisticsのmax）: `-9223372036854775808`
+  - 比較方式: 10進文字列のまま完全一致比較（JavaScript numberへ変換せず、1桁も損失しない）
+  - string型・正確値の検証（期待値 / 実測値）: PASS / PASS
+- P4-O03: PASS（Oracle証跡書込みのP4限定）
+  - suite構成: P1〜P3はwriteReportPath: nullの照合のみ（過去Phase artifactsへ書き込まない）: PASS
+  - 実行前後でartifacts/phase-1〜3のSHA-256が不変: PASS
+- 総合判定: PASS（P4-O01〜O03のいずれかがFAILなら総合もFAIL）
 
 ## 関連する機械検証
-- P4-O02（Long境界値の損失なし照合・近接誤値の不一致判定）: `tests/domain/p4-review.test.ts`
-- P4-O03（P1〜P3は照合のみ・P4だけ証跡書込み）: `tests/domain/p4-review.test.ts`
+- P4-O02（Long境界値の損失なし照合・近接誤値の不一致判定・結果欄の生成検証）: `tests/domain/p4-review.test.ts`
+- P4-O03（P1〜P3は照合のみ・P4だけ証跡書込み・結果欄の生成検証）: `tests/domain/p4-review.test.ts`
 - 期待値とSimulation Coreの一致: `tests/domain/p4-oracleSync.test.ts`

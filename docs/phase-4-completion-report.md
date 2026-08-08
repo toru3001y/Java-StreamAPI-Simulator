@@ -7,7 +7,7 @@
 
 ## 1. 完了 / 未完了判定
 
-**Phase 4 完了**と判定する（再レビュー対応後の再判定。§16参照）。
+**Phase 4 完了**と判定する（第1回・第2回再レビュー対応後の再判定。§16・§17参照）。
 全検証（lint / typecheck / unit / build / E2E / Oracle / git diff --check）が成功し、
 再レビューで追加された4 IDを含む**P4必須72 ID**をすべて実装・成功させた。§5の完了条件
 （Optional型付き表示、空Stream一致、vacuous truth、短絡後未評価、findAny分離、count注記、
@@ -61,12 +61,20 @@ Draft v0.8 §20 Phase 4の終端操作をDomain → Application → React UIま�
 | Engine | `src/domain/engine/stepEngine.ts`（terminal runtime・handler・finalize・短絡拡張） |
 | template / fixture | `src/domain/template/templates.ts`（P4 33template）、`src/providers/fixtureScenarioProvider.ts`（P4 65 fixture） |
 | UI | `MainSimulation.tsx`（TerminalResultOutput）、`OperationStatePanel.tsx`（terminal 8 context）、`SideEffectPanel.tsx`（forEach対応）、`ScenarioControls.tsx`（終端optgroup）、`App.tsx` / `appInstance.ts` / `styles.css` |
-| テスト | `tests/domain/p4-*.test.ts`（6ファイル）、`tests/application/p4-session.test.ts`、`tests/react/p4-app.test.tsx` |
+| テスト | `tests/domain/p4-*.test.ts`（7ファイル。p4-catalog-dsl / p4-reduce / p4-terminals / p4-results / p4-invariants / p4-oracleSync / p4-review）、`tests/application/p4-session.test.ts`、`tests/react/p4-app.test.tsx` |
 | E2E | `e2e/phase4.spec.ts` / `p4-narrow.spec.ts` / `p4-capture.spec.ts`、`e2e/__screenshots__/phase4.spec.ts/`（4枚） |
 | Oracle | `oracle/OracleP4.java` / `expected-p4-from-core.json`、`run-oracle.mjs`（P4 suite + 観測記録欄） |
 | docs / 証跡 | `docs/phase-4-decisions.md` / 本報告 / `README.md` / `artifacts/phase-4/` |
 
-## 4. P4必須68 IDの結果
+## 4. P4必須IDの結果（72 ID = 当初68 ID + 再レビュー追加4 ID）
+
+本報告でのID数の使い分け:
+
+- **68 ID**: 当初のPhase 4実装指示で定義された必須ID
+  （P4-D01〜D40 / A01〜A07 / R01〜R10 / E01〜E10 / O01）。
+- **72 ID**: 第1回再レビューで追加されたP4-D41 / D42 / O02 / O03を含む、
+  再レビュー後の必須ID全量（P4-D01〜D42 / A01〜A07 / R01〜R10 / E01〜E10 / O01〜O03）。
+  現在の完了判定はこの72 IDを基準とする。
 
 ### Domain（P4-D01〜D40）: すべて成功
 
@@ -97,7 +105,15 @@ findAny・count注記・traits・凡例・STREAM CONSUMED。
 視覚回帰の新規基準4枚: `e2e/__screenshots__/phase4.spec.ts/p4-e10-reduce-accumulator.png` /
 `p4-e10-statistics.png` / `p4-e10-anymatch-stop.png` / `p4-e10-optional-empty.png`。
 
-### Oracle（P4-O01）: PASS（完全一致）
+### Oracle（P4-O01〜O03）: すべてPASS
+
+- **P4-O01: PASS** — JDK 25実測値とSimulation Core期待値のJSON完全一致。
+- **P4-O02: PASS** — Long境界値（`9223372036854775807` / `-9223372036854775808`）を
+  10進文字列のまま損失なく照合（近接誤値±1は不一致判定）。
+- **P4-O03: PASS** — 証跡書込みはP4のみ（P1〜P3は照合のみ）、実行前後で
+  `artifacts/phase-1〜3`のSHA-256不変を実測。
+- 3 IDの結果と総合判定は`artifacts/phase-4/oracle-result.md`へ、`npm run test:oracle`の
+  レポート生成処理が**実判定から**出力する（固定文字列ではない。§17修正2参照）。
 
 ### 再レビュー追加分（P4-D41 / D42 / O02 / O03）: すべて成功
 
@@ -112,8 +128,8 @@ findAny・count注記・traits・凡例・STREAM CONSUMED。
 
 ## 5. 全Vitest件数
 
-**308件 全成功**（36ファイル。P1 + P2 + P3 + P4 + 再レビュー対応。
-失敗0・skip 0・todo 0・未実行0）。
+**310件 全成功**（36ファイル。P1 + P2 + P3 + P4 + 第1回・第2回再レビュー対応。
+失敗0・skip 0・todo 0・未実行0。第2回対応でP4-O02 / O03の結果欄生成検証2件を追加）。
 
 ## 6. 全Playwright件数
 
@@ -123,14 +139,17 @@ P4-E01〜10 + キャプチャspec。失敗0・skip 0）。
 ## 7. P1〜P4 Oracle結果
 
 `npm run test:oracle`で4 suiteを一括実行し、**P1-O01 / P2-O01 / P3-O01 / P4-O01 すべてPASS**。
-再レビュー対応後の実行方式（詳細は§16）:
+P4必須Oracle 3 ID（**P4-O01 / O02 / O03**）もすべてPASSし、その結果と総合判定は
+レポート生成処理が実判定から`artifacts/phase-4/oracle-result.md`へ出力する（§17修正2）。
+再レビュー対応後の実行方式（詳細は§16・§17）:
 
 - **Long境界値の損失なし比較**: 空`LongSummaryStatistics`のmin / max
   （`9223372036854775807` / `-9223372036854775808`）は期待値・実測値の双方で
   **10進文字列**として保持し、JavaScript numberへ変換せず文字列完全一致で比較する。
   近接誤値（±1）は不一致と判定される（P4-O02で機械検証）。
 - **証跡書込みはP4のみ**: P1〜P3は照合と標準出力表示だけを行い、
-  `artifacts/phase-1〜3`へ書き込まない（P4-O03で機械検証。実行前後のSHA-256一致を確認済み）。
+  `artifacts/phase-1〜3`へ書き込まない（P4-O03で機械検証。ランナー自身が実行前後の
+  SHA-256を実測比較し、その実結果をoracle-result.mdのP4-O03欄へ記録する）。
 
 - JDK: Eclipse Temurin **25.0.3+9-LTS**（`gradle:9.6.1-jdk25` Dockerイメージ）。
   証跡に`java -version`全文・実行日・期待値 / 実測値・比較方法（JSON文字列完全一致）を記録。
@@ -186,20 +205,20 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
 2. **過去Phaseテスト本文の変更: なし**。P2-R01 / P3-R01の未実装操作アサーションは
    UNIMPLEMENTED一覧のPhase 5更新（9項目）後もそのまま成立している（削除・skip・緩和なし）。
 3. `artifacts/phase-1`〜`phase-3`は変更なし。Oracle実行はP1〜P3へ書き込まない方式へ修正済み
-   （§16修正4）。なお`npm run test:e2e`にはPhase 1〜3のキャプチャspec（過去Phaseテスト本文の
-   ため変更禁止）が含まれ、実行時にPhase 4 UIでの再キャプチャが発生する。今回はHEADの
-   内容をファイル書き戻しで復元し、開始時とのSHA-256完全一致を確認した（§16参照。
-   キャプチャspecのPhase分離は範囲外のため既知の課題として記録）。
+   （§16修正4）。E2E側も第2回再レビュー対応（§17修正1）で、キャプチャの書込み対象を
+   現行Phase（Phase 4）だけに限定する共通helper（`e2e/capture-helper.ts`）を導入した。
+   P1〜P3のキャプチャtestは画面操作を従来どおり実行する（skipしない）が、
+   `artifacts/phase-1〜3`へは書き込まず、buffer取得のみを行う。これにより
+   「実行後にHEAD内容を書き戻して復元する」運用は廃止され、E2E実行前後で
+   過去Phase証跡のSHA-256完全一致が復元操作なしで成立する（実測結果は§17）。
 
 ## 12. 仕様との差異と既知の問題
 
 - Draft v0.8・Phase 4実装指示・確定済みJ-2との差異: **なし**。
-- 既知の問題（再レビュー対応時に記録）: `npm run test:e2e`に含まれるPhase 1〜3の
-  キャプチャspec（過去Phaseテスト本文のため変更禁止）が、実行時に`artifacts/phase-1〜3`の
-  キャプチャPNGをPhase 4 UIで再生成する。Oracle側は書込みをP4へ限定済みだが、
-  E2E側のキャプチャspecのPhase分離（書込み先の限定または実行条件化）は今回の修正範囲外の
-  ため未対応であり、次回対応候補として持ち越す。今回は実行後にHEAD内容へ書き戻し、
-  SHA-256で不変性を確認した。
+- 第1回再レビュー対応時に記録した既知の問題（E2EのP1〜P3キャプチャspecが実行時に
+  過去Phase証跡を再生成する）は、第2回再レビュー対応（§17修正1）で**解消済み**。
+  E2Eキャプチャの書込み対象は共通helperで現行Phaseへ限定され、P1〜P3のキャプチャtestは
+  操作確認のみを行う。HEAD内容の書き戻しによる復元運用は廃止した。
 - 補足（実装判断であり差異ではない）:
   - `toList`は他templateの終端として全Pipelineで使用されており、操作選択の独立項目には
     していない（Phase 1からの既存構造を維持。§6.5「既存toList」の非破壊要件を満たす）。
@@ -220,21 +239,27 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
 
 - Phase 4本体commit: `c17704c`（feat(p4): Phase 4本体実装。67ファイル・+6039行）
 - 本体SHA追記commit: `02b4f99`
-- 再レビュー是正commit: `2c6a864`（§16の修正1〜4 + 追加テストP4-D41 / D42 / O02 / O03 +
+- 第1回再レビュー是正commit: `2c6a864`（§16の修正1〜4 + 追加テストP4-D41 / D42 / O02 / O03 +
   判断記録§9 + P4 Oracle証跡。9ファイル・+615 / -75行）
-- 最終テスト件数: Vitest 308件（36ファイル）/ Playwright 50件 / Oracle 4 suite PASS
-- 最終HEADは本欄を追記したreport-only commit（`git log`先頭）
+- 第1回report-only commit: `7a77a79`
+- 第1回是正時点のテスト件数: Vitest 308件（36ファイル）/ Playwright 50件 / Oracle 4 suite PASS
+- 第2回再レビュー是正commit（§17）のSHAと最終テスト実数は、本欄へのreport-only commitで
+  追記する（作成時点で未確定のSHAはファイルへ記載しない）。
 
 ## 15. push・PR・mergeの状態
 
-次の事実を区別して記載する。
+次の事実を区別して記載する（時点ごとの状態を混同しない）。
 
-- 独立レビュー時点で、`origin/phase-4`は`02b4f99`を指していた
+- 第1回独立レビュー時点で、`origin/phase-4`は`02b4f99`を指していた
   （`c17704c` / `02b4f99`はpush済みの状態でレビューが行われた）。
-- **今回の是正作業ではpushしていない**（是正commitはローカルのみ）。
+- 第1回是正commit `2c6a864` / report-only commit `7a77a79`は、第1回是正作業の後、
+  ユーザーのpush指示に基づいて`origin/phase-4`へpushされた。
+- **第2回独立レビュー時点で、`origin/phase-4`は`7a77a79`を指していた。**
+  `2c6a864` / `7a77a79`は現在も`origin/phase-4`に存在する。
+- **第2回是正作業（本§17の対応）ではpushしていない**（第2回の是正commitは未push）。
 - Pull Requestは作成していない。
 - `main`へのmergeは行っていない。
-- force push / amend / squash / rebase / reset / stashは行っていない。
+- force push / amend / squash / rebase / reset / restore / stashは行っていない。
 
 ## 16. 再レビュー対応（2026-08-08、HEAD `02b4f99`時点の指摘4件）
 
@@ -311,3 +336,91 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
 - Draft v0.8は無変更（`docs/`に同一内容の複製docx
   `01-Java_Stream_API_Visualization_Spec_Draft_v0.8-2-.docx`が未追跡で存在するが、
   正本とSHA-256完全一致の複製であり、削除・変更・コミットはしていない）。
+
+## 17. 第2回再レビュー対応（2026-08-08、HEAD `7a77a79`時点の指摘3件）
+
+判断の詳細は`docs/phase-4-decisions.md` §10。基準状態: 第2回独立レビュー時点で
+`origin/phase-4` = `7a77a79`（ローカルHEADと同一）。既存4 commit（`c17704c` / `02b4f99` /
+`2c6a864` / `7a77a79`）は改変していない。当初4件の修正ロジック・既存72 IDは無変更。
+Phase 5の先行実装はしていない。
+
+### 修正1: E2EがP1〜P3の過去証跡を上書きする
+
+- 原因: Phase 1〜3のキャプチャspecが`page.screenshot({ path })`で
+  `artifacts/phase-1〜3`へ直接書き込み、実行後にHEAD内容を書き戻して復元する
+  運用だった。過去証跡の不変性をE2Eランナー自身が保証せず、未コミットの
+  ユーザー変更が書き戻しで失われる危険があった。
+- 修正: 共通helper `e2e/capture-helper.ts`を新設し、書込み対象Phaseを定数
+  `CAPTURE_TARGET_PHASE = 4`の1か所で管理する（Phase 5着手時はここだけ変更）。
+  対象外Phase（P1〜P3）のキャプチャtestは既存の画面操作をすべて実行するが
+  （削除・skipなし）、screenshotのbuffer取得のみ行い、追跡対象ファイルへ
+  書き込まない。各specは「直書き → helper呼出し」への最小置換のみで、
+  キャプチャ以外のassertion・操作順・待機条件・test ID・視覚回帰・thresholdは無変更。
+  package.json / playwright.config.tsの変更は不要だった。
+- 変更ファイル: `e2e/capture-helper.ts`（新規）/ `capture.spec.ts` / `narrow.spec.ts` /
+  `p2-capture.spec.ts` / `p2-narrow.spec.ts` / `p3-capture.spec.ts` / `p3-narrow.spec.ts` /
+  `p4-capture.spec.ts` / `p4-narrow.spec.ts`
+- 検証（実測）: `npm run test:e2e`実行前後で`artifacts/phase-1〜3`全26ファイルの
+  SHA-256一覧（`find ... -print0 | sort -z | xargs -0 sha256sum`）を取得し、
+  **diff空（完全一致）**。`git status`でも`artifacts/phase-1〜3`に変更なし。
+  **復元操作（restore / checkout / HEAD書き戻し）は一切不要**。Playwright 50件
+  全成功・skip 0。P1-E01〜11 / P2-E01〜10 / P3-E01〜10 / P4-E01〜10成功。
+  P4の証跡だけが再キャプチャで更新された（6枚。§1の期待動作どおり現行Phaseのみ
+  書込み。画面内容が正しいPhase 4表示であることを目視確認済み）。
+  視覚回帰基準（`e2e/__screenshots__/`）は全Phase無変更。
+
+### 修正2: Phase 4 Oracle証跡にP4-O02 / P4-O03の結果がない
+
+- 原因: `oracle-result.md`がP4-O01のPASSだけを明示し、P4-O02 / O03は関連テスト
+  ファイル名の記載にとどまっていた。再実行しても同じ不完全な形式で再生成された。
+- 修正: `oracle-lib.mjs`へ`evaluateOracleIds`（実結果からの判定導出）と
+  `buildOracleIdSection`（結果欄生成）を追加し、`run-oracle.mjs`が
+  全suite実行前後に`artifacts/phase-1〜3`のSHA-256を自ら実測して、
+  P4-O01〜O03の結果と総合判定を`oracle-result.md`へ出力する。
+  O02は`verifyLongBoundaryStrings`の実結果、O03はsuite構成と証跡不変の実測から
+  導出し、固定文字列のPASSは出力しない。いずれかFAILで総合FAIL・コマンド失敗。
+  findAny観測要素・peek + count呼出し回数は引き続き厳密比較の対象外。
+  P1〜P3のoracle-result.mdは書き込まない。
+- 変更ファイル: `oracle/oracle-lib.mjs` / `oracle/run-oracle.mjs` /
+  `tests/domain/p4-review.test.ts`（P4-O02 / O03の結果欄生成検証を追加）/
+  `artifacts/phase-4/oracle-result.md`（`npm run test:oracle`再実行による生成。手修正なし）
+- 検証（実測）: `npm run test:oracle`でP1-O01 / P2-O01 / P3-O01 / P4-O01 / P4-O02 /
+  P4-O03すべてPASS。生成された`oracle-result.md`に3 IDの結果・Long境界値の10進値
+  （`9223372036854775807` / `-9223372036854775808`）・比較方式・P1〜P3照合のみ・
+  SHA-256不変・総合判定PASSが明示される。Oracle実行前後の`artifacts/phase-1〜3`も
+  外部コマンドで再確認し**diff空**。拡張したP4-O02 / O03テスト成功
+  （FAIL伝播・構成異常検出・レポート統合を含む）。
+
+### 修正3: 完了報告書と最終回答の整合性修正
+
+- §4見出しを「P4必須IDの結果（72 ID = 当初68 ID + 再レビュー追加4 ID）」へ変更し、
+  68 ID（当初指示の必須ID）と72 ID（第1回再レビュー後の必須ID全量）の使い分けを明文化。
+- `tests/domain/p4-*.test.ts`のファイル数を実数**7**へ訂正（旧記載6。
+  p4-catalog-dsl / p4-reduce / p4-terminals / p4-results / p4-invariants /
+  p4-oracleSync / p4-review）。
+- §4 / §7へP4-O01〜O03の結果を記載。§11 / §12のHEAD書き戻し運用の記載を
+  恒久修正後の内容へ更新。§15へpush状態の時系列（第2回レビュー時点
+  `origin/phase-4` = `7a77a79`、`2c6a864` / `7a77a79`は現在origin/phase-4に存在、
+  第2回是正作業ではpushしない）を記載。PR未作成・main未統合は維持。
+- 判断記録は`docs/phase-4-decisions.md`へ§10として追記（§1〜§9は削除・書換えなし。
+  §7の視覚回帰差分記載への訂正は§10.3に記録）。
+
+### 再検証結果（第2回是正後、すべて実測）
+
+| コマンド | 結果 |
+|---|---|
+| `npm run lint` / `npm run typecheck` | 成功（警告0） |
+| `npm run test:unit` | 成功（**36ファイル / 310件**、失敗・skip・todo 0） |
+| `npm run build` | 成功 |
+| `npm run test:e2e` | 成功（**50件**、失敗・skip 0） |
+| `npm run test:oracle` | P1-O01〜P4-O01 / P4-O02 / P4-O03 すべてPASS |
+| E2E前後のP1〜P3証跡SHA-256 | 26ファイル完全一致（diff空、復元操作なし） |
+| Oracle前後のP1〜P3証跡SHA-256 | 26ファイル完全一致（diff空） |
+| `git diff --check` | 問題なし |
+
+- 全template / mode 500 snapshot以内・PROCESSING最大1件（P4-D39 / P3-D28横断検証、
+  無変更のまま成功）。Draft v0.8は無変更。
+- 最終作業ツリー状態（コミット前）: **追跡対象の変更は今回の修正対象ファイルのみ**。
+  未追跡は既知の指示書コピー2件（リポジトリ直下と`docs/`のPhase 3指示書）のみで、
+  削除・変更・stage・コミットはしていない。第1回対応時に存在した複製docx
+  （`docs/01-...-2-.docx`）は第2回対応開始時点で存在しなかった（当方は削除していない）。

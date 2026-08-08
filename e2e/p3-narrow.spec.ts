@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { captureArtifact } from './capture-helper'
 import { forward, forwardUntilVisible, selectOperation, selectTemplate } from './utils'
 
 /** P3-E09: 狭幅（375px、chromium-narrowプロジェクト）でのPhase 3複合Pipeline検証 */
@@ -68,11 +69,11 @@ test('p3-capture-narrow: Phase 3狭幅キャプチャを保存する', async ({ 
   await selectOperation(page, 'sorted')
   await selectTemplate(page, 'tmpl-sorted-comparator')
   await forward(page, 13)
-  await page.screenshot({ path: 'artifacts/phase-3/capture-narrow-sorted.png', fullPage: true })
+  await captureArtifact(page, 3, 'capture-narrow-sorted.png')
   await selectOperation(page, 'peek')
   await forwardUntilVisible(page, 'side-effect-list')
-  await page.screenshot({ path: 'artifacts/phase-3/capture-narrow-peek.png', fullPage: true })
+  await captureArtifact(page, 3, 'capture-narrow-peek.png')
   await selectOperation(page, 'takeWhile')
   await forward(page, 12)
-  await page.screenshot({ path: 'artifacts/phase-3/capture-narrow-takewhile.png', fullPage: true })
+  await captureArtifact(page, 3, 'capture-narrow-takewhile.png')
 })
