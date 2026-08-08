@@ -22,7 +22,8 @@
   `git merge-base --is-ancestor` で確認済み
 - `origin/main...HEAD`: 0 behind / 2 ahead（作業開始時点）。`main..phase-3` の既存差分は
   承認済みの `README.md` と `docs/phase-3-decisions.md` のみであることを確認済み
-- 最終commit SHA: 本報告を含むPhase 3本体一式のcommit後、追記commitで本欄に記載する
+- Phase 3本体commit SHA: `7c7acdb`（feat(p3): Phase 3本体実装。75ファイル）。
+  最終commitは本SHA追記のdocs commit（`git log`先頭）
 - `08d365f` / `908dbc2` のamend・squash・rebaseは行っていない
 
 ## 3. 実装した7操作と対応Stream種別
