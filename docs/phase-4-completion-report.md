@@ -185,8 +185,8 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
 
 ## 14. commit SHA
 
-- Phase 4本体commit: `<p4-main-sha>`（実装・テスト・証跡一式。commit後に本欄を
-  SHA追記commitで更新する）
+- Phase 4本体commit: `c17704c`（feat(p4): Phase 4本体実装。67ファイル・+6039行）
+- 最終commitは本SHA追記のdocs commit（`git log`先頭）
 
 ## 15. push・PR・mergeについて
 
