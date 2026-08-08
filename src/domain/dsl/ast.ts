@@ -25,10 +25,20 @@ export interface FieldComparePredicate {
   readonly value: DslLiteral
 }
 
-export type DslPredicate = FieldComparePredicate
+/**
+ * primitive値またはwrapper値自身の比較（Phase 3指示 §6.2）。
+ * 例: n -> n < 5 は { kind: 'currentValueCompare', operator: 'LT', value: { type: 'int', value: 5 } }
+ */
+export interface CurrentValueComparePredicate {
+  readonly kind: 'currentValueCompare'
+  readonly operator: string
+  readonly value: DslLiteral
+}
 
-/** Phase 1で許可する比較演算子 */
-export const ALLOWED_OPERATORS = ['GTE'] as const
+export type DslPredicate = FieldComparePredicate | CurrentValueComparePredicate
+
+/** 許可する比較演算子（Phase 1: GTE、Phase 3で LT を追加。§6.2） */
+export const ALLOWED_OPERATORS = ['GTE', 'LT'] as const
 
 export interface DslProfile {
   readonly predicateKinds: readonly string[]

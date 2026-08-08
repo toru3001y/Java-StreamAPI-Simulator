@@ -1,6 +1,6 @@
 /**
  * JDK 25 Oracle照合ランナー。
- * Docker上のJDK 25でOracleP1.java / OracleP2.javaを実行し、
+ * Docker上のJDK 25でOracleP1.java / OracleP2.java / OracleP3.javaを実行し、
  * Simulation Core由来の期待値（expected-*.json）と照合する。
  * 期待値ファイルとSimulation Coreの一致は tests/domain/*oracleSync* テストで保証する。
  *
@@ -28,6 +28,12 @@ const SUITES = [
     javaFile: 'OracleP2.java',
     expectedFile: 'expected-p2-from-core.json',
     reportPath: ['artifacts', 'phase-2', 'oracle-result.md'],
+  },
+  {
+    id: 'P3-O01',
+    javaFile: 'OracleP3.java',
+    expectedFile: 'expected-p3-from-core.json',
+    reportPath: ['artifacts', 'phase-3', 'oracle-result.md'],
   },
 ]
 

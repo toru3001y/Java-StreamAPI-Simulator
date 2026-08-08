@@ -40,14 +40,13 @@ describe('P2 React統合', () => {
     expect(byValue('map')?.disabled).toBe(false)
     expect(byValue('flatMap')?.disabled).toBe(false)
     expect(byValue('source.range')?.disabled).toBe(false)
-    // 非実行source（generate / iterate2）はdisabledで理由がtitleとnoteで読める
-    expect(byValue('source.generate')?.disabled).toBe(true)
-    expect(byValue('source.generate')?.title).toContain('limit()')
-    expect(byValue('source.iterate2')?.disabled).toBe(true)
-    const notes = screen.getByTestId('disabled-operation-notes')
-    expect(notes.textContent).toContain('Stream.generate()')
-    expect(notes.textContent).toContain('Phase 3')
-    // Phase 3以降の未実装操作は選択不能で理由（Phase表記）が読める
+    // Phase 3指示§8.1により、generate / iterate2はlimit付きtemplateで実行可能化された。
+    // Phase 2時点の「disabled + 理由表示」の検証は、Phase 3の正動作
+    // 「選択可能 + 実行不能操作なし」の検証へ更新する（phase-3完了報告の差異記録を参照）
+    expect(byValue('source.generate')?.disabled).toBe(false)
+    expect(byValue('source.iterate2')?.disabled).toBe(false)
+    expect(screen.queryByTestId('disabled-operation-notes')).toBeNull()
+    // Phase 4以降の未実装操作は選択不能で理由（Phase表記）が読める
     const unimplemented = options.filter((o) => o.value.startsWith('unimplemented-'))
     expect(unimplemented.length).toBeGreaterThanOrEqual(7)
     for (const o of unimplemented) {

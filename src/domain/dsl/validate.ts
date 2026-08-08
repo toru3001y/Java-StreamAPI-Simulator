@@ -15,13 +15,14 @@ export function validateStructure(input: unknown, path = 'predicate'): Result<Ds
     return fail([issue('STRUCTURE_INVALID', 'Predicateはオブジェクトである必要があります', path)])
   }
   const obj = input as Record<string, unknown>
-  if (obj['kind'] !== 'fieldCompare') {
+  const kind = obj['kind']
+  if (kind !== 'fieldCompare' && kind !== 'currentValueCompare') {
     return fail([
-      issue('STRUCTURE_UNKNOWN_KIND', `未知のkindです: ${String(obj['kind'])}`, `${path}.kind`),
+      issue('STRUCTURE_UNKNOWN_KIND', `未知のkindです: ${String(kind)}`, `${path}.kind`),
     ])
   }
   const issues: ValidationIssue[] = []
-  if (typeof obj['field'] !== 'string' || obj['field'] === '') {
+  if (kind === 'fieldCompare' && (typeof obj['field'] !== 'string' || obj['field'] === '')) {
     issues.push(issue('STRUCTURE_INVALID', 'fieldは文字列で必須です', `${path}.field`))
   }
   if (typeof obj['operator'] !== 'string' || obj['operator'] === '') {
@@ -60,7 +61,7 @@ export function validateWhitelist(
   if (!profile.predicateKinds.includes(predicate.kind)) {
     issues.push(issue('STRUCTURE_UNKNOWN_KIND', `許可されていないkindです: ${predicate.kind}`, `${path}.kind`))
   }
-  if (!profile.allowedFields.includes(predicate.field)) {
+  if (predicate.kind === 'fieldCompare' && !profile.allowedFields.includes(predicate.field)) {
     issues.push(
       issue('WHITELIST_FIELD', `許可されていないfieldです: ${predicate.field}`, `${path}.field`),
     )
@@ -80,6 +81,20 @@ export function validateWhitelist(
 
 /** 手順4: TypeRefによる型検証 */
 export function validateTypes(predicate: DslPredicate, path = 'predicate'): Result<DslPredicate> {
+  if (predicate.kind === 'currentValueCompare') {
+    // currentValueCompareのint定数は数値要素と比較する。要素型との整合は
+    // instantiate側のPipeline型遷移検証で確認する（Phase 3指示 §6.2）
+    if (predicate.value.type !== 'int') {
+      return fail([
+        issue(
+          'TYPE_MISMATCH',
+          `currentValueCompareは${predicate.value.type}定数と比較できません（int定数のみ）`,
+          `${path}.value`,
+        ),
+      ])
+    }
+    return ok(predicate)
+  }
   const fieldInfo = EMPLOYEE_FIELDS[predicate.field]
   if (!fieldInfo) {
     return fail([

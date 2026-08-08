@@ -22,6 +22,17 @@ export type SnapshotKind =
   | 'SINK_APPENDED'
   | 'RESULT_CONFIRMED'
   | 'STREAM_CONSUMED'
+  // ---- Phase 3（指示§7、docs/phase-3-decisions.md §4.1） ----
+  | 'DISTINCT_CHECKED'
+  | 'DISTINCT_SEEN_UPDATED'
+  | 'SORT_BUFFERED'
+  | 'SORT_ORDER_CONFIRMED'
+  | 'SORT_EMITTED'
+  | 'LIMIT_COUNT_UPDATED'
+  | 'SKIP_COUNT_UPDATED'
+  | 'SHORT_CIRCUIT_CONFIRMED'
+  | 'DROP_MODE_ENTERED'
+  | 'PEEK_ACTION_PERFORMED'
 
 /** 処理中パネルの表示内容（§12.3 処理中）。UIはこの確定値を描画するだけで独自計算しない。 */
 export interface ProcessingView {
@@ -61,6 +72,101 @@ export interface SourceContextView {
   readonly note: string | null
 }
 
+/**
+ * 操作固有状態のnode単位view（Phase 3指示 §7.1）。
+ * 同じ操作がPipelineに複数あっても状態を混同しないよう、nodeIdをキーに保持する。
+ */
+export interface DistinctSeenEntry {
+  readonly key: string
+  readonly label: string
+}
+
+export interface SortedOrderEntry {
+  readonly id: ElementId
+  readonly label: string
+  readonly keyLabel: string
+}
+
+export type OperationContextView =
+  | {
+      readonly kind: 'distinct'
+      readonly nodeId: NodeId
+      readonly seen: readonly DistinctSeenEntry[]
+      readonly currentLabel: string | null
+      readonly verdict: 'FIRST' | 'DUPLICATE' | null
+    }
+  | {
+      readonly kind: 'sorted'
+      readonly nodeId: NodeId
+      readonly phase: 'BUFFERING' | 'ORDER_CONFIRMED' | 'EMITTING'
+      /** natural orderまたはComparator DSL由来の表示（例: Comparator.comparing(Employee::region)） */
+      readonly comparatorLabel: string
+      /** Comparatorキー / 比較対象の説明 */
+      readonly keyDescription: string
+      /** 元のbuffer順序（encounter order） */
+      readonly bufferOrder: readonly SortedOrderEntry[]
+      /** 並べ替え確定後の順序（確定前はnull） */
+      readonly confirmedOrder: readonly SortedOrderEntry[] | null
+      /** 放出済み件数（次の放出位置） */
+      readonly emittedCount: number
+      /** ordered時のstable説明。unorderedではstable保証を表示しない */
+      readonly stableNote: string | null
+    }
+  | {
+      readonly kind: 'limit'
+      readonly nodeId: NodeId
+      readonly maxSize: number
+      readonly passedCount: number
+      readonly reached: boolean
+      readonly upstreamStopped: boolean
+    }
+  | {
+      readonly kind: 'skip'
+      readonly nodeId: NodeId
+      readonly n: number
+      readonly skippedCount: number
+      readonly passMode: boolean
+    }
+  | {
+      readonly kind: 'takeWhile'
+      readonly nodeId: NodeId
+      readonly predicateText: string
+      readonly stopped: boolean
+      readonly boundaryElementId: ElementId | null
+      readonly boundaryLabel: string | null
+    }
+  | {
+      readonly kind: 'dropWhile'
+      readonly nodeId: NodeId
+      readonly predicateText: string
+      readonly mode: 'DROPPING' | 'PASSING'
+      readonly boundaryElementId: ElementId | null
+      readonly boundaryLabel: string | null
+    }
+  | {
+      readonly kind: 'peek'
+      readonly nodeId: NodeId
+      readonly consumerText: string
+      readonly callCount: number
+    }
+
+/**
+ * Side Effect履歴entry（Phase 3指示 §7.8）。
+ * 実ブラウザconsoleではなく、snapshotへ保持した不変履歴をSource of Truthとする。
+ */
+export interface SideEffectEntry {
+  /** action呼出しの安定通番（1始まり） */
+  readonly seq: number
+  readonly nodeId: NodeId
+  readonly elementId: ElementId
+  readonly inputLabel: string
+  /** Consumer DSLから生成したJava式 */
+  readonly actionExpr: string
+  /** actionラベル（PRINT_VALUE / PRINT_FIELD） */
+  readonly actionLabel: string
+  readonly message: string
+}
+
 export interface SnapshotOutputItem {
   readonly id: ElementId
   readonly label: string
@@ -94,6 +200,10 @@ export interface Snapshot {
   >
   /** 入力パネル用: 各要素の最新状態（§12.4） */
   readonly elementLatestStates: Readonly<Record<ElementId, ElementStateKind>>
+  /** Phase 3のnode単位操作固有状態（該当ノードが存在する場合のみ） */
+  readonly operationContexts: Readonly<Record<NodeId, OperationContextView>>
+  /** peekのSide Effect履歴（このsnapshot時点まで） */
+  readonly sideEffects: readonly SideEffectEntry[]
   readonly output: SnapshotOutput
   readonly processing: ProcessingView | null
   readonly explanation: {

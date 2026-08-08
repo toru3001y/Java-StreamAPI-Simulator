@@ -1,8 +1,11 @@
 # Phase 3 判断記録
 
-- 判断日: 2026-08-08
-- 対象: Draft v0.8 §21.5 **J-2** のうち、Phase 3着手前が期限の `sorted` の例外規定
-- 状態: **J-2（sorted）確定済み。Phase 3の実装は未着手**（本判断はPhase 3実装開始指示ではない）
+- 判断日: 2026-08-08（J-2 sorted確定）/ 2026-08-08（Phase 3本体実装判断を§8以降へ追記）
+- 対象: Draft v0.8 §21.5 **J-2** のうち、Phase 3着手前が期限の `sorted` の例外規定、
+  およびPhase 3本体実装（distinct / sorted / limit / skip / takeWhile / dropWhile / peek）で
+  必要になった実装判断
+- 状態: **J-2（sorted）確定済み（§1〜§7、無変更で保持）。Phase 3本体は実装済み**
+  （実装判断は§8以降。完了報告は `docs/phase-3-completion-report.md`）
 
 ## 1. 基準仕様と参照節
 
@@ -132,3 +135,98 @@ Phase 3実装では少なくとも次を機械検証する（テストIDはPhase
   takeWhile / dropWhile / peekのDomain実装、Catalog登録、DSL追加、Step Engine変更、
   React UI変更、fixture・テスト追加）は開始していない**。
 - 新しいVitest / Playwrightテストは作成していない（テストIDはPhase 3実装指示で確定）。
+
+---
+
+以下はPhase 3本体実装（Phase 3実装指示に基づく）で必要になった実装判断の追記である。
+§1〜§7の確定済みJ-2は変更していない。
+
+## 8. Step Engineの合成構造（指示§10）
+
+- Phase 2の「要素1件をdepth-firstに流す」規則を維持したまま、Step Engine内部を
+  **node runtime**（node単位の操作固有状態）+ **finish cascade** + **短絡キャンセル**の
+  3要素で合成する構造へ拡張した。target operation専用の固定Pipeline分岐は持たない。
+  1. 即時通過 / 除外: filter・map系・distinct・skip・takeWhile・dropWhile・peekは
+     従来どおり要素到着時に処理する。
+  2. 保持してflush: sortedは`SORT_BUFFERED`で要素を保持し、upstream完了後の
+     finish cascade（chain順）で`SORT_ORDER_CONFIRMED` → `SORT_EMITTED`を実行する。
+     複数のsortedがあってもchain順に順次flushされる。
+  3. 上流キャンセル: limit / takeWhileの短絡確定は`cancelIdx`（受け付け停止した
+     最小chain index）として保持し、source・flatMap子送出・sorted放出の各emitterは
+     「自分より下流にキャンセルがあるか」で送出を停止する。
+- `SHORT_CIRCUIT_CONFIRMED`の位置: limitは上限到達要素が**後段を流れ切った後**に
+  独立snapshotとして確定する（到達要素自身の後段処理はJava同様に実行される）。
+  takeWhileは境界要素の除外確定直後に確定する。`limit(0)`はsource要求前に確定する。
+- P1 / P2のsnapshot列（種別・順序・文言）は変更していない（P3-D32・既存139テストで検証）。
+
+## 9. 無限sourceの有限性解析（指示§8.2）
+
+- `analyzeBoundedness`（`src/domain/pipeline/boundedness.ts`）が、source有限性
+  （finite / infinite / conditionallyFinite）とPipeline有限化を区別して事前解析する。
+- 無限source（generate / iterate2）は最初の`limit`まで走査し、
+  必要source要求件数 = `limit(N)` + それ以前の`skip(n)`の合計（`limit(0)`は0件）とする。
+  1→1保証（map・mapToX・boxed・mapToObj・peek）はlimit前でも件数を変えない。
+- sorted-before-limitは`UNBOUNDED_SOURCE`、filter / distinct / flatMap /
+  takeWhile / dropWhile等のbefore-limitは`UNSAFE_BOUNDEDNESS`として保守的に事前拒否する。
+- 具現化（`materializeInfiniteSource`）は導出済み件数だけを決定的に生成し、
+  supplier / operator相当の適用回数はこの件数を超えない（P3-O01の
+  `generateSupplierCalls = 3`でJDK実測と照合済み）。
+- `PipelineDefinition.boundedness`にsource有限性・有限化済みフラグ・最大要求件数を、
+  `orderMeta`にordered / unorderedを保持し、UIは「無限sourceをlimitで有限化した
+  Pipeline」であることをsource有限と区別して表示する（§5.3）。
+
+## 10. DSL追加の設計（指示§6）
+
+- Predicate: `currentValueCompare`（`n -> n < 5`）を追加。既存`fieldCompare` + GTEは無変更。
+  演算子はGTE / LTのみをwhitelistする。
+- Comparator: `{ kind: 'natural' }`と`{ kind: 'employeeKeys', keys: [{field, direction}] }`。
+  許可キーは指示§6.3の8種（skillsは含めない）。Javaコードはキー型に応じて
+  `comparing` / `comparingInt` / `comparingLong` / `comparingDouble`を使い分け、
+  単一キーDESCは`.reversed()`、複合キーのDESCは`Comparator.reverseOrder()`第2引数で
+  組み立てる（`.reversed()`が複合チェーン全体を反転してしまうのを避けるため）。
+  `department.name` / `department.division`は先頭キーのみ明示型lambda
+  （`(Employee e) -> e.department().name()`）で生成する（型推論のため）。
+- Consumer: `printValue`（PRINT_VALUE） / `printField`（PRINT_FIELD、表示可能な
+  単純値fieldのみ）。Side Effectメッセージ・Java式・説明を同一ASTから生成する。
+- limit / skip引数: `Number.isSafeInteger`かつ0以上のみ受理（負数・小数・NaN・
+  Infinity・safe integer外は`TYPE_MISMATCH`で事前拒否）。Java引数型がlongであることを
+  検証メッセージ・jdkNotesへ反映する。表示コードは`.limit(3)`（int literalの
+  自動拡大変換で正当なJava）とし、DSLにない値（L接尾辞等）を補わない。
+
+## 11. 型規則（指示§5.2）
+
+- object / primitive両Streamを表す`anyStreamLike` TypeRuleを追加し、7操作の入力規則に
+  使用した（Phase 2の`anyStream`はobject Stream専用のまま無変更）。出力はidentity。
+- sorted()（natural）: primitive Streamは常に受理。object Streamは要素型が
+  String / Integer / Long / Double / LocalDateの場合のみ受理し、
+  `Stream<Employee>.sorted()`はTYPE_MISMATCHで事前拒否する。
+- sorted(Comparator): object Streamのみ。primitive Streamへの指定は拒否。
+  employeeKeysはStream<Employee>のみ。
+- takeWhile / dropWhile: 初版はsequential + ordered限定のため、unordered source
+  （generate）との組合せを`UNORDERED_WHILE`として事前拒否する。
+- distinctの等価判定キーは値種別ごとの構造キー（数値は数値等価 = Double.compare準拠、
+  Employeeは全フィールド、配列は参照相当としてelementId）で導出する。
+
+## 12. generate / iterate2の実行可能化とP2-R01の差異（指示§8.1）
+
+- 旧template（`tmpl-src-generate` / `tmpl-src-iterate2`、limitなし・実行不能）は
+  **削除せず保持**した。P2テスト（UNBOUNDED_SOURCE拒否の検証）の対象として残し、
+  disabled理由の文言を「limit付きtemplateを使用」へ更新した。
+- 実行可能化は新template `tmpl-limit-generate` / `tmpl-limit-iterate2`
+  （template自体にlimitノードを含む）で行い、target operationを
+  `source.generate` / `source.iterate2`として操作選択UIから実行可能にした。
+- この結果、**P2-R01の一部アサーション（generate / iterate2がdisabledであること・
+  disabled理由noteの存在）はPhase 3指示§8.1・§11.1・P3-R07と直接矛盾**するため、
+  P2-R01を「generate / iterate2が選択可能・実行不能操作なし・Phase 4以降のみ未実装表示」
+  へ更新した。テストの意図（実装済みだけ選択可能・未実装は理由表示）は維持・強化している。
+  詳細は完了報告の「仕様との差異」を参照。
+
+## 13. 視覚回帰基準画像の意図的更新
+
+- Phase 3のUI変更（副題のPhase 3表記・操作選択リストへの7操作追加・未実装リスト更新）が
+  全画面キャプチャに写るため、P1-E11 / P2-E10の基準画像を**意図的に更新**した。
+  Phase 2でも同じ理由でP1-E11基準を更新した前例（commit 3356ef6）に従う。
+- P3-E10の基準画像（distinct重複 / sorted order confirmed / takeWhile STOP /
+  peek action）は代表snapshotだけを新規基準化した。
+- `artifacts/phase-1/` / `artifacts/phase-2/`の過去Phase証跡は書き換えない
+  （検証実行で再生成された分はHEADへ復元した）。

@@ -27,18 +27,18 @@ export interface OperationChoice {
   readonly disabledReason: string | null
 }
 
-/** Phase 3以降の未実装操作（選択不能として理由を表示する） */
+/** Phase 4以降の未実装操作（選択不能として理由を表示する。Phase 3の7操作は実装済み） */
 export const UNIMPLEMENTED_OPERATIONS: readonly { name: string; phase: number }[] = [
-  { name: 'distinct', phase: 3 },
-  { name: 'sorted', phase: 3 },
-  { name: 'limit', phase: 3 },
-  { name: 'skip', phase: 3 },
-  { name: 'takeWhile', phase: 3 },
-  { name: 'dropWhile', phase: 3 },
-  { name: 'peek', phase: 3 },
   { name: 'reduce', phase: 4 },
   { name: 'count', phase: 4 },
-  { name: 'collect', phase: 5 },
+  { name: 'min / max', phase: 4 },
+  { name: 'findFirst / findAny', phase: 4 },
+  { name: 'anyMatch / allMatch / noneMatch', phase: 4 },
+  { name: 'sum / average / summaryStatistics', phase: 4 },
+  { name: 'toArray', phase: 4 },
+  { name: 'forEach / forEachOrdered', phase: 4 },
+  { name: 'collect（Collector）', phase: 5 },
+  { name: 'groupingBy / partitioningBy', phase: 5 },
 ]
 
 export interface AppInstance {

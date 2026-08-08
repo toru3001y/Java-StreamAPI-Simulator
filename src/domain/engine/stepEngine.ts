@@ -1,34 +1,55 @@
 import type { PipelineDefinition, PipelineNodeDef } from '../pipeline/pipelineDefinition'
 import type { ElementStateKind } from '../catalog/operationCatalog'
-import { evaluatePredicate } from '../dsl/evaluate'
+import { evaluatePredicate, evaluateValuePredicate, numericValueOf } from '../dsl/evaluate'
 import { evaluateFlatMapper, evaluateMapper } from '../dsl/evaluateMapper'
+import { comparatorKeyLabel, sortBuffer } from '../dsl/evaluateComparator'
+import { evaluateConsumerMessage } from '../dsl/evaluateConsumer'
+import { consumerActionLabel } from '../dsl/consumerAst'
 import {
   comparisonExpr,
+  describeComparator,
+  describeConsumer,
   describeMapper,
   describePredicate,
   fieldValueFlow,
 } from '../dsl/explanation'
-import { mapperToJavaExpr, predicateToJavaExpr } from '../dsl/javaCode'
+import {
+  comparatorToJavaExpr,
+  consumerToJavaExpr,
+  mapperToJavaExpr,
+  predicateToJavaExpr,
+} from '../dsl/javaCode'
+import { distinctKeyOf } from './distinctKey'
 import { formatSimValue, type SimValue } from '../model/value'
 import { formatTypeRef } from '../types/typeRef'
-import type { ElementId } from '../types/ids'
+import type { ElementId, NodeId } from '../types/ids'
 import { snapshotIdFor } from '../types/ids'
 import { deepFreeze } from '../util/deepFreeze'
 import type {
   FlatMapContextView,
+  OperationContextView,
   ProcessingView,
+  SideEffectEntry,
   Snapshot,
   SnapshotKind,
   SnapshotOutputItem,
+  SortedOrderEntry,
   SourceContextView,
 } from './snapshot'
 
 /**
- * Step Engine（§13）。
+ * Step Engine（§13、Phase 3指示 §7・§10）。
  * PipelineDefinitionから決定的なsnapshot列（timeline）を純粋に導出する。
  * next(currentSnapshot, def)は保存済みtimelineの次要素を返すだけであり、
  * 同じrevisionからは常に同じsnapshot列が得られる（§12.6、§19）。
  * DOM、タイマー、アニメーションへ依存しない。
+ *
+ * Phase 3では要素1件のdepth-first規則を維持しつつ、次の3種の処理を合成する（§10）:
+ *   1. 即時通過 / 除外（filter、map系、distinct、skip、takeWhile、dropWhile、peek）
+ *   2. 保持してupstream完了後にflush（sorted）
+ *   3. 確定後にupstreamへ追加要求しない（limit、takeWhile）
+ * これらはtarget operation専用の固定分岐ではなく、検証済みノード列に対する
+ * node handler + finish / flush / cancel伝播として実装する。
  *
  * J-3: 検証はPipelineDefinition生成前に完了しているため、実行時のEngineInvariantErrorは
  * エンジン内部の不整合を検知した場合のフェイルセーフに限る（docs/phase-1-decisions.md）。
@@ -67,6 +88,81 @@ interface MutableFlatMapCtx {
   closed: boolean
 }
 
+// ---- Phase 3 node runtime（操作固有状態。node単位で保持し混同しない。§7.1） ----
+
+interface DistinctRuntime {
+  readonly kind: 'distinct'
+  readonly node: PipelineNodeDef
+  readonly seenKeys: Set<string>
+  readonly seen: { key: string; label: string }[]
+  currentLabel: string | null
+  verdict: 'FIRST' | 'DUPLICATE' | null
+}
+
+interface SortedBufferEntry {
+  readonly id: ElementId
+  readonly label: string
+  readonly keyLabel: string
+  readonly value: SimValue
+}
+
+interface SortedRuntime {
+  readonly kind: 'sorted'
+  readonly node: PipelineNodeDef
+  readonly buffer: SortedBufferEntry[]
+  confirmed: SortedBufferEntry[] | null
+  phase: 'BUFFERING' | 'ORDER_CONFIRMED' | 'EMITTING'
+  emittedCount: number
+}
+
+interface LimitRuntime {
+  readonly kind: 'limit'
+  readonly node: PipelineNodeDef
+  readonly maxSize: number
+  passedCount: number
+  reached: boolean
+  pendingShortCircuit: boolean
+  upstreamStopped: boolean
+}
+
+interface SkipRuntime {
+  readonly kind: 'skip'
+  readonly node: PipelineNodeDef
+  readonly n: number
+  skippedCount: number
+}
+
+interface TakeWhileRuntime {
+  readonly kind: 'takeWhile'
+  readonly node: PipelineNodeDef
+  stopped: boolean
+  boundaryElementId: ElementId | null
+  boundaryLabel: string | null
+}
+
+interface DropWhileRuntime {
+  readonly kind: 'dropWhile'
+  readonly node: PipelineNodeDef
+  dropping: boolean
+  boundaryElementId: ElementId | null
+  boundaryLabel: string | null
+}
+
+interface PeekRuntime {
+  readonly kind: 'peek'
+  readonly node: PipelineNodeDef
+  callCount: number
+}
+
+type NodeRuntime =
+  | DistinctRuntime
+  | SortedRuntime
+  | LimitRuntime
+  | SkipRuntime
+  | TakeWhileRuntime
+  | DropWhileRuntime
+  | PeekRuntime
+
 interface Draft {
   kind: SnapshotKind
   activeNode: PipelineNodeDef | null
@@ -78,6 +174,8 @@ interface Draft {
   typeTransition: string | null
   flatMapContext: FlatMapContextView | null
   sourceContext: SourceContextView | null
+  operationContexts: Record<NodeId, OperationContextView>
+  sideEffects: SideEffectEntry[]
   perNode: Record<ElementId, Record<string, ElementStateKind>>
   latest: Record<ElementId, ElementStateKind>
   outputItems: SnapshotOutputItem[]
@@ -105,7 +203,11 @@ class TimelineBuilder {
   private readonly perNode: Record<ElementId, Record<string, ElementStateKind>> = {}
   private readonly latest: Record<ElementId, ElementStateKind> = {}
   private readonly outputItems: SnapshotOutputItem[] = []
+  private readonly contexts: Record<NodeId, OperationContextView> = {}
+  private readonly sideEffects: SideEffectEntry[] = []
   private flatMapCtx: MutableFlatMapCtx | null = null
+  /** 短絡確定により入力を受け付けなくなったchain index（上流はこれ以上要素を送らない） */
+  cancelIdx: number | null = null
 
   constructor(def: PipelineDefinition) {
     this.def = def
@@ -139,6 +241,25 @@ class TimelineBuilder {
     return this.outputItems.length
   }
 
+  setContext(nodeId: NodeId, view: OperationContextView): void {
+    this.contexts[nodeId] = view
+  }
+
+  addSideEffect(entry: Omit<SideEffectEntry, 'seq'>): SideEffectEntry {
+    const withSeq: SideEffectEntry = { ...entry, seq: this.sideEffects.length + 1 }
+    this.sideEffects.push(withSeq)
+    return withSeq
+  }
+
+  cancelAt(chainIdx: number): void {
+    this.cancelIdx = this.cancelIdx === null ? chainIdx : Math.min(this.cancelIdx, chainIdx)
+  }
+
+  /** emitter（source: -1）から見て下流に短絡確定ノードがあるか */
+  cancelledBeyond(emitterIdx: number): boolean {
+    return this.cancelIdx !== null && this.cancelIdx > emitterIdx
+  }
+
   openFlatMapCtx(ctx: MutableFlatMapCtx): void {
     this.flatMapCtx = ctx
   }
@@ -163,6 +284,8 @@ class TimelineBuilder {
       typeTransition: input.typeTransition ?? null,
       flatMapContext: this.flatMapCtx ? structuredClone(this.flatMapCtx) : null,
       sourceContext: input.sourceContext ?? null,
+      operationContexts: structuredClone(this.contexts),
+      sideEffects: [...this.sideEffects],
       perNode: structuredClone(this.perNode),
       latest: structuredClone(this.latest),
       outputItems: [...this.outputItems],
@@ -194,7 +317,7 @@ function nodesOf(def: PipelineDefinition): {
 
 function predicateOf(node: PipelineNodeDef) {
   if (!node.predicate) {
-    throw new EngineInvariantError(`filter node ${node.nodeId} にPredicateがありません`)
+    throw new EngineInvariantError(`node ${node.nodeId} にPredicateがありません`)
   }
   return node.predicate
 }
@@ -221,9 +344,137 @@ function isFlatMapFamily(operationId: string): boolean {
   return (FLAT_MAP_FAMILY as readonly string[]).includes(operationId)
 }
 
+function countOf(node: PipelineNodeDef): number {
+  if (node.count === null) {
+    throw new EngineInvariantError(`node ${node.nodeId} にcountがありません`)
+  }
+  return node.count
+}
+
+/** sorted固有contextのview（§7.3の6項目） */
+function sortedContextView(rt: SortedRuntime, def: PipelineDefinition): OperationContextView {
+  const toEntry = (e: SortedBufferEntry): SortedOrderEntry => ({
+    id: e.id,
+    label: e.label,
+    keyLabel: e.keyLabel,
+  })
+  return {
+    kind: 'sorted',
+    nodeId: rt.node.nodeId,
+    phase: rt.phase,
+    comparatorLabel: rt.node.comparator
+      ? comparatorToJavaExpr(rt.node.comparator)
+      : 'natural order（Comparable）',
+    keyDescription: describeComparator(rt.node.comparator),
+    bufferOrder: rt.buffer.map(toEntry),
+    confirmedOrder: rt.confirmed ? rt.confirmed.map(toEntry) : null,
+    emittedCount: rt.emittedCount,
+    // unordered Streamではstableを保証する説明を出さない（§7.3）
+    stableNote: def.orderMeta.sourceOrdered
+      ? '同値キーの要素は元のencounter orderを維持します（stable sort）'
+      : null,
+  }
+}
+
+function contextViewOf(rt: NodeRuntime, def: PipelineDefinition): OperationContextView {
+  switch (rt.kind) {
+    case 'distinct':
+      return {
+        kind: 'distinct',
+        nodeId: rt.node.nodeId,
+        seen: rt.seen.map((s) => ({ ...s })),
+        currentLabel: rt.currentLabel,
+        verdict: rt.verdict,
+      }
+    case 'sorted':
+      return sortedContextView(rt, def)
+    case 'limit':
+      return {
+        kind: 'limit',
+        nodeId: rt.node.nodeId,
+        maxSize: rt.maxSize,
+        passedCount: rt.passedCount,
+        reached: rt.reached,
+        upstreamStopped: rt.upstreamStopped,
+      }
+    case 'skip':
+      return {
+        kind: 'skip',
+        nodeId: rt.node.nodeId,
+        n: rt.n,
+        skippedCount: rt.skippedCount,
+        passMode: rt.skippedCount >= rt.n,
+      }
+    case 'takeWhile':
+      return {
+        kind: 'takeWhile',
+        nodeId: rt.node.nodeId,
+        predicateText: predicateToJavaExpr(predicateOf(rt.node)),
+        stopped: rt.stopped,
+        boundaryElementId: rt.boundaryElementId,
+        boundaryLabel: rt.boundaryLabel,
+      }
+    case 'dropWhile':
+      return {
+        kind: 'dropWhile',
+        nodeId: rt.node.nodeId,
+        predicateText: predicateToJavaExpr(predicateOf(rt.node)),
+        mode: rt.dropping ? 'DROPPING' : 'PASSING',
+        boundaryElementId: rt.boundaryElementId,
+        boundaryLabel: rt.boundaryLabel,
+      }
+    case 'peek':
+      return {
+        kind: 'peek',
+        nodeId: rt.node.nodeId,
+        consumerText: rt.node.consumer ? consumerToJavaExpr(rt.node.consumer) : '',
+        callCount: rt.callCount,
+      }
+  }
+}
+
+function createRuntime(node: PipelineNodeDef): NodeRuntime | null {
+  switch (node.operationId) {
+    case 'distinct':
+      return { kind: 'distinct', node, seenKeys: new Set(), seen: [], currentLabel: null, verdict: null }
+    case 'sorted':
+      return { kind: 'sorted', node, buffer: [], confirmed: null, phase: 'BUFFERING', emittedCount: 0 }
+    case 'limit':
+      return {
+        kind: 'limit',
+        node,
+        maxSize: countOf(node),
+        passedCount: 0,
+        reached: false,
+        pendingShortCircuit: false,
+        upstreamStopped: false,
+      }
+    case 'skip':
+      return { kind: 'skip', node, n: countOf(node), skippedCount: 0 }
+    case 'takeWhile':
+      return { kind: 'takeWhile', node, stopped: false, boundaryElementId: null, boundaryLabel: null }
+    case 'dropWhile':
+      return { kind: 'dropWhile', node, dropping: true, boundaryElementId: null, boundaryLabel: null }
+    case 'peek':
+      return { kind: 'peek', node, callCount: 0 }
+    default:
+      return null
+  }
+}
+
 function buildTimeline(def: PipelineDefinition): Snapshot[] {
   const b = new TimelineBuilder(def)
   const { src, chain, sink } = nodesOf(def)
+
+  // Phase 3 node runtime（node単位。同一操作の複数ノードも混同しない。§7.1）
+  const runtimes = new Map<NodeId, NodeRuntime>()
+  for (const node of chain) {
+    const rt = createRuntime(node)
+    if (rt) {
+      runtimes.set(node.nodeId, rt)
+      b.setContext(node.nodeId, contextViewOf(rt, def))
+    }
+  }
 
   for (const element of def.dataset) b.registerElement(element.elementId)
 
@@ -232,6 +483,40 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     activeNode: null,
     currentText: '初期状態です。まだ要素は処理されていません。',
   })
+
+  const syncContext = (rt: NodeRuntime): void => {
+    b.setContext(rt.node.nodeId, contextViewOf(rt, def))
+  }
+
+  /**
+   * 短絡が確定したlimitノードのSHORT_CIRCUIT_CONFIRMEDを独立snapshotとして確定し、
+   * 上流への追加要求を停止する（§7.4）。要素が後段を流れ切った後に呼ぶ。
+   */
+  const confirmPendingShortCircuits = (): void => {
+    chain.forEach((node, i) => {
+      const rt = runtimes.get(node.nodeId)
+      if (rt?.kind === 'limit' && rt.pendingShortCircuit && !rt.upstreamStopped) {
+        rt.pendingShortCircuit = false
+        rt.upstreamStopped = true
+        syncContext(rt)
+        b.push({
+          kind: 'SHORT_CIRCUIT_CONFIRMED',
+          activeNode: node,
+          currentElementId: null,
+          processing: {
+            title: 'short-circuit確定（limit上限到達）',
+            inputLabel: `通過数 ${rt.passedCount}/${rt.maxSize}`,
+            expression: `.limit(${rt.maxSize})`,
+            evaluation: null,
+            outcome: '上限に到達したため、上流への要素要求を停止します',
+          },
+          currentText: `limit(${rt.maxSize})の上限に到達しました。これ以上の要素は要求されず、残りは未評価のままです。`,
+          jdkNote: 'limitはshort-circuiting操作であり、上限到達後の残り要素は評価されません（除外ではなく未評価）。',
+        })
+        b.cancelAt(i)
+      }
+    })
+  }
 
   /** 中間チェーンを chainIdx から処理し、要素が終端まで到達したらtrueを返す */
   const processThroughChain = (
@@ -426,9 +711,14 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
         })
         const ctx = b.currentFlatMapCtx
         if (!ctx) throw new EngineInvariantError('flatMap文脈がありません')
-        childValues.forEach((childValue, ci) => {
+        for (let ci = 0; ci < childValues.length; ci++) {
+          // 後段の短絡確定後は、mapped Streamの残り子要素を評価しない（§8.3）
+          if (b.cancelledBeyond(i)) break
+          const childValue = childValues[ci]
           const child = children[ci]
-          if (!child) throw new EngineInvariantError(`child index ${ci} が不正です`)
+          if (!child || childValue === undefined) {
+            throw new EngineInvariantError(`child index ${ci} が不正です`)
+          }
           ctx.emittedCount = ci + 1
           b.setState(child.id, node.nodeId, 'PASSED')
           b.setLatest(child.id, 'PROCESSING')
@@ -448,14 +738,525 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           })
           // 子要素はencounter orderどおり1件ずつ後段を流れ切る（§6.2）
           processThroughChain(child.id, childValue, i + 1, elementId)
-          if (ci === children.length - 1) {
-            // 最後の子の処理完了後、mapped Streamのclose状態を該当snapshotの詳細へ反映する（§9.3）
+          confirmPendingShortCircuits()
+          if (ci === children.length - 1 || b.cancelledBeyond(i)) {
+            // 最後の子の処理完了後（または短絡確定後）、mapped Streamのclose状態を
+            // 該当snapshotの詳細へ反映する（§9.3）
             ctx.closed = true
             b.patchLastDraft()
           }
-        })
+        }
         // 親要素自身は後段へ渡らない（子がflattenされて流れる）
         return false
+      }
+
+      // ---- Phase 3: distinct（§7.2） ----
+      if (node.operationId === 'distinct') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'distinct') throw new EngineInvariantError('distinct runtimeがありません')
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        rt.currentLabel = label
+        rt.verdict = null
+        syncContext(rt)
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'distinctへの要素到着',
+            inputLabel: label,
+            expression: '.distinct()',
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がdistinctへ到着しました。既出値（seen）と照合し、初登場か重複かを判定します。`,
+        })
+        const key = distinctKeyOf(value, elementId)
+        const isFirst = !rt.seenKeys.has(key)
+        rt.verdict = isFirst ? 'FIRST' : 'DUPLICATE'
+        syncContext(rt)
+        b.push({
+          kind: 'DISTINCT_CHECKED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'seenとの照合確定',
+            inputLabel: label,
+            expression: '.distinct()',
+            evaluation: `seenとの照合 → ${isFirst ? '初登場' : '重複'}`,
+            outcome: null,
+          },
+          currentText: isFirst
+            ? `${name}はまだseenに存在しないため初登場です。`
+            : `${name}はseenに既出のため重複です。`,
+          jdkNote: def.orderMeta.sourceOrdered
+            ? 'ordered Streamでは、重複要素のうちencounter orderで最初の要素が保持されます。'
+            : 'unordered Streamでは、どの重複要素が保持されるかは保証されません。',
+        })
+        if (isFirst) {
+          rt.seenKeys.add(key)
+          rt.seen.push({ key, label })
+          b.setState(elementId, node.nodeId, 'PASSED')
+          b.setLatest(elementId, 'PASSED')
+          syncContext(rt)
+          b.push({
+            kind: 'DISTINCT_SEEN_UPDATED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: 'seen更新',
+              inputLabel: `${label} → seen`,
+              expression: '.distinct()',
+              evaluation: null,
+              outcome: 'seenへ追加し、要素は後段へ通過します',
+            },
+            currentText: `${name}をseenへ追加しました。初登場のため後段へ通過します。`,
+          })
+          continue
+        }
+        b.setState(elementId, node.nodeId, 'REJECTED')
+        b.setLatest(elementId, 'REJECTED')
+        syncContext(rt)
+        b.push({
+          kind: 'ELEMENT_REJECTED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '重複除外確定',
+            inputLabel: label,
+            expression: '.distinct()',
+            evaluation: 'seenとの照合 → 重複',
+            outcome: '除外（後段へは渡されません）',
+          },
+          currentText: `${name}は重複のため除外されます。最初に登場した同値要素だけが残ります。`,
+        })
+        return false
+      }
+
+      // ---- Phase 3: sorted（§7.3、確定済みJ-2） ----
+      if (node.operationId === 'sorted') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'sorted') throw new EngineInvariantError('sorted runtimeがありません')
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        const sortedExpr = node.comparator
+          ? `.sorted(${comparatorToJavaExpr(node.comparator)})`
+          : '.sorted()'
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'sortedへの要素到着',
+            inputLabel: label,
+            expression: sortedExpr,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がsortedへ到着しました。全入力が揃うまでbufferへ取り込みます。`,
+          jdkNote: 'sortedは全要素を見るまで1件も結果を生成できません（stateful操作）。',
+        })
+        rt.buffer.push({
+          id: elementId,
+          label,
+          keyLabel: comparatorKeyLabel(node.comparator, value),
+          value,
+        })
+        b.setState(elementId, node.nodeId, 'BUFFERED')
+        b.setLatest(elementId, 'BUFFERED')
+        syncContext(rt)
+        b.push({
+          kind: 'SORT_BUFFERED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'bufferへの取り込み確定',
+            inputLabel: `${label} → buffer（${rt.buffer.length}件目）`,
+            expression: sortedExpr,
+            evaluation: null,
+            outcome: 'bufferへ取り込みました（後段への出力は全入力の蓄積後）',
+          },
+          currentText: `${name}をbufferへ取り込みました（現在${rt.buffer.length}件）。全入力が揃うまで後段へは0件です。`,
+        })
+        // 要素はbufferに保持され、upstream完了後のflushで放出される
+        return false
+      }
+
+      // ---- Phase 3: limit（§7.4） ----
+      if (node.operationId === 'limit') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'limit') throw new EngineInvariantError('limit runtimeがありません')
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'limitへの要素到着',
+            inputLabel: label,
+            expression: `.limit(${rt.maxSize})`,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がlimit(${rt.maxSize})へ到着しました。現在の通過数は${rt.passedCount}/${rt.maxSize}です。`,
+          jdkNote: 'limitの引数maxSizeの型はlongです。',
+        })
+        rt.passedCount += 1
+        if (rt.passedCount >= rt.maxSize) {
+          rt.reached = true
+          rt.pendingShortCircuit = true
+        }
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
+        syncContext(rt)
+        b.push({
+          kind: 'LIMIT_COUNT_UPDATED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '通過数の更新確定',
+            inputLabel: label,
+            expression: `.limit(${rt.maxSize})`,
+            evaluation: `通過数 ${rt.passedCount}/${rt.maxSize}`,
+            outcome: rt.reached
+              ? '通過しました（上限到達。この要素が最後の通過要素です）'
+              : '通過しました',
+          },
+          currentText: rt.reached
+            ? `${name}が通過し、通過数が${rt.passedCount}/${rt.maxSize}になりました。上限に到達したため、この要素が後段を流れ切った後に短絡が確定します。`
+            : `${name}が通過し、通過数が${rt.passedCount}/${rt.maxSize}になりました。`,
+        })
+        continue
+      }
+
+      // ---- Phase 3: skip（§7.5） ----
+      if (node.operationId === 'skip') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'skip') throw new EngineInvariantError('skip runtimeがありません')
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'skipへの要素到着',
+            inputLabel: label,
+            expression: `.skip(${rt.n})`,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がskip(${rt.n})へ到着しました。現在のスキップ数は${rt.skippedCount}/${rt.n}です。`,
+          jdkNote: 'skipの引数nの型はlongです。skipはStream全体を短絡終了しません。',
+        })
+        if (rt.skippedCount < rt.n) {
+          rt.skippedCount += 1
+          b.setState(elementId, node.nodeId, 'REJECTED')
+          b.setLatest(elementId, 'REJECTED')
+          syncContext(rt)
+          b.push({
+            kind: 'SKIP_COUNT_UPDATED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: 'スキップ数の更新確定',
+              inputLabel: label,
+              expression: `.skip(${rt.n})`,
+              evaluation: `スキップ数 ${rt.skippedCount}/${rt.n}`,
+              outcome: '除外（skip対象のため後段へは渡されません）',
+            },
+            currentText: `${name}をスキップしました（${rt.skippedCount}/${rt.n}）。skip対象のため除外されます。`,
+          })
+          return false
+        }
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
+        syncContext(rt)
+        b.push({
+          kind: 'ELEMENT_PASSED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '通過確定（通過モード）',
+            inputLabel: label,
+            expression: `.skip(${rt.n})`,
+            evaluation: `スキップ済み ${rt.skippedCount}/${rt.n}`,
+            outcome: '通過（skip完了後の要素は判定なしで順次通過します）',
+          },
+          currentText: `${rt.n}件のスキップが完了しているため、${name}は判定なしで通過します。`,
+        })
+        continue
+      }
+
+      // ---- Phase 3: takeWhile（§7.6） ----
+      if (node.operationId === 'takeWhile') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'takeWhile') throw new EngineInvariantError('takeWhile runtimeがありません')
+        const predicate = predicateOf(node)
+        const predicateExpr = predicateToJavaExpr(predicate)
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'takeWhileへの要素到着',
+            inputLabel: label,
+            expression: predicateExpr,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がtakeWhile（${predicateExpr}）へ到着しました。${describePredicate(predicate)}。`,
+          jdkNote: '初版のtakeWhile実行はsequential + orderedに限定しています。',
+        })
+        const numeric = numericValueOf(value)
+        const result = evaluateValuePredicate(predicate, value)
+        b.push({
+          kind: 'PREDICATE_EVALUATED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'Predicate評価確定',
+            inputLabel: fieldValueFlow(predicate, name, numeric),
+            expression: predicateExpr,
+            evaluation: `${comparisonExpr(predicate, numeric)} → ${result}`,
+            outcome: null,
+          },
+          currentText: `${name}を評価します。${comparisonExpr(predicate, numeric)} は ${result} です。`,
+        })
+        if (result) {
+          b.setState(elementId, node.nodeId, 'PASSED')
+          b.setLatest(elementId, 'PASSED')
+          b.push({
+            kind: 'ELEMENT_PASSED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '通過確定',
+              inputLabel: label,
+              expression: predicateExpr,
+              evaluation: `${comparisonExpr(predicate, numeric)} → true`,
+              outcome: '通過（trueのprefixに含まれます）',
+            },
+            currentText: `${name}はPredicateがtrueのため通過します。`,
+          })
+          continue
+        }
+        rt.stopped = true
+        rt.boundaryElementId = elementId
+        rt.boundaryLabel = label
+        b.setState(elementId, node.nodeId, 'REJECTED')
+        b.setLatest(elementId, 'REJECTED')
+        syncContext(rt)
+        b.push({
+          kind: 'ELEMENT_REJECTED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '境界要素の除外確定',
+            inputLabel: label,
+            expression: predicateExpr,
+            evaluation: `${comparisonExpr(predicate, numeric)} → false`,
+            outcome: '除外（最初のfalseとなる境界要素です）',
+          },
+          currentText: `${name}は最初にfalseとなった境界要素であり、除外されます。`,
+        })
+        b.push({
+          kind: 'SHORT_CIRCUIT_CONFIRMED',
+          activeNode: node,
+          currentElementId: null,
+          processing: {
+            title: 'short-circuit確定（takeWhile STOP）',
+            inputLabel: `境界要素: ${label}`,
+            expression: predicateExpr,
+            evaluation: null,
+            outcome: '最初のfalseで短絡が確定し、上流への要素要求を停止します',
+          },
+          currentText:
+            '最初のfalseによりtakeWhileの短絡が確定しました。後続の要素はPredicateを評価されず、未評価のままです。',
+          jdkNote:
+            'takeWhileはshort-circuiting操作です。後続にPredicateならtrueとなる値があっても、実際には評価されません。',
+        })
+        b.cancelAt(i)
+        return false
+      }
+
+      // ---- Phase 3: dropWhile（§7.7） ----
+      if (node.operationId === 'dropWhile') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'dropWhile') throw new EngineInvariantError('dropWhile runtimeがありません')
+        const predicate = predicateOf(node)
+        const predicateExpr = predicateToJavaExpr(predicate)
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'dropWhileへの要素到着',
+            inputLabel: label,
+            expression: predicateExpr,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: rt.dropping
+            ? `${name}がdropWhile（${predicateExpr}）へ到着しました。drop中のためPredicateを評価します。`
+            : `${name}がdropWhileへ到着しました。すでに通過モードです。`,
+          jdkNote: '初版のdropWhile実行はsequential + orderedに限定しています。',
+        })
+        if (rt.dropping) {
+          const numeric = numericValueOf(value)
+          const result = evaluateValuePredicate(predicate, value)
+          b.push({
+            kind: 'PREDICATE_EVALUATED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: 'Predicate評価確定',
+              inputLabel: fieldValueFlow(predicate, name, numeric),
+              expression: predicateExpr,
+              evaluation: `${comparisonExpr(predicate, numeric)} → ${result}`,
+              outcome: null,
+            },
+            currentText: `${name}を評価します。${comparisonExpr(predicate, numeric)} は ${result} です。`,
+          })
+          if (result) {
+            b.setState(elementId, node.nodeId, 'REJECTED')
+            b.setLatest(elementId, 'REJECTED')
+            syncContext(rt)
+            b.push({
+              kind: 'ELEMENT_REJECTED',
+              activeNode: node,
+              currentElementId: elementId,
+              parentElementId,
+              processing: {
+                title: 'drop確定',
+                inputLabel: label,
+                expression: predicateExpr,
+                evaluation: `${comparisonExpr(predicate, numeric)} → true`,
+                outcome: '除外（trueのprefixとしてdropされます）',
+              },
+              currentText: `${name}はPredicateがtrueのためdropされ、除外されます。`,
+            })
+            return false
+          }
+          rt.dropping = false
+          rt.boundaryElementId = elementId
+          rt.boundaryLabel = label
+          b.setState(elementId, node.nodeId, 'PASSED')
+          b.setLatest(elementId, 'PASSED')
+          syncContext(rt)
+          b.push({
+            kind: 'DROP_MODE_ENTERED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '通過モードへの移行確定',
+              inputLabel: `境界要素: ${label}`,
+              expression: predicateExpr,
+              evaluation: `${comparisonExpr(predicate, numeric)} → false`,
+              outcome: '境界要素は除外されず後段へ通過し、以後はPredicateを再評価しません',
+            },
+            currentText: `${name}で最初のfalseとなり、dropWhileは通過モードへ移行しました。境界要素${name}は後段へ通過します。`,
+            jdkNote:
+              '通過モード移行後の要素は、Predicateならtrueとなる値でも再評価されずに通過します。',
+          })
+          continue
+        }
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
+        b.push({
+          kind: 'ELEMENT_PASSED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '通過確定（通過モード）',
+            inputLabel: label,
+            expression: predicateExpr,
+            evaluation: null,
+            outcome: '通過（通過モードのためPredicateは評価されません）',
+          },
+          currentText: `${name}は通過モードのため、Predicateを評価せずに通過します。`,
+        })
+        continue
+      }
+
+      // ---- Phase 3: peek（§7.8） ----
+      if (node.operationId === 'peek') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'peek') throw new EngineInvariantError('peek runtimeがありません')
+        const consumer = node.consumer
+        if (!consumer) throw new EngineInvariantError(`node ${node.nodeId} にConsumerがありません`)
+        const consumerExpr = consumerToJavaExpr(consumer)
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'peekへの要素到着',
+            inputLabel: label,
+            expression: consumerExpr,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がpeekへ到着しました。${describeConsumer(consumer)}。`,
+        })
+        const message = evaluateConsumerMessage(consumer, value)
+        const entry = b.addSideEffect({
+          nodeId: node.nodeId,
+          elementId,
+          inputLabel: label,
+          actionExpr: consumerExpr,
+          actionLabel: consumerActionLabel(consumer),
+          message,
+        })
+        rt.callCount += 1
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
+        syncContext(rt)
+        b.push({
+          kind: 'PEEK_ACTION_PERFORMED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'Consumer実行確定（Side Effect）',
+            inputLabel: label,
+            expression: consumerExpr,
+            evaluation: `Side Effect出力: ${message}`,
+            outcome: '値と型を変更せず、同じ要素を後段へ通過させます',
+          },
+          currentText: `peekのConsumerを実行しました（${entry.seq}回目。出力: ${message}）。値は変更されず後段へ渡されます。`,
+          jdkNote:
+            'JDKでは最適化や短絡により、peekのactionが呼ばれない要素があり得ます（count最適化等）。',
+        })
+        continue
       }
 
       throw new EngineInvariantError(`未対応のoperationです: ${node.operationId}`)
@@ -509,6 +1310,36 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     })
     b.setState(element.elementId, src.nodeId, 'PASSED')
     processThroughChain(element.elementId, element.value, 0, null)
+    confirmPendingShortCircuits()
+  }
+
+  // ---- limit(0): source要素を1件も要求せず、処理中要素0件で短絡を確定する（§7.4） ----
+  for (let i = 0; i < chain.length; i++) {
+    const node = chain[i]
+    if (!node) continue
+    const rt = runtimes.get(node.nodeId)
+    if (rt?.kind === 'limit' && rt.maxSize === 0) {
+      rt.reached = true
+      rt.upstreamStopped = true
+      syncContext(rt)
+      b.push({
+        kind: 'SHORT_CIRCUIT_CONFIRMED',
+        activeNode: node,
+        currentElementId: null,
+        processing: {
+          title: 'short-circuit確定（limit(0)）',
+          inputLabel: '通過数 0/0',
+          expression: '.limit(0)',
+          evaluation: null,
+          outcome: 'limit(0)のため、source要素を1件も要求せずに短絡が確定します',
+        },
+        currentText:
+          'limit(0)のため後段へ渡せる要素は0件です。source要素は1件も要求されず、すべて未評価のままです。',
+        jdkNote: 'limitはshort-circuiting操作であり、必要のない上流評価を行いません。',
+      })
+      b.cancelAt(i)
+      break
+    }
   }
 
   const sourceDsl = def.sourceDsl
@@ -516,7 +1347,11 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     if (!def.iterateTrace) throw new EngineInvariantError('iterate3のtraceがありません')
     const predicateText = `n -> n ${sourceDsl.predicate.operator === 'LTE' ? '<=' : '<'} ${sourceDsl.predicate.value}`
     let elementIdx = 0
-    def.iterateTrace.forEach((candidate, ci) => {
+    for (let ci = 0; ci < def.iterateTrace.length; ci++) {
+      // 短絡確定後はsource候補生成を追加実行しない（§7.4）
+      if (b.cancelIdx !== null) break
+      const candidate = def.iterateTrace[ci]
+      if (!candidate) throw new EngineInvariantError(`iterate候補index ${ci} が不正です`)
       const originText =
         ci === 0
           ? `seed ${candidate.value} を最初の候補とします。`
@@ -575,9 +1410,11 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           note: null,
         })
       }
-    })
+    }
   } else {
     for (const element of def.dataset) {
+      // 短絡確定後は上流（source）への追加要求を行わない（§7.4・§8.2）
+      if (b.cancelIdx !== null) break
       const withIndex =
         sourceDsl.kind === 'arrayObject' ||
         sourceDsl.kind === 'arrayPrimitive' ||
@@ -589,7 +1426,13 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           ? `${sourceDsl.from} <= n && n < ${sourceDsl.to}`
           : sourceDsl.kind === 'rangeClosed'
             ? `${sourceDsl.from} <= n && n <= ${sourceDsl.to}`
-            : null
+            : sourceDsl.kind === 'generate'
+              ? `Supplier呼び出し${element.index + 1}回目: counter.incrementAndGet() → ${formatSimValue(element.value)}`
+              : sourceDsl.kind === 'iterate2'
+                ? element.index === 0
+                  ? `seed ${sourceDsl.seed} を送出`
+                  : `operator（n -> n + ${sourceDsl.operator.step}）適用 → ${formatSimValue(element.value)}`
+                : null
       emitAndProcess(element, {
         index: withIndex ? element.index : null,
         candidateLabel: null,
@@ -597,6 +1440,75 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
         predicateResult: null,
         note,
       })
+    }
+  }
+
+  // ---- finish cascade: upstream完了をchain順に伝播し、sortedのbufferをflushする（§10） ----
+  b.clearFlatMapCtx()
+  for (let i = 0; i < chain.length; i++) {
+    const node = chain[i]
+    if (!node) continue
+    const rt = runtimes.get(node.nodeId)
+    if (rt?.kind !== 'sorted' || rt.phase !== 'BUFFERING') continue
+    // 並べ替え確定（SORT_ORDER_CONFIRMED）: 1シナリオにつき1件。空bufferでも生成する。
+    // currentElementIdはnull、PROCESSINGは0件（J-2確定事項）
+    const confirmedEntries = sortBuffer(rt.buffer, node.comparator)
+    rt.confirmed = confirmedEntries
+    rt.phase = 'ORDER_CONFIRMED'
+    syncContext(rt)
+    const sortedExpr = node.comparator
+      ? `.sorted(${comparatorToJavaExpr(node.comparator)})`
+      : '.sorted()'
+    b.push({
+      kind: 'SORT_ORDER_CONFIRMED',
+      activeNode: node,
+      currentElementId: null,
+      processing: {
+        title: '並べ替え確定（buffer全体）',
+        inputLabel:
+          rt.buffer.length === 0
+            ? '空のbuffer（0件）の順序が確定しました'
+            : `buffer全体（${rt.buffer.length}件）の順序を一括確定`,
+        expression: sortedExpr,
+        evaluation:
+          rt.buffer.length === 0
+            ? null
+            : `確定順序: ${confirmedEntries.map((e) => e.label).join(' → ')}`,
+        outcome:
+          '個別要素ではなくbuffer全体の順序確定です（処理中要素は0件）。確定順序から1件ずつ放出します',
+      },
+      currentText:
+        rt.buffer.length === 0
+          ? '空のbufferの並べ替えが確定しました。放出する要素はありません。'
+          : `upstreamの全入力（${rt.buffer.length}件）が揃ったため、並べ替えを一括確定しました。確定順序から1件ずつ後段へ放出します。`,
+      jdkNote: def.orderMeta.sourceOrdered
+        ? 'ordered Streamのsortはstableです（同値キーはencounter orderを維持）。'
+        : 'unordered Streamではsortの安定性（同値キーの順序維持）は保証されません。',
+    })
+    rt.phase = 'EMITTING'
+    for (const entry of confirmedEntries) {
+      // 後段の短絡確定後は残りbufferを放出しない（BUFFEREDのまま保持）
+      if (b.cancelledBeyond(i)) break
+      rt.emittedCount += 1
+      b.setState(entry.id, node.nodeId, 'PASSED')
+      b.setLatest(entry.id, 'PROCESSING')
+      syncContext(rt)
+      b.push({
+        kind: 'SORT_EMITTED',
+        activeNode: node,
+        currentElementId: entry.id,
+        processing: {
+          title: '確定順序からの放出',
+          inputLabel: `${entry.label}（確定順序の${rt.emittedCount}件目）`,
+          expression: sortedExpr,
+          evaluation: `放出位置 ${rt.emittedCount}/${confirmedEntries.length}`,
+          outcome: '確定順序から1件だけ後段へ放出します',
+        },
+        currentText: `確定順序の${rt.emittedCount}件目として${entry.label}を後段へ放出します。`,
+      })
+      // 放出された1要素は後段を流れ切ってから次を放出する（depth-first、J-2）
+      processThroughChain(entry.id, entry.value, i + 1, null)
+      confirmPendingShortCircuits()
     }
   }
 
@@ -662,6 +1574,8 @@ function materialize(def: PipelineDefinition, drafts: readonly Draft[]): Snapsho
       typeTransition: draft.typeTransition,
       elementNodeStates: draft.perNode,
       elementLatestStates: draft.latest,
+      operationContexts: draft.operationContexts,
+      sideEffects: draft.sideEffects,
       output: {
         elementIds: draft.outputItems.map((item) => item.id),
         items: draft.outputItems,
@@ -717,6 +1631,8 @@ export function createInitialSnapshot(def: PipelineDefinition): Snapshot {
         typeTransition: null,
         elementNodeStates: {},
         elementLatestStates: {},
+        operationContexts: {},
+        sideEffects: [],
         output: {
           elementIds: [],
           items: [],

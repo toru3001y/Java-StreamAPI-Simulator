@@ -3,17 +3,28 @@ import type { ParameterSlot } from './pipelineTemplate'
 import type { OperationCatalog } from '../catalog/operationCatalog'
 import { resolveTypeRule } from '../catalog/operationCatalog'
 import type { DslPredicate } from '../dsl/ast'
+import type { ComparatorDsl } from '../dsl/comparatorAst'
+import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
-import { UNBOUNDED_SOURCE_KINDS } from '../dsl/sourceAst'
 import { validateStructure, validateTypes, validateWhitelist } from '../dsl/validate'
+import { validateComparatorStructure } from '../dsl/validateComparator'
+import { validateConsumerStructure, validateCount } from '../dsl/validateConsumer'
 import { validateMapperStructure, resolveMapperOutputType } from '../dsl/validateMapper'
 import { validateSourceStructure, sourceStreamType } from '../dsl/validateSource'
-import { evaluateIteratePredicate, materializeSource } from '../dsl/materializeSource'
+import {
+  evaluateIteratePredicate,
+  materializeInfiniteSource,
+  materializeSource,
+} from '../dsl/materializeSource'
 import { evaluateFlatMapper, evaluateMapper } from '../dsl/evaluateMapper'
-import { evaluatePredicate } from '../dsl/evaluate'
+import { evaluatePredicate, evaluateValuePredicate } from '../dsl/evaluate'
+import { comparatorKeyLabel, sortBuffer } from '../dsl/evaluateComparator'
+import { distinctKeyOf } from '../engine/distinctKey'
 import { generateJavaCode } from '../dsl/javaCode'
 import { formatSimValue, WRAPPER_NAMES } from '../model/value'
+import { analyzeBoundedness } from '../pipeline/boundedness'
+import type { BoundednessMeta } from '../pipeline/boundedness'
 import type { DatasetElement } from '../model/employee'
 import type { PipelineDefinition, PipelineNodeDef } from '../pipeline/pipelineDefinition'
 import type { Result, ValidationIssue } from '../types/result'
@@ -109,6 +120,9 @@ export function instantiateTemplate(
   const structureIssues: ValidationIssue[] = []
   const predicates = new Map<SlotId, DslPredicate>()
   const mappers = new Map<SlotId, MapperDsl>()
+  const comparators = new Map<SlotId, ComparatorDsl>()
+  const consumers = new Map<SlotId, ConsumerDsl>()
+  const counts = new Map<SlotId, number>()
   for (const slot of template.parameterSlots) {
     const raw = input.dslParameters[slot.slotId]
     if (raw === undefined) continue
@@ -119,6 +133,18 @@ export function instantiateTemplate(
     } else if (slot.kind === 'mapper') {
       const result = validateMapperStructure(raw, `dslParameters.${slot.slotId}`)
       if (result.ok) mappers.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'comparator') {
+      const result = validateComparatorStructure(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) comparators.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'consumer') {
+      const result = validateConsumerStructure(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) consumers.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'count') {
+      const result = validateCount(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) counts.set(slot.slotId, result.value)
       else structureIssues.push(...result.issues)
     }
   }
@@ -170,6 +196,50 @@ export function instantiateTemplate(
           ),
         )
       }
+    } else if (slot.kind === 'comparator') {
+      const comparator = comparators.get(slot.slotId)
+      if (!comparator) continue
+      if (!slot.allowedComparatorKinds.includes(comparator.kind)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_KIND',
+            `このslotで許可されていないcomparator kindです: ${comparator.kind}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      } else if (comparator.kind === 'employeeKeys') {
+        for (const key of comparator.keys) {
+          if (!slot.allowedFields.includes(key.field)) {
+            whitelistIssues.push(
+              issue(
+                'WHITELIST_FIELD',
+                `このslotで許可されていないComparatorキーです: ${key.field}`,
+                `dslParameters.${slot.slotId}`,
+              ),
+            )
+          }
+        }
+      }
+    } else if (slot.kind === 'consumer') {
+      const consumer = consumers.get(slot.slotId)
+      if (!consumer) continue
+      if (!slot.allowedConsumerKinds.includes(consumer.kind)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_KIND',
+            `このslotで許可されていないconsumer kindです: ${consumer.kind}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      } else if (consumer.kind === 'printField' && !slot.allowedFields.includes(consumer.field)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_FIELD',
+            `このslotで許可されていないPRINT_FIELD fieldです: ${consumer.field}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      }
     }
   }
   if (whitelistIssues.length > 0) return fail(whitelistIssues)
@@ -184,6 +254,9 @@ export function instantiateTemplate(
 
   const predicatesByNode = new Map<string, DslPredicate>()
   const mappersByNode = new Map<string, MapperDsl>()
+  const comparatorsByNode = new Map<string, ComparatorDsl>()
+  const consumersByNode = new Map<string, ConsumerDsl>()
+  const countsByNode = new Map<string, number>()
   for (const slot of template.parameterSlots) {
     if (slot.kind === 'predicate') {
       const p = predicates.get(slot.slotId)
@@ -191,6 +264,15 @@ export function instantiateTemplate(
     } else if (slot.kind === 'mapper') {
       const m = mappers.get(slot.slotId)
       if (m) mappersByNode.set(slot.targetNodeId, m)
+    } else if (slot.kind === 'comparator') {
+      const c = comparators.get(slot.slotId)
+      if (c) comparatorsByNode.set(slot.targetNodeId, c)
+    } else if (slot.kind === 'consumer') {
+      const c = consumers.get(slot.slotId)
+      if (c) consumersByNode.set(slot.targetNodeId, c)
+    } else if (slot.kind === 'count') {
+      const c = counts.get(slot.slotId)
+      if (c !== undefined) countsByNode.set(slot.targetNodeId, c)
     }
   }
 
@@ -217,6 +299,17 @@ export function instantiateTemplate(
           issue(
             'TYPE_MISMATCH',
             `node ${node.nodeId}（${op.displayName}）はprimitive Streamの入力が必要です`,
+            `nodes.${node.nodeId}`,
+          ),
+        ])
+      }
+    } else if (op.inputTypeRule.kind === 'anyStreamLike') {
+      // object / primitiveの両方のStreamを受理する明示的な型規則（Phase 3指示 §5.2）
+      if (!currentType || (currentType.kind !== 'stream' && currentType.kind !== 'primitiveStream')) {
+        return fail([
+          issue(
+            'TYPE_MISMATCH',
+            `node ${node.nodeId}（${op.displayName}）はStreamの入力が必要です`,
             `nodes.${node.nodeId}`,
           ),
         ])
@@ -286,6 +379,119 @@ export function instantiateTemplate(
         ])
       }
     }
+    // ---- Phase 3操作の型規則（指示§5.2） ----
+    const comparator = comparatorsByNode.get(node.nodeId) ?? null
+    const consumer = consumersByNode.get(node.nodeId) ?? null
+    const count = countsByNode.get(node.nodeId) ?? null
+    if (node.operationId === 'sorted' && currentType) {
+      if (comparator && currentType.kind === 'primitiveStream') {
+        // Comparatorをprimitive Streamへ指定する候補は拒否する（§5.2）
+        return fail([
+          issue(
+            'TYPE_MISMATCH',
+            `sorted(Comparator)はobject Streamだけを対象とします（primitive Stream ${formatTypeRef(currentType)} へは指定できません）`,
+            `nodes.${node.nodeId}`,
+          ),
+        ])
+      }
+      if (comparator && comparator.kind === 'employeeKeys') {
+        const el = elementTypeOf(currentType)
+        if (!(el.kind === 'object' && el.name === 'Employee')) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `Employeeキー指定のComparatorはStream<Employee>にのみ適用できます（実際: ${formatTypeRef(el)}）`,
+              `nodes.${node.nodeId}`,
+            ),
+          ])
+        }
+      }
+      if ((!comparator || comparator.kind === 'natural') && currentType.kind === 'stream') {
+        // object Streamの自然順序sortedは、許可済みの自然順序対応型に限る（§5.2）
+        const el = elementTypeOf(currentType)
+        const naturallyComparable =
+          el.kind === 'object' &&
+          ['String', 'Integer', 'Long', 'Double', 'LocalDate'].includes(el.name)
+        if (!naturallyComparable) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `sorted()は要素型がComparableである必要があります。${formatTypeRef(el)}はComparableではないため、PipelineDefinition生成前に拒否します`,
+              `nodes.${node.nodeId}`,
+            ),
+          ])
+        }
+      }
+    }
+    if ((node.operationId === 'takeWhile' || node.operationId === 'dropWhile') && currentType) {
+      const predicate = predicatesByNode.get(node.nodeId)
+      if (!predicate) {
+        return fail([
+          issue('SLOT_MISSING', `node ${node.nodeId} のPredicateがありません`, `nodes.${node.nodeId}`),
+        ])
+      }
+      const el = elementTypeOf(currentType)
+      if (predicate.kind === 'currentValueCompare') {
+        const numeric =
+          el.kind === 'primitive' ||
+          (el.kind === 'object' && ['Integer', 'Long', 'Double'].includes(el.name))
+        if (!numeric) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `currentValueCompareは数値要素にのみ適用できます（実際: ${formatTypeRef(el)}）`,
+              `nodes.${node.nodeId}`,
+            ),
+          ])
+        }
+      } else if (!(el.kind === 'object' && el.name === 'Employee')) {
+        return fail([
+          issue(
+            'TYPE_MISMATCH',
+            `fieldCompareはEmployee要素にのみ適用できます（実際: ${formatTypeRef(el)}）`,
+            `nodes.${node.nodeId}`,
+          ),
+        ])
+      }
+      // 初版実行はsequential + orderedに限定する（§7.6・§7.7）
+      const sourceTplNode = template.nodes.find((n) => n.role === 'source')
+      const sourceOrdered = sourceTplNode
+        ? (catalog.get(sourceTplNode.operationId).sourceMeta?.ordered ?? true)
+        : true
+      if (!sourceOrdered) {
+        return fail([
+          issue(
+            'UNORDERED_WHILE',
+            `${op.displayName}の初版実行はsequential + orderedに限定されます。unordered source候補は実行可能Pipelineとして受理しません`,
+            `nodes.${node.nodeId}`,
+          ),
+        ])
+      }
+    }
+    if ((node.operationId === 'limit' || node.operationId === 'skip') && count === null) {
+      return fail([
+        issue('SLOT_MISSING', `node ${node.nodeId}（${op.displayName}）の引数がありません`, `nodes.${node.nodeId}`),
+      ])
+    }
+    if (node.operationId === 'peek' && currentType) {
+      if (!consumer) {
+        return fail([
+          issue('SLOT_MISSING', `node ${node.nodeId} のConsumerがありません`, `nodes.${node.nodeId}`),
+        ])
+      }
+      if (consumer.kind === 'printField') {
+        const el = elementTypeOf(currentType)
+        if (!(el.kind === 'object' && el.name === 'Employee')) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `PRINT_FIELDはEmployee要素にのみ適用できます（実際: ${formatTypeRef(el)}）`,
+              `nodes.${node.nodeId}`,
+            ),
+          ])
+        }
+      }
+    }
     nodeDefs.push({
       nodeId: node.nodeId,
       operationId: node.operationId,
@@ -294,6 +500,9 @@ export function instantiateTemplate(
       displayName: op.displayName,
       predicate: predicatesByNode.get(node.nodeId) ?? null,
       mapper: mappersByNode.get(node.nodeId) ?? null,
+      comparator,
+      consumer,
+      count,
       inputType: currentType,
       outputType,
       lineId: lineIdForNode(node.nodeId),
@@ -309,17 +518,20 @@ export function instantiateTemplate(
     return fail([issue('STRUCTURE_INVALID', 'Pipelineは終端操作で終わる必要があります', 'nodes')])
   }
 
-  // 手順6（有限性の事前検証）: 無限sourceはPipelineDefinition生成前に拒否する（指示§6.1）。
-  // fixture要素数や500上限で暗黙に打ち切らない。
-  if (UNBOUNDED_SOURCE_KINDS.includes(sourceDsl.kind)) {
-    return fail([
-      issue(
-        'UNBOUNDED_SOURCE',
-        `${sourceDsl.kind === 'generate' ? 'Stream.generate()' : 'Stream.iterate(seed, operator)'} は無限Streamであり、有限化操作（Phase 3のlimit()）なしでは実行できません`,
-        'source',
-      ),
-    ])
-  }
+  // 手順6（有限性の事前検証）: source有限性とPipeline有限化を区別し、
+  // 無限sourceは必要なsource要求件数をノード順から事前に導出する（Phase 3指示 §8.2）。
+  // 有限化limit()を持たない・構造的に保証できない候補はPipelineDefinition生成前に拒否する。
+  const sourceTplNode = template.nodes.find((n) => n.role === 'source')
+  const sourceMeta = sourceTplNode ? catalog.get(sourceTplNode.operationId).sourceMeta : undefined
+  const boundednessResult = analyzeBoundedness(
+    sourceDsl,
+    sourceMeta?.bounded ?? 'finite',
+    nodeDefs
+      .filter((n) => n.role === 'intermediate')
+      .map((n) => ({ operationId: n.operationId, count: n.count })),
+  )
+  if (!boundednessResult.ok) return fail(boundednessResult.issues)
+  const boundedness: BoundednessMeta = boundednessResult.value
 
   // 3引数iterateの有限性・int範囲・予算を、巨大timeline生成前に検証する（レビュー指摘2）
   const INT32_MAX = 2_147_483_647
@@ -380,7 +592,10 @@ export function instantiateTemplate(
     }
   }
 
-  const materialized = materializeSource(sourceDsl, input.dataset)
+  const materialized =
+    sourceDsl.kind === 'generate' || sourceDsl.kind === 'iterate2'
+      ? materializeInfiniteSource(sourceDsl, boundedness.maxSourceDemand ?? 0)
+      : materializeSource(sourceDsl, input.dataset)
 
   // 手順5: 教材制約検証（§11.3、Phase 2指示 §8.1）
   const teachingIssues: ValidationIssue[] = []
@@ -434,6 +649,77 @@ export function instantiateTemplate(
         )
       }
     }
+    // ---- Phase 3の教材制約（指示§9）。source要素が対象ノードへ直接到達するtemplateで検証する ----
+    const targetIsFirstIntermediate = template.nodes[1]?.nodeId === template.targetNodeId
+    if (targetIsFirstIntermediate) {
+      const elements = materialized.elements
+      if (targetNode.operationId === 'distinct') {
+        // distinct標準は重複を含む
+        const keys = elements.map((el) => distinctKeyOf(el.value, el.elementId))
+        if (new Set(keys).size === keys.length) {
+          teachingIssues.push(
+            issue('TEACHING_CONSTRAINT', 'distinctの標準モードは重複を含む入力が必要です', 'dataset'),
+          )
+        }
+      }
+      if (targetNode.operationId === 'sorted') {
+        // sorted標準は事前に整列済みではない（§11.3）
+        const sortedOrder = sortBuffer(elements, targetNode.comparator)
+        const alreadySorted = sortedOrder.every((el, i) => el === elements[i])
+        if (alreadySorted) {
+          teachingIssues.push(
+            issue('TEACHING_CONSTRAINT', 'sortedの標準モードは事前に整列済みではない入力が必要です', 'dataset'),
+          )
+        }
+        // Comparator標準は同値キーの別element IDを含む
+        if (targetNode.comparator && targetNode.comparator.kind === 'employeeKeys') {
+          const keyLabels = elements.map((el) => comparatorKeyLabel(targetNode.comparator, el.value))
+          if (new Set(keyLabels).size === keyLabels.length) {
+            teachingIssues.push(
+              issue(
+                'TEACHING_CONSTRAINT',
+                'sorted(Comparator)の標準モードは同値キーを持つ別要素（同値キー・別ID）が必要です',
+                'dataset',
+              ),
+            )
+          }
+        }
+      }
+      if (targetNode.operationId === 'limit' && targetNode.count !== null) {
+        // limit標準は元要素数がlimit値より多い
+        if (elements.length <= targetNode.count && boundedness.sourceBounded === 'finite') {
+          teachingIssues.push(
+            issue('TEACHING_CONSTRAINT', 'limitの標準モードは元要素数がlimit値より多い入力が必要です', 'dataset'),
+          )
+        }
+      }
+      if (
+        (targetNode.operationId === 'takeWhile' || targetNode.operationId === 'dropWhile') &&
+        targetNode.predicate
+      ) {
+        const predicate = targetNode.predicate
+        const results = elements.map((el) => evaluateValuePredicate(predicate, el.value))
+        const firstFalse = results.indexOf(false)
+        // takeWhile標準は最初のfalse後にPredicateならtrueとなる未評価値を含む。
+        // dropWhile標準は最初のfalse後にtrueとなる値を含む（§9・§11.3）
+        const hasTrueAfterFalse = firstFalse >= 0 && results.slice(firstFalse + 1).includes(true)
+        if (!hasTrueAfterFalse) {
+          teachingIssues.push(
+            issue(
+              'TEACHING_CONSTRAINT',
+              `${targetNode.displayName}の標準モードは最初のfalseの後にtrueとなる値を含む入力が必要です`,
+              'dataset',
+            ),
+          )
+        }
+      }
+      if (targetNode.operationId === 'peek' && elements.length === 0) {
+        // peek標準はConsumer呼出しが1件以上発生する
+        teachingIssues.push(
+          issue('TEACHING_CONSTRAINT', 'peekの標準モードはConsumer呼出しが1件以上必要です', 'dataset'),
+        )
+      }
+    }
   }
   if (teachingIssues.length > 0) return fail(teachingIssues)
 
@@ -447,9 +733,13 @@ export function instantiateTemplate(
       operationId: n.operationId,
       predicate: n.predicate,
       mapper: n.mapper,
+      comparator: n.comparator,
+      consumer: n.consumer,
+      count: n.count,
     })),
     resultType: terminalNode.outputType,
   })
+  const sourceOrdered = sourceMeta?.ordered ?? true
   const tempDef: PipelineDefinition = {
     definitionId: `${input.templateId}@${input.templateVersion}:${input.mode}:${input.revision}`,
     templateId: input.templateId,
@@ -465,6 +755,10 @@ export function instantiateTemplate(
     resultType: terminalNode.outputType,
     javaCode,
     snapshotCount: 0,
+    // Phase 3の中間操作はいずれもencounter orderを維持する（§5.3）。
+    // unordered sourceでは結果のencounter orderも未定義のまま
+    orderMeta: { sourceOrdered, resultOrdered: sourceOrdered },
+    boundedness,
   }
   const timeline = getTimeline({ ...tempDef })
   if (timeline.length > SNAPSHOT_LIMIT) {

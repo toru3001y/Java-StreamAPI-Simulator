@@ -290,22 +290,297 @@ const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
     'DoubleStreamの空です。boxed().toList()の結果は空Listです。',
     { 'slot-source': { kind: 'empty', streamType: 'double', elementTypeName: 'double' } },
   ),
-  // 非実行（Phase 3のlimit()が必要）
+  // limitなしの無限source template（実行不能のまま保持。limit付きtemplateを使用する）
   fx(
     'tmpl-src-generate',
     'standard',
-    'Stream.generate()（実行不能）',
-    '無限・unordered Streamのため、Phase 3のlimit()実装後に実行可能になります。',
+    'Stream.generate()（limitなし・実行不能）',
+    '無限・unordered Streamのため、limit()なしでは実行できません。limit付きtemplateを使用してください。',
     { 'slot-source': { kind: 'generate', ruleId: 'supplier-counter' } },
   ),
   fx(
     'tmpl-src-iterate2',
     'standard',
-    'Stream.iterate(seed, operator)（実行不能）',
-    '無限Streamのため、Phase 3のlimit()実装後に実行可能になります。',
+    'Stream.iterate(seed, operator)（limitなし・実行不能）',
+    '無限Streamのため、limit()なしでは実行できません。limit付きtemplateを使用してください。',
     {
       'slot-source': { kind: 'iterate2', seed: 1, operator: { ruleId: 'increment', step: 1 } },
     },
+  ),
+  // ---- Phase 3: 無限sourceの有限化（指示§8.1） ----
+  fx(
+    'tmpl-limit-generate',
+    'standard',
+    'Stream.generate() + limit(3)',
+    '無限・unordered sourceをlimit(3)で有限化します。supplierは3回だけ呼ばれ、期待結果は[1, 2, 3]です。',
+    {
+      'slot-source': { kind: 'generate', ruleId: 'supplier-counter' },
+      'slot-count': 3,
+    },
+  ),
+  fx(
+    'tmpl-limit-iterate2',
+    'standard',
+    'Stream.iterate(1, n -> n + 1) + limit(5)',
+    '無限sourceをlimit(5)で有限化します。期待結果は[1, 2, 3, 4, 5]です。',
+    {
+      'slot-source': { kind: 'iterate2', seed: 1, operator: { ruleId: 'increment', step: 1 } },
+      'slot-count': 5,
+    },
+  ),
+  // ---- Phase 3: stateful中間操作（指示§9） ----
+  fx(
+    'tmpl-distinct',
+    'standard',
+    'distinct標準（重複を含むString）',
+    '["Java", "SQL", "Java", "Git", "SQL"]から重複を除外します。期待結果は[Java, SQL, Git]です。',
+    {
+      'slot-source': {
+        kind: 'streamOf',
+        elementTypeName: 'String',
+        values: ['Java', 'SQL', 'Java', 'Git', 'SQL'],
+      },
+    },
+  ),
+  fx(
+    'tmpl-distinct',
+    'emptySource',
+    'distinct空ソース',
+    '入力0件のため、seenは一度も更新されず空Listが確定します。',
+    { 'slot-source': { kind: 'streamOf', elementTypeName: 'String', values: [] } },
+  ),
+  fx(
+    'tmpl-distinct-midempty',
+    'midEmpty',
+    'distinct途中0件（filterで全件除外）',
+    '前段のfilter(age >= 100)で全件除外され、distinctへ要素が到達しません。',
+    { 'slot-predicate-1': agePredicate(100) },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-sorted-natural',
+    'standard',
+    'sorted()標準（未整列のString）',
+    '["SQL", "Java", "Git", "API"]を自然順序で並べ替えます。期待結果は[API, Git, Java, SQL]です。',
+    {
+      'slot-source': {
+        kind: 'streamOf',
+        elementTypeName: 'String',
+        values: ['SQL', 'Java', 'Git', 'API'],
+      },
+    },
+  ),
+  fx(
+    'tmpl-sorted-natural',
+    'emptySource',
+    'sorted()空ソース',
+    '入力0件でも、空bufferの並べ替え確定（SORT_ORDER_CONFIRMED）が1回発生します。',
+    { 'slot-source': { kind: 'streamOf', elementTypeName: 'String', values: [] } },
+  ),
+  fx(
+    'tmpl-sorted-midempty',
+    'midEmpty',
+    'sorted途中0件（filterで全件除外・空buffer）',
+    '前段のfilter(age >= 100)で全件除外され、空bufferの順序確定だけが行われます。',
+    { 'slot-predicate-1': agePredicate(100), 'slot-mapper-1': nameMapper },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-sorted-comparator',
+    'standard',
+    'sorted(Comparator)標準（region昇順・stable）',
+    'EmployeeをComparator.comparing(Employee::region)で並べ替えます。同じregion（関東）の佐藤・高橋は元の順序を維持します。',
+    {
+      'slot-comparator': {
+        kind: 'employeeKeys',
+        keys: [{ field: 'region', direction: 'ASC' }],
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-sorted-comparator',
+    'emptySource',
+    'sorted(Comparator)空ソース',
+    '入力0件でも、空bufferの並べ替え確定が1回発生します。',
+    {
+      'slot-comparator': {
+        kind: 'employeeKeys',
+        keys: [{ field: 'region', direction: 'ASC' }],
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-limit',
+    'standard',
+    'limit(3)標準（5件中3件）',
+    'rangeClosed(1, 5)の5件からlimit(3)で最初の3件だけを通します。残りの4, 5は未評価のままです。',
+    {
+      'slot-source': { kind: 'rangeClosed', from: 1, to: 5 },
+      'slot-count': 3,
+    },
+  ),
+  fx(
+    'tmpl-limit',
+    'midEmpty',
+    'limit(0)途中0件（非空source）',
+    'limit(0)はsource要素を1件も要求せず、処理中要素0件で短絡を確定します。結果は空Listです。',
+    {
+      'slot-source': { kind: 'rangeClosed', from: 1, to: 5 },
+      'slot-count': 0,
+    },
+  ),
+  fx(
+    'tmpl-limit',
+    'emptySource',
+    'limit空ソース',
+    '空のsourceでは上限に到達せず、通常のupstream完了で空Listが確定します。',
+    {
+      'slot-source': { kind: 'rangeClosed', from: 1, to: 0 },
+      'slot-count': 3,
+    },
+  ),
+  fx(
+    'tmpl-skip',
+    'standard',
+    'skip(2)標準（最初の2件を除外）',
+    'int[]{10, 20, 30, 40}からskip(2)で最初の2件を除外します。期待結果は[30, 40]です。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [10, 20, 30, 40] },
+      'slot-count': 2,
+    },
+  ),
+  fx(
+    'tmpl-skip',
+    'midEmpty',
+    'skip途中0件（n >= source件数）',
+    'skip(4)は4件すべてを除外するため、結果は空Listです。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [10, 20, 30, 40] },
+      'slot-count': 4,
+    },
+  ),
+  fx(
+    'tmpl-skip',
+    'emptySource',
+    'skip空ソース',
+    '入力0件のため、skipは一度も適用されず空Listが確定します。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [] },
+      'slot-count': 2,
+    },
+  ),
+  fx(
+    'tmpl-takewhile',
+    'standard',
+    'takeWhile標準（n -> n < 5）',
+    '[1, 2, 6, 3, 7]のtrueのprefix [1, 2]だけを通します。6が境界要素となり、3と7は未評価のままです。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [1, 2, 6, 3, 7] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-takewhile',
+    'midEmpty',
+    'takeWhile途中0件（最初の要素がfalse）',
+    '[6, 3, 7]は最初の6がfalseのため、1件も通過せず短絡します。3と7は未評価のままです。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [6, 3, 7] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-takewhile',
+    'emptySource',
+    'takeWhile空ソース',
+    '入力0件のため、Predicateは一度も評価されず空Listが確定します。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-dropwhile',
+    'standard',
+    'dropWhile標準（n -> n < 5）',
+    '[1, 2, 6, 3, 7]のtrueのprefix [1, 2]を除外し、6以降を通します。期待結果は[6, 3, 7]です。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [1, 2, 6, 3, 7] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-dropwhile',
+    'midEmpty',
+    'dropWhile途中0件（全要素がtrue）',
+    '[1, 2, 3]は全要素がtrueのためすべてdropされ、結果は空Listです。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [1, 2, 3] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-dropwhile',
+    'emptySource',
+    'dropWhile空ソース',
+    '入力0件のため、Predicateは一度も評価されず空Listが確定します。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [] },
+      'slot-predicate-1': {
+        kind: 'currentValueCompare',
+        operator: 'LT',
+        value: { type: 'int', value: 5 },
+      },
+    },
+  ),
+  fx(
+    'tmpl-peek',
+    'standard',
+    'peek標準（PRINT_FIELD: name）',
+    '各Employeeのname()をSide Effectビューへ出力します。通常の結果は変更されません。',
+    { 'slot-consumer': { kind: 'printField', field: 'name' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-peek',
+    'emptySource',
+    'peek空ソース',
+    '入力0件のため、Consumerは一度も呼ばれません（Side Effectは0回）。',
+    { 'slot-consumer': { kind: 'printField', field: 'name' } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-peek-midempty',
+    'midEmpty',
+    'peek途中0件（filterで全件除外・Consumer 0回）',
+    '前段のfilter(age >= 100)で全件除外され、peekのConsumerは一度も呼ばれません。',
+    {
+      'slot-predicate-1': agePredicate(100),
+      'slot-consumer': { kind: 'printField', field: 'name' },
+    },
+    STANDARD_EMPLOYEES,
   ),
   // ---- Phase 2: 中間操作 ----
   fx(

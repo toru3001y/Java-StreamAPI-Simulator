@@ -32,6 +32,8 @@ export type TypeRule =
   | { readonly kind: 'fixed'; readonly type: TypeRef }
   | { readonly kind: 'anyStream' }
   | { readonly kind: 'anyPrimitiveStream' }
+  /** object / primitiveの両Streamを表す明示的なTypeRule（Phase 3指示 §5.2） */
+  | { readonly kind: 'anyStreamLike' }
   | { readonly kind: 'identity' }
   | { readonly kind: 'streamToList' }
   | { readonly kind: 'fromSource' }
@@ -105,6 +107,7 @@ export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): Type
       return { kind: 'primitiveStream', name: rule.name }
     case 'anyStream':
     case 'anyPrimitiveStream':
+    case 'anyStreamLike':
     case 'none':
     case 'fromSource':
     case 'fromMapper':
