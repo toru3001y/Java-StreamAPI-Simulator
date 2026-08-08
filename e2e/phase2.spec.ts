@@ -28,6 +28,15 @@ test('P2-E01: finite sourceを切替えて正しい結果へ到達する', async
   await selectTemplate(page, 'tmpl-src-arrays-int')
   await forwardToEnd(page)
   expect(await outputLabels(page)).toEqual(['3', '1', '4'])
+  // Arrays.stream（long[] / double[]）（レビュー対応）
+  await selectTemplate(page, 'tmpl-src-arrays-long')
+  await expect(page.getByTestId('pipeline-viewport')).toContainText('LongStream')
+  await forwardToEnd(page)
+  expect(await outputLabels(page)).toEqual(['10L', '20L', '30L'])
+  await selectTemplate(page, 'tmpl-src-arrays-double')
+  await expect(page.getByTestId('pipeline-viewport')).toContainText('DoubleStream')
+  await forwardToEnd(page)
+  expect(await outputLabels(page)).toEqual(['1.5', '2.5', '4.0'])
   // Stream.of
   await selectOperation(page, 'source.streamOf')
   await forwardToEnd(page)

@@ -168,24 +168,39 @@ export const SRC_ARRAYS_OBJECT_TEMPLATE: PipelineTemplate = {
   snapshotBudget: { limit: 500, estimatedMax: 30 },
 }
 
-export const SRC_ARRAYS_PRIMITIVE_TEMPLATE: PipelineTemplate = {
-  templateId: 'tmpl-src-arrays-int',
-  version: 1,
-  targetOperationId: OP_SOURCE_ARRAYS_STREAM,
-  targetNodeId: 'node-src',
-  title: 'Arrays.stream()（int配列 → IntStream）',
-  sourceDefinition: sourceSlotDef(['arrayPrimitive']),
-  nodes: [
-    srcNode(OP_SOURCE_ARRAYS_STREAM),
-    { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
-    sinkNode(),
-  ],
-  parameterSlots: [],
-  allowedDslProfile: { predicateKinds: [] },
-  supportedModes: ['standard', 'emptySource'],
-  jdkNotes: ['primitive配列のArrays.stream()はInt/Long/DoubleStreamを返す。'],
-  snapshotBudget: { limit: 500, estimatedMax: 30 },
+function arraysPrimitiveTemplate(templateId: string, title: string): PipelineTemplate {
+  return {
+    templateId,
+    version: 1,
+    targetOperationId: OP_SOURCE_ARRAYS_STREAM,
+    targetNodeId: 'node-src',
+    title,
+    sourceDefinition: sourceSlotDef(['arrayPrimitive']),
+    nodes: [
+      srcNode(OP_SOURCE_ARRAYS_STREAM),
+      { nodeId: 'node-boxed', operationId: OP_BOXED, role: 'intermediate', slotId: null },
+      sinkNode(),
+    ],
+    parameterSlots: [],
+    allowedDslProfile: { predicateKinds: [] },
+    supportedModes: ['standard', 'emptySource'],
+    jdkNotes: ['primitive配列のArrays.stream()はInt/Long/DoubleStreamを返す。'],
+    snapshotBudget: { limit: 500, estimatedMax: 30 },
+  }
 }
+
+export const SRC_ARRAYS_PRIMITIVE_TEMPLATE = arraysPrimitiveTemplate(
+  'tmpl-src-arrays-int',
+  'Arrays.stream()（int配列 → IntStream）',
+)
+export const SRC_ARRAYS_LONG_TEMPLATE = arraysPrimitiveTemplate(
+  'tmpl-src-arrays-long',
+  'Arrays.stream()（long配列 → LongStream）',
+)
+export const SRC_ARRAYS_DOUBLE_TEMPLATE = arraysPrimitiveTemplate(
+  'tmpl-src-arrays-double',
+  'Arrays.stream()（double配列 → DoubleStream）',
+)
 
 export const SRC_STREAM_OF_TEMPLATE: PipelineTemplate = {
   templateId: 'tmpl-src-of',
@@ -564,6 +579,8 @@ export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   SRC_COLLECTION_TEMPLATE,
   SRC_ARRAYS_OBJECT_TEMPLATE,
   SRC_ARRAYS_PRIMITIVE_TEMPLATE,
+  SRC_ARRAYS_LONG_TEMPLATE,
+  SRC_ARRAYS_DOUBLE_TEMPLATE,
   SRC_STREAM_OF_TEMPLATE,
   SRC_ITERATE3_TEMPLATE,
   SRC_RANGE_TEMPLATE,

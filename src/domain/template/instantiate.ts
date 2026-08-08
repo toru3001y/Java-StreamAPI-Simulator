@@ -9,7 +9,7 @@ import { UNBOUNDED_SOURCE_KINDS } from '../dsl/sourceAst'
 import { validateStructure, validateTypes, validateWhitelist } from '../dsl/validate'
 import { validateMapperStructure, resolveMapperOutputType } from '../dsl/validateMapper'
 import { validateSourceStructure, sourceStreamType } from '../dsl/validateSource'
-import { materializeSource } from '../dsl/materializeSource'
+import { evaluateIteratePredicate, materializeSource } from '../dsl/materializeSource'
 import { evaluateFlatMapper, evaluateMapper } from '../dsl/evaluateMapper'
 import { evaluatePredicate } from '../dsl/evaluate'
 import { generateJavaCode } from '../dsl/javaCode'
@@ -319,6 +319,58 @@ export function instantiateTemplate(
         'source',
       ),
     ])
+  }
+
+  // 3引数iterateの有限性・int範囲・予算を、巨大timeline生成前に検証する（レビュー指摘2）
+  const INT32_MAX = 2_147_483_647
+  if (sourceDsl.kind === 'iterate3') {
+    const { seed, predicate, operator } = sourceDsl
+    const seedPasses = evaluateIteratePredicate(predicate, seed)
+    if (seedPasses && operator.step < 1) {
+      return fail([
+        issue(
+          'UNBOUNDED_SOURCE',
+          `Stream.iterate(${seed}, n ${predicate.operator === 'LTE' ? '<=' : '<'} ${predicate.value}, n + ${operator.step}) はpredicateがfalseへ進まず終了しません（step >= 1 が必要です）`,
+          'source',
+        ),
+      ])
+    }
+    if (seedPasses) {
+      // 最終候補（predicateをfalseにする値）までJava int範囲に収まること
+      if (predicate.value + operator.step > INT32_MAX) {
+        return fail([
+          issue('TYPE_MISMATCH', 'iterateの候補値がJava intの範囲を超えます', 'source'),
+        ])
+      }
+      // 予算の下限見積り（候補 + 判定 + 送出 + 追加 + 初期/確定/消費）で事前検証
+      const bound = predicate.operator === 'LTE' ? predicate.value : predicate.value - 1
+      const passingCount = Math.floor((bound - seed) / operator.step) + 1
+      if (4 * passingCount + 5 > SNAPSHOT_LIMIT) {
+        return fail([
+          issue(
+            'SNAPSHOT_BUDGET',
+            `iterateの生成要素数 ${passingCount} 件はsnapshot安全上限 ${SNAPSHOT_LIMIT} に収まりません`,
+            'source',
+          ),
+        ])
+      }
+    }
+  }
+  // range / rangeClosedも同様に、具現化前に要素数の下限見積りで予算検証する
+  if (sourceDsl.kind === 'range' || sourceDsl.kind === 'rangeClosed') {
+    const count = Math.max(
+      0,
+      sourceDsl.to - sourceDsl.from + (sourceDsl.kind === 'rangeClosed' ? 1 : 0),
+    )
+    if (2 * count + 3 > SNAPSHOT_LIMIT) {
+      return fail([
+        issue(
+          'SNAPSHOT_BUDGET',
+          `rangeの生成要素数 ${count} 件はsnapshot安全上限 ${SNAPSHOT_LIMIT} に収まりません`,
+          'source',
+        ),
+      ])
+    }
   }
 
   const materialized = materializeSource(sourceDsl, input.dataset)

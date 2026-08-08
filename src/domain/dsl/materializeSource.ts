@@ -40,6 +40,10 @@ export function evaluateIteratePredicate(
   return predicate.operator === 'LTE' ? candidate <= predicate.value : candidate < predicate.value
 }
 
+/**
+ * 有限性検証（instantiateTemplate側で具現化前に実施）をすり抜けた場合の内部不整合ガード。
+ * 到達した場合は正常終了として返さず、必ず例外にする（暗黙打ち切りの禁止）。
+ */
 const ITERATE_SAFETY_CAP = 10_000
 
 export function materializeSource(
@@ -94,7 +98,12 @@ export function materializeSource(
       const trace: IterateCandidate[] = []
       const values: SimValue[] = []
       let candidate = dsl.seed
-      for (let i = 0; i < ITERATE_SAFETY_CAP; i++) {
+      for (let i = 0; ; i++) {
+        if (i >= ITERATE_SAFETY_CAP) {
+          throw new Error(
+            'iterate3の候補生成が終了しません。有限性検証を通過していない内部不整合です',
+          )
+        }
         const passed = evaluateIteratePredicate(dsl.predicate, candidate)
         trace.push({ value: candidate, passed })
         if (!passed) break

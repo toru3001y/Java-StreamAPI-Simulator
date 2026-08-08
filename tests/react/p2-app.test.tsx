@@ -89,6 +89,14 @@ describe('P2 React統合', () => {
     await selectOperation(user, 'source.arraysStream')
     await clickForward(user, 1)
     expect(screen.getByTestId('source-index').textContent).toBe('index: 0')
+    // long[] / double[] templateも選択でき、型とindexを描画する（レビュー対応）
+    await user.selectOptions(screen.getByTestId('template-select'), 'tmpl-src-arrays-long')
+    expect(screen.getByTestId('pipeline-viewport').textContent).toContain('LongStream')
+    await clickForward(user, 1)
+    expect(screen.getByTestId('source-index').textContent).toBe('index: 0')
+    expect(screen.getByTestId('processing-input').textContent).toContain('10L')
+    await user.selectOptions(screen.getByTestId('template-select'), 'tmpl-src-arrays-double')
+    expect(screen.getByTestId('pipeline-viewport').textContent).toContain('DoubleStream')
     // iterate候補
     await selectOperation(user, 'source.iterate3')
     await clickForward(user, 1)

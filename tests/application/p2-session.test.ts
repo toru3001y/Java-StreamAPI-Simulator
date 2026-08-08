@@ -182,5 +182,27 @@ describe('P2 Application', () => {
     })
     expect(whitelistResult.ok).toBe(false)
     if (!whitelistResult.ok) expect(whitelistResult.issues[0]?.code).toBe('WHITELIST_KIND')
+
+    // 終了しないiterate3（step=0）も実行セッションへ入らず、理由を保持する（レビュー対応）
+    const iterateResult = instantiateTemplate(registry, catalog, {
+      templateId: 'tmpl-src-iterate3',
+      templateVersion: 1,
+      dataset: [],
+      dslParameters: {
+        'slot-source': {
+          kind: 'iterate3',
+          seed: 1,
+          predicate: { operator: 'LTE', value: 5 },
+          operator: { ruleId: 'increment', step: 0 },
+        },
+      },
+      mode: 'standard',
+      revision: 'test-a06-iterate',
+    })
+    expect(iterateResult.ok).toBe(false)
+    if (!iterateResult.ok) {
+      expect(iterateResult.issues[0]?.code).toBe('UNBOUNDED_SOURCE')
+      expect(iterateResult.issues[0]?.message).toContain('終了しません')
+    }
   })
 })

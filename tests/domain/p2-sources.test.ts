@@ -49,37 +49,35 @@ describe('P2-D04 Arrays.stream', () => {
     expect(last?.output.items.map((i) => i.label)).toEqual(['3', '1', '4'])
   })
 
-  it('P2-D04: long/double配列はLong/DoubleStreamになる', () => {
-    const longResult = instantiateTemplate(registry, catalog, {
-      templateId: 'tmpl-src-arrays-int',
-      templateVersion: 1,
-      dataset: [],
-      dslParameters: {
-        'slot-source': { kind: 'arrayPrimitive', arrayId: 'values', primitive: 'long', values: [10, 20] },
-      },
-      mode: 'standard',
-      revision: 'test-long',
-    })
-    expect(longResult.ok).toBe(true)
-    if (longResult.ok) {
-      expect(formatTypeRef(longResult.value.nodes[0]!.outputType)).toBe('LongStream')
-      expect(formatTypeRef(longResult.value.resultType)).toBe('List<Long>')
-    }
-    const doubleResult = instantiateTemplate(registry, catalog, {
-      templateId: 'tmpl-src-arrays-int',
-      templateVersion: 1,
-      dataset: [],
-      dslParameters: {
-        'slot-source': { kind: 'arrayPrimitive', arrayId: 'values', primitive: 'double', values: [1.5] },
-      },
-      mode: 'standard',
-      revision: 'test-double',
-    })
-    expect(doubleResult.ok).toBe(true)
-    if (doubleResult.ok) {
-      expect(formatTypeRef(doubleResult.value.nodes[0]!.outputType)).toBe('DoubleStream')
-      expect(formatTypeRef(doubleResult.value.resultType)).toBe('List<Double>')
-    }
+  it('P2-D04: long配列templateの型・index・順序・コード・boxed後結果が正しい（レビュー対応）', () => {
+    const def = makeDefinition('tmpl-src-arrays-long', 'standard')
+    expect(def.nodes[0] && formatTypeRef(def.nodes[0].outputType)).toBe('LongStream')
+    expect(formatTypeRef(def.resultType)).toBe('List<Long>')
+    expect(def.dataset.map((d) => d.index)).toEqual([0, 1, 2])
+    const javaText = def.javaCode.map((l) => l.text).join('\n')
+    expect(javaText).toContain('long[] amounts = { 10L, 20L, 30L };')
+    expect(javaText).toContain('Arrays.stream(amounts)')
+    expect(javaText).toContain('.boxed()')
+    const snapshots = runAllSnapshots(def)
+    const emits = snapshots.filter((s) => s.kind === 'SOURCE_EMIT')
+    expect(emits.map((s) => s.sourceContext?.index)).toEqual([0, 1, 2])
+    expect(snapshots.at(-1)?.output.items.map((i) => i.label)).toEqual(['10L', '20L', '30L'])
+    // 空ソースmode
+    expect(makeDefinition('tmpl-src-arrays-long', 'emptySource').dataset).toHaveLength(0)
+  })
+
+  it('P2-D04: double配列templateの型・index・順序・コード・boxed後結果が正しい（レビュー対応）', () => {
+    const def = makeDefinition('tmpl-src-arrays-double', 'standard')
+    expect(def.nodes[0] && formatTypeRef(def.nodes[0].outputType)).toBe('DoubleStream')
+    expect(formatTypeRef(def.resultType)).toBe('List<Double>')
+    const javaText = def.javaCode.map((l) => l.text).join('\n')
+    expect(javaText).toContain('double[] rates = { 1.5, 2.5, 4.0 };')
+    expect(javaText).toContain('Arrays.stream(rates)')
+    const snapshots = runAllSnapshots(def)
+    const emits = snapshots.filter((s) => s.kind === 'SOURCE_EMIT')
+    expect(emits.map((s) => s.sourceContext?.index)).toEqual([0, 1, 2])
+    expect(snapshots.at(-1)?.output.items.map((i) => i.label)).toEqual(['1.5', '2.5', '4.0'])
+    expect(makeDefinition('tmpl-src-arrays-double', 'emptySource').dataset).toHaveLength(0)
   })
 })
 
@@ -190,6 +188,90 @@ describe('P2-D07 iterate 3引数', () => {
     ])
     const last = snapshots[snapshots.length - 1]
     expect(last?.output.items.map((i) => i.label)).toEqual(['1', '2', '3', '4', '5'])
+  })
+
+  it('P2-D07: 終了しない候補（step=0等）を具現化前に拒否する（レビュー対応）', () => {
+    const run = (seed: number, operator: 'LTE' | 'LT', value: number, step: number) =>
+      instantiateTemplate(registry, catalog, {
+        templateId: 'tmpl-src-iterate3',
+        templateVersion: 1,
+        dataset: [],
+        dslParameters: {
+          'slot-source': {
+            kind: 'iterate3',
+            seed,
+            predicate: { operator, value },
+            operator: { ruleId: 'increment', step },
+          },
+        },
+        mode: 'standard',
+        revision: `test-finite-${seed}-${operator}-${value}-${step}`,
+      })
+    // seed=1, n<=5, step=0: predicateがfalseへ進まない → UNBOUNDED_SOURCE
+    const step0 = run(1, 'LTE', 5, 0)
+    expect(step0.ok).toBe(false)
+    if (!step0.ok) {
+      expect(step0.issues[0]?.code).toBe('UNBOUNDED_SOURCE')
+      expect(step0.issues[0]?.message).toContain('step')
+    }
+    // 負のstepも同様に拒否
+    const negative = run(1, 'LT', 5, -1)
+    expect(negative.ok).toBe(false)
+    if (!negative.ok) expect(negative.issues[0]?.code).toBe('UNBOUNDED_SOURCE')
+    // seedが最初からfalseなら（step=0でも）空で有限終了するため受理される
+    // ただしstandardモードは入力必須のため教材制約で拒否 → emptySourceで確認
+    const emptyOk = instantiateTemplate(registry, catalog, {
+      templateId: 'tmpl-src-iterate3',
+      templateVersion: 1,
+      dataset: [],
+      dslParameters: {
+        'slot-source': {
+          kind: 'iterate3',
+          seed: 10,
+          predicate: { operator: 'LTE', value: 5 },
+          operator: { ruleId: 'increment', step: 0 },
+        },
+      },
+      mode: 'emptySource',
+      revision: 'test-finite-empty',
+    })
+    expect(emptyOk.ok).toBe(true)
+  })
+
+  it('P2-D07: Java int範囲とsnapshot予算を巨大timeline生成前に検証する（レビュー対応）', () => {
+    const run = (seed: number, value: number, step: number) =>
+      instantiateTemplate(registry, catalog, {
+        templateId: 'tmpl-src-iterate3',
+        templateVersion: 1,
+        dataset: [],
+        dslParameters: {
+          'slot-source': {
+            kind: 'iterate3',
+            seed,
+            predicate: { operator: 'LTE', value },
+            operator: { ruleId: 'increment', step },
+          },
+        },
+        mode: 'standard',
+        revision: `test-range-${seed}-${value}-${step}`,
+      })
+    // 最終候補がJava intの範囲を超える
+    const overflow = run(2_147_483_640, 2_147_483_647, 1)
+    expect(overflow.ok).toBe(false)
+    if (!overflow.ok) expect(overflow.issues[0]?.code).toBe('TYPE_MISMATCH')
+    // 生成要素数が安全上限に収まらない（timeline構築前に拒否）
+    const tooMany = run(1, 100_000, 1)
+    expect(tooMany.ok).toBe(false)
+    if (!tooMany.ok) expect(tooMany.issues[0]?.code).toBe('SNAPSHOT_BUDGET')
+    // seed自体がint範囲外は構造検証で拒否
+    const badSeed = validateSourceStructure({
+      kind: 'iterate3',
+      seed: 3_000_000_000,
+      predicate: { operator: 'LTE', value: 5 },
+      operator: { ruleId: 'increment', step: 1 },
+    })
+    expect(badSeed.ok).toBe(false)
+    if (!badSeed.ok) expect(badSeed.issues[0]?.code).toBe('TYPE_MISMATCH')
   })
 
   it('P2-D07: seedが即falseの場合は空ソースになる', () => {

@@ -1,4 +1,4 @@
-import type { EmployeeValue } from './employee'
+import type { DepartmentValue, EmployeeValue } from './employee'
 import type { TypeRef } from '../types/typeRef'
 
 /**
@@ -8,6 +8,8 @@ import type { TypeRef } from '../types/typeRef'
  */
 export type SimValue =
   | { readonly kind: 'employee'; readonly value: EmployeeValue }
+  | { readonly kind: 'department'; readonly value: DepartmentValue }
+  | { readonly kind: 'localDate'; readonly value: string }
   | { readonly kind: 'string'; readonly value: string }
   | { readonly kind: 'int'; readonly value: number }
   | { readonly kind: 'long'; readonly value: number }
@@ -41,6 +43,12 @@ export function formatSimValue(v: SimValue): string {
   switch (v.kind) {
     case 'employee':
       return `${v.value.name}（age=${v.value.age}）`
+    case 'department':
+      // Java recordのtoString表現に合わせる
+      return `Department[name=${v.value.name}, division=${v.value.division}]`
+    case 'localDate':
+      // LocalDate.toString（ISO-8601）に合わせる
+      return v.value
     case 'string':
       return `"${v.value}"`
     case 'int':
@@ -68,6 +76,10 @@ export function typeOfSimValue(v: SimValue): TypeRef {
   switch (v.kind) {
     case 'employee':
       return { kind: 'object', name: 'Employee' }
+    case 'department':
+      return { kind: 'object', name: 'Department' }
+    case 'localDate':
+      return { kind: 'object', name: 'LocalDate' }
     case 'string':
       return { kind: 'object', name: 'String' }
     case 'int':

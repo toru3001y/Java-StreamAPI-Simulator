@@ -27,6 +27,13 @@ function isNumberArray(v: unknown, integer: boolean): v is number[] {
   )
 }
 
+const INT32_MAX = 2_147_483_647
+const INT32_MIN = -2_147_483_648
+
+function isInt32(v: unknown): v is number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= INT32_MIN && v <= INT32_MAX
+}
+
 function checkOperator(op: unknown, path: string): ValidationIssue[] {
   const issues: ValidationIssue[] = []
   if (typeof op !== 'object' || op === null) {
@@ -39,8 +46,8 @@ function checkOperator(op: unknown, path: string): ValidationIssue[] {
       issue('STRUCTURE_UNKNOWN_KIND', `未知のoperator rule IDです: ${String(o['ruleId'])}`, `${path}.ruleId`),
     )
   }
-  if (typeof o['step'] !== 'number' || !Number.isInteger(o['step'])) {
-    issues.push(issue('TYPE_MISMATCH', 'operator.stepはint定数が必要です', `${path}.step`))
+  if (!isInt32(o['step'])) {
+    issues.push(issue('TYPE_MISMATCH', 'operator.stepはJava int範囲のint定数が必要です', `${path}.step`))
   }
   return issues
 }
@@ -127,14 +134,14 @@ export function validateSourceStructure(input: unknown, path = 'source'): Result
       }
       break
     case 'iterate2':
-      if (typeof obj['seed'] !== 'number' || !Number.isInteger(obj['seed'])) {
-        issues.push(issue('TYPE_MISMATCH', 'seedはint定数が必要です', `${path}.seed`))
+      if (!isInt32(obj['seed'])) {
+        issues.push(issue('TYPE_MISMATCH', 'seedはJava int範囲のint定数が必要です', `${path}.seed`))
       }
       issues.push(...checkOperator(obj['operator'], `${path}.operator`))
       break
     case 'iterate3': {
-      if (typeof obj['seed'] !== 'number' || !Number.isInteger(obj['seed'])) {
-        issues.push(issue('TYPE_MISMATCH', 'seedはint定数が必要です', `${path}.seed`))
+      if (!isInt32(obj['seed'])) {
+        issues.push(issue('TYPE_MISMATCH', 'seedはJava int範囲のint定数が必要です', `${path}.seed`))
       }
       const pred = obj['predicate']
       if (typeof pred !== 'object' || pred === null) {
@@ -146,8 +153,10 @@ export function validateSourceStructure(input: unknown, path = 'source'): Result
             issue('STRUCTURE_UNKNOWN_KIND', `未知のpredicate operatorです: ${String(p['operator'])}`, `${path}.predicate.operator`),
           )
         }
-        if (typeof p['value'] !== 'number' || !Number.isInteger(p['value'])) {
-          issues.push(issue('TYPE_MISMATCH', 'predicate.valueはint定数が必要です', `${path}.predicate.value`))
+        if (!isInt32(p['value'])) {
+          issues.push(
+            issue('TYPE_MISMATCH', 'predicate.valueはJava int範囲のint定数が必要です', `${path}.predicate.value`),
+          )
         }
       }
       issues.push(...checkOperator(obj['operator'], `${path}.operator`))

@@ -5,6 +5,7 @@ import { createDefaultTemplateRegistry } from '../../src/domain/template/templat
 import { createDefaultCatalog } from '../../src/domain/catalog/operations'
 import { validateMapperStructure, resolveMapperOutputType } from '../../src/domain/dsl/validateMapper'
 import { evaluateMapper } from '../../src/domain/dsl/evaluateMapper'
+import { STANDARD_EMPLOYEES } from '../../src/domain/fixtures/employees'
 import { describeMapper } from '../../src/domain/dsl/explanation'
 import { mapperToJavaExpr } from '../../src/domain/dsl/javaCode'
 import { formatTypeRef } from '../../src/domain/types/typeRef'
@@ -52,6 +53,25 @@ describe('P2-D10 Mapper DSL検証', () => {
     expect(wrongInput.ok).toBe(false)
   })
 
+  it('P2-D10: Employee全8フィールドのfieldAccessが正しい出力型へ解決される（レビュー対応）', () => {
+    const employee = { kind: 'object', name: 'Employee' } as const
+    const cases: readonly [string, string][] = [
+      ['name', 'String'],
+      ['age', 'Integer'],
+      ['salary', 'Long'],
+      ['evaluation', 'Double'],
+      ['region', 'String'],
+      ['hireDate', 'LocalDate'],
+      ['department', 'Department'],
+      ['skills', 'List<String>'],
+    ]
+    for (const [field, expected] of cases) {
+      const result = resolveMapperOutputType({ kind: 'fieldAccess', field }, employee)
+      expect(result.ok, field).toBe(true)
+      if (result.ok) expect(formatTypeRef(result.value), field).toBe(expected)
+    }
+  })
+
   it('P2-D10: slot許可範囲外のmapper kindを拒否する（WHITELIST_KIND）', () => {
     const result = instantiateTemplate(registry, catalog, {
       templateId: 'tmpl-map',
@@ -63,6 +83,57 @@ describe('P2-D10 Mapper DSL検証', () => {
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.issues[0]?.code).toBe('WHITELIST_KIND')
+  })
+})
+
+describe('P2-D11 map（Employee全8フィールド）', () => {
+  const FIELD_CASES: readonly {
+    field: string
+    resultType: string
+    firstLabel: string
+  }[] = [
+    { field: 'name', resultType: 'List<String>', firstLabel: '"佐藤"' },
+    { field: 'age', resultType: 'List<Integer>', firstLabel: '35' },
+    { field: 'salary', resultType: 'List<Long>', firstLabel: '5_500_000L' },
+    { field: 'evaluation', resultType: 'List<Double>', firstLabel: '4.2' },
+    { field: 'region', resultType: 'List<String>', firstLabel: '"関東"' },
+    { field: 'hireDate', resultType: 'List<LocalDate>', firstLabel: '2022-04-01' },
+    {
+      field: 'department',
+      resultType: 'List<Department>',
+      firstLabel: 'Department[name=開発部, division=技術本部]',
+    },
+    { field: 'skills', resultType: 'List<List<String>>', firstLabel: '[Java, SQL]' },
+  ]
+
+  it('P2-D11: 全8フィールドで評価・型・コード・説明が一致し、未処理例外にならない（レビュー対応）', () => {
+    for (const c of FIELD_CASES) {
+      const result = instantiateTemplate(registry, catalog, {
+        templateId: 'tmpl-map',
+        templateVersion: 1,
+        dataset: STANDARD_EMPLOYEES,
+        dslParameters: { 'slot-mapper-1': { kind: 'fieldAccess', field: c.field } },
+        mode: 'standard',
+        revision: `test-field-${c.field}`,
+      })
+      expect(result.ok, c.field).toBe(true)
+      if (!result.ok) continue
+      const def = result.value
+      // 型
+      expect(formatTypeRef(def.resultType), c.field).toBe(c.resultType)
+      // コード
+      expect(def.javaCode.map((l) => l.text).join('\n'), c.field).toContain(
+        `.map(Employee::${c.field})`,
+      )
+      // 評価（timeline全体が未処理例外なく生成され、出力が評価結果と一致する）
+      const snapshots = runAllSnapshots(def)
+      const last = snapshots[snapshots.length - 1]
+      expect(last?.output.items[0]?.label, c.field).toBe(c.firstLabel)
+      expect(last?.output.count, c.field).toBe(4)
+      // 説明（同一ASTのfield名を反映）
+      const arrival = snapshots.find((s) => s.kind === 'NODE_ARRIVAL')
+      expect(arrival?.explanation.current, c.field).toContain(`${c.field}()`)
+    }
   })
 })
 

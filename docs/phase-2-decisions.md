@@ -111,7 +111,22 @@ P1-E11の期待画像4枚を意図的に再生成した。差分はScenarioContr
 実画像で確認済み。Pipeline・入力/処理中/出力・Javaコード・説明・stickyバーの描画は
 Phase 1と同一である。
 
-### 3.7 P1テストの微修正（削除・緩和なし）
+### 3.7 最終レビュー対応（2026-08-08）
+
+- **Mapper全8フィールド**: SimValueへ `localDate`（表示はLocalDate.toStringのISO形式）と
+  `department`（表示はJava recordのtoString形式 `Department[name=…, division=…]`）を追加し、
+  `fieldAccess` の評価を全8フィールドへ拡張。型解決（`resolveMapperOutputType`）は
+  既存のEMPLOYEE_FIELDS由来で全フィールド対応済みだったため、評価器と値モデルのみ拡張した。
+- **iterate3の有限性**: 「seedがpredicateを満たす場合はstep >= 1が必要」という終了性ルールを
+  §9.3手順6（有限性検証）へ追加し、`UNBOUNDED_SOURCE`で拒否する。従来の10,000件安全上限は
+  「正常終了として返す打ち切り」から「到達時に例外を送出する内部不整合ガード」へ変更した
+  （有限性検証を通過した候補は原理的に到達しない）。あわせて構造検証にJava int32範囲、
+  instantiateに最終候補のoverflowと要素数下限見積りによる事前予算検証を追加した
+  （range / rangeClosedにも同じ事前予算検証を適用）。
+- **Arrays.stream(long[]/double[])**: `tmpl-src-arrays-long` / `tmpl-src-arrays-double` を追加し、
+  同一target operation（source.arraysStream）のtemplateは4件になった。
+
+### 3.8 P1テストの微修正（削除・緩和なし）
 
 - `P1-D02`（Catalog拡張性）: 拡張登録の検証に使う操作IDを `map` から未登録の
   `custom.futureOp` へ変更（Phase 2で `map` が標準登録されたため）。検証内容は不変。

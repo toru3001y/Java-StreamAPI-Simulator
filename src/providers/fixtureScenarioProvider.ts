@@ -155,6 +155,38 @@ const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
     { 'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [] } },
   ),
   fx(
+    'tmpl-src-arrays-long',
+    'standard',
+    'Arrays.stream()標準（long配列）',
+    'long[]からLongStreamが生成されます。boxed()でLongへ変換して結果化します。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'amounts', primitive: 'long', values: [10, 20, 30] },
+    },
+  ),
+  fx(
+    'tmpl-src-arrays-long',
+    'emptySource',
+    'Arrays.stream()空ソース（long配列）',
+    '長さ0のlong[]からは要素が送出されません。',
+    { 'slot-source': { kind: 'arrayPrimitive', arrayId: 'amounts', primitive: 'long', values: [] } },
+  ),
+  fx(
+    'tmpl-src-arrays-double',
+    'standard',
+    'Arrays.stream()標準（double配列）',
+    'double[]からDoubleStreamが生成されます。boxed()でDoubleへ変換して結果化します。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'rates', primitive: 'double', values: [1.5, 2.5, 4.0] },
+    },
+  ),
+  fx(
+    'tmpl-src-arrays-double',
+    'emptySource',
+    'Arrays.stream()空ソース（double配列）',
+    '長さ0のdouble[]からは要素が送出されません。',
+    { 'slot-source': { kind: 'arrayPrimitive', arrayId: 'rates', primitive: 'double', values: [] } },
+  ),
+  fx(
     'tmpl-src-of',
     'standard',
     'Stream.of()標準',

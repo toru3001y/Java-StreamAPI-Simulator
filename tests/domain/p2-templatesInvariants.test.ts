@@ -21,6 +21,8 @@ describe('P2-D20 TemplateRegistry', () => {
     expect(registry.listByTargetOperation('source.arraysStream').map((t) => t.templateId)).toEqual([
       'tmpl-src-arrays-object',
       'tmpl-src-arrays-int',
+      'tmpl-src-arrays-long',
+      'tmpl-src-arrays-double',
     ])
     expect(registry.listByTargetOperation('filter')).toHaveLength(2)
   })
@@ -158,6 +160,46 @@ describe('P2-D21 教材制約・mode', () => {
 })
 
 describe('P2-D22 Source of Truth', () => {
+  it('P2-D22: Employee全8フィールドで評価結果と出力ラベルが同一ASTから一致する（レビュー対応）', () => {
+    const fields = [
+      'name',
+      'age',
+      'salary',
+      'evaluation',
+      'region',
+      'hireDate',
+      'department',
+      'skills',
+    ] as const
+    for (const field of fields) {
+      const result = instantiateTemplate(registry, catalog, {
+        templateId: 'tmpl-map',
+        templateVersion: 1,
+        dataset: STANDARD_EMPLOYEES,
+        dslParameters: { 'slot-mapper-1': { kind: 'fieldAccess', field } },
+        mode: 'standard',
+        revision: `test-d22-${field}`,
+      })
+      expect(result.ok, field).toBe(true)
+      if (!result.ok) continue
+      const def = result.value
+      const snapshots = runAllSnapshots(def)
+      const last = snapshots[snapshots.length - 1]
+      def.dataset.forEach((element, i) => {
+        // 検証済みDSLの評価が未処理例外にならず、出力ラベルと完全一致する
+        const evaluated = evaluateMapper({ kind: 'fieldAccess', field }, element.value)
+        expect(last?.output.items[i]?.label, `${field}[${i}]`).toBe(formatSimValue(evaluated))
+      })
+      // MAPPING_APPLIEDの表示も同じ評価結果を用いる
+      const applied = snapshots.find((s) => s.kind === 'MAPPING_APPLIED')
+      const firstElement = def.dataset[0]
+      if (firstElement) {
+        const evaluated = evaluateMapper({ kind: 'fieldAccess', field }, firstElement.value)
+        expect(applied?.processing?.evaluation, field).toContain(formatSimValue(evaluated))
+      }
+    }
+  })
+
   it('P2-D22: 評価結果・TypeRef・Javaコード・説明が同一ASTから一致して生成される', () => {
     // map: 評価とsnapshot表示の一致
     const def = makeDefinition('tmpl-map', 'standard')
@@ -279,6 +321,26 @@ describe('P2-D25 決定性・予算', () => {
       dslParameters: { 'slot-source': { kind: 'generate', ruleId: 'supplier-counter' } },
       mode: 'standard',
       revision: 'test-gen',
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.issues[0]?.code).toBe('UNBOUNDED_SOURCE')
+  })
+
+  it('P2-D25: 終了しないiterate3候補も暗黙打ち切りせず事前拒否される（レビュー対応）', () => {
+    const result = instantiateTemplate(registry, catalog, {
+      templateId: 'tmpl-src-iterate3',
+      templateVersion: 1,
+      dataset: [],
+      dslParameters: {
+        'slot-source': {
+          kind: 'iterate3',
+          seed: 1,
+          predicate: { operator: 'LTE', value: 5 },
+          operator: { ruleId: 'increment', step: 0 },
+        },
+      },
+      mode: 'standard',
+      revision: 'test-d25-step0',
     })
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.issues[0]?.code).toBe('UNBOUNDED_SOURCE')

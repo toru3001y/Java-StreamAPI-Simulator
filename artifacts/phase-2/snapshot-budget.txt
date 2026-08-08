@@ -8,6 +8,10 @@ tmpl-src-arrays-object	standard	18
 tmpl-src-arrays-object	emptySource	3
 tmpl-src-arrays-int	standard	18
 tmpl-src-arrays-int	emptySource	3
+tmpl-src-arrays-long	standard	18
+tmpl-src-arrays-long	emptySource	3
+tmpl-src-arrays-double	standard	18
+tmpl-src-arrays-double	emptySource	3
 tmpl-src-of	standard	13
 tmpl-src-of	emptySource	3
 tmpl-src-iterate3	standard	25

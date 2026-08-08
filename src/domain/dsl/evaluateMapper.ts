@@ -10,6 +10,7 @@ export function evaluateMapper(mapper: MapperDsl, input: SimValue): SimValue {
     case 'fieldAccess': {
       if (input.kind !== 'employee') throw new Error('fieldAccessはEmployee要素が必要です')
       const e = input.value
+      // Employeeの全8フィールドを評価可能とする（検証済みDSLは未処理例外にならない）
       switch (mapper.field) {
         case 'name':
           return { kind: 'string', value: e.name }
@@ -21,6 +22,10 @@ export function evaluateMapper(mapper: MapperDsl, input: SimValue): SimValue {
           return { kind: 'boxedLong', value: e.salary }
         case 'evaluation':
           return { kind: 'boxedDouble', value: e.evaluation }
+        case 'hireDate':
+          return { kind: 'localDate', value: e.hireDate }
+        case 'department':
+          return { kind: 'department', value: e.department }
         case 'skills':
           return { kind: 'stringList', value: e.skills }
         default:
