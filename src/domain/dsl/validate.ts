@@ -8,6 +8,8 @@ import { typeRefEquals, TYPE_INT } from '../types/typeRef'
  * DSL検証（§9.3の手順1・3・4に対応）。
  * 手順2（template / slot許可範囲）と手順5以降はtemplate/instantiate側で行う。
  */
+const INT32_MAX = 2_147_483_647
+const INT32_MIN = -2_147_483_648
 
 /** 手順1: JSON Schema相当の構造検証 */
 export function validateStructure(input: unknown, path = 'predicate'): Result<DslPredicate> {
@@ -36,6 +38,15 @@ export function validateStructure(input: unknown, path = 'predicate'): Result<Ds
     if (v['type'] === 'int') {
       if (typeof v['value'] !== 'number' || !Number.isInteger(v['value'])) {
         issues.push(issue('STRUCTURE_INVALID', 'int定数のvalueは整数が必要です', `${path}.value.value`))
+      } else if (v['value'] > INT32_MAX || v['value'] < INT32_MIN) {
+        // Java intの範囲外は不正なJavaコード（int literal）を生成し得るため事前拒否する（レビュー修正2）
+        issues.push(
+          issue(
+            'TYPE_MISMATCH',
+            `int定数はJava intの範囲（${INT32_MIN}〜${INT32_MAX}）が必要です: ${v['value']}`,
+            `${path}.value.value`,
+          ),
+        )
       }
     } else if (v['type'] === 'string') {
       if (typeof v['value'] !== 'string') {

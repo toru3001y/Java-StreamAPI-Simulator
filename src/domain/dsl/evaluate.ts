@@ -44,20 +44,34 @@ export function numericValueOf(value: SimValue): number {
 }
 
 /**
- * 現在要素のSimValueに対するPredicate評価（Phase 3指示 §6.2）。
- * fieldCompareはEmployee要素、currentValueCompareはprimitive / wrapper要素へ適用する。
+ * Predicateが比較する対象値をPredicate種別に応じて取得する（Phase 3レビュー修正1）。
+ * - currentValueCompare: primitive / wrapper要素自身の数値
+ * - fieldCompare: Employeeの許可済みfield値（現在の許可範囲ではage）
+ * 評価・fieldValueFlow・comparisonExpr・処理中表示はすべてこの同じ値を参照する。
  */
-export function evaluateValuePredicate(predicate: DslPredicate, value: SimValue): boolean {
+export function predicateComparisonValue(predicate: DslPredicate, value: SimValue): number {
   if (predicate.kind === 'fieldCompare') {
     if (value.kind !== 'employee') {
       throw new Error('fieldCompareはEmployee要素が必要です')
     }
-    return evaluatePredicate(predicate, value.value)
+    return readIntField(predicate.field, value.value)
   }
+  return numericValueOf(value)
+}
+
+/**
+ * 現在要素のSimValueに対するPredicate評価（Phase 3指示 §6.2）。
+ * fieldCompareはEmployee要素、currentValueCompareはprimitive / wrapper要素へ適用する。
+ */
+export function evaluateValuePredicate(predicate: DslPredicate, value: SimValue): boolean {
   if (predicate.value.type !== 'int') {
     throw new Error(`unsupported literal type: ${predicate.value.type}`)
   }
-  return compareByOperator(predicate.operator, numericValueOf(value), predicate.value.value)
+  return compareByOperator(
+    predicate.operator,
+    predicateComparisonValue(predicate, value),
+    predicate.value.value,
+  )
 }
 
 function readIntField(field: string, employee: EmployeeValue): number {

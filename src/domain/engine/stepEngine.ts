@@ -1,6 +1,10 @@
 import type { PipelineDefinition, PipelineNodeDef } from '../pipeline/pipelineDefinition'
 import type { ElementStateKind } from '../catalog/operationCatalog'
-import { evaluatePredicate, evaluateValuePredicate, numericValueOf } from '../dsl/evaluate'
+import {
+  evaluatePredicate,
+  evaluateValuePredicate,
+  predicateComparisonValue,
+} from '../dsl/evaluate'
 import { evaluateFlatMapper, evaluateMapper } from '../dsl/evaluateMapper'
 import { comparatorKeyLabel, sortBuffer } from '../dsl/evaluateComparator'
 import { evaluateConsumerMessage } from '../dsl/evaluateConsumer'
@@ -1024,7 +1028,8 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           currentText: `${name}がtakeWhile（${predicateExpr}）へ到着しました。${describePredicate(predicate)}。`,
           jdkNote: '初版のtakeWhile実行はsequential + orderedに限定しています。',
         })
-        const numeric = numericValueOf(value)
+        // Predicate種別に応じた比較対象値（評価・表示とも同じ値を参照。レビュー修正1）
+        const numeric = predicateComparisonValue(predicate, value)
         const result = evaluateValuePredicate(predicate, value)
         b.push({
           kind: 'PREDICATE_EVALUATED',
@@ -1125,7 +1130,7 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           jdkNote: '初版のdropWhile実行はsequential + orderedに限定しています。',
         })
         if (rt.dropping) {
-          const numeric = numericValueOf(value)
+          const numeric = predicateComparisonValue(predicate, value)
           const result = evaluateValuePredicate(predicate, value)
           b.push({
             kind: 'PREDICATE_EVALUATED',
