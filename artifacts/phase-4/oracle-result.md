@@ -1,6 +1,6 @@
 # P4-O01 JDK 25 Oracle Test 結果
 
-実行日時: 2026-08-08T13:36:00.498Z
+実行日時: 2026-08-08T14:02:14.363Z
 Dockerイメージ: gradle:9.6.1-jdk25
 対象: OracleP4.java
 
@@ -29,7 +29,8 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
   - 比較方式: 10進文字列のまま完全一致比較（JavaScript numberへ変換せず、1桁も損失しない）
   - string型・正確値の検証（期待値 / 実測値）: PASS / PASS
 - P4-O03: PASS（Oracle証跡書込みのP4限定）
-  - suite構成: P1〜P3はwriteReportPath: nullの照合のみ（過去Phase artifactsへ書き込まない）: PASS
+  - 必須4 suite（P1-O01 / P2-O01 / P3-O01 / P4-O01）が各1件存在（欠落・重複なし）: PASS
+  - 書込みはP4のみ（P1〜P3はwriteReportPath: nullの照合のみ。書込み先はartifacts/phase-4/oracle-result.mdだけ）: PASS
   - 実行前後でartifacts/phase-1〜3のSHA-256が不変: PASS
 - 総合判定: PASS（P4-O01〜O03のいずれかがFAILなら総合もFAIL）
 

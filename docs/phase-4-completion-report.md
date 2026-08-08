@@ -7,7 +7,7 @@
 
 ## 1. 完了 / 未完了判定
 
-**Phase 4 完了**と判定する（第1回・第2回再レビュー対応後の再判定。§16・§17参照）。
+**Phase 4 完了**と判定する（第1回〜第3回再レビュー対応後の再判定。§16・§17・§18参照）。
 全検証（lint / typecheck / unit / build / E2E / Oracle / git diff --check）が成功し、
 再レビューで追加された4 IDを含む**P4必須72 ID**をすべて実装・成功させた。§5の完了条件
 （Optional型付き表示、空Stream一致、vacuous truth、短絡後未評価、findAny分離、count注記、
@@ -110,10 +110,11 @@ findAny・count注記・traits・凡例・STREAM CONSUMED。
 - **P4-O01: PASS** — JDK 25実測値とSimulation Core期待値のJSON完全一致。
 - **P4-O02: PASS** — Long境界値（`9223372036854775807` / `-9223372036854775808`）を
   10進文字列のまま損失なく照合（近接誤値±1は不一致判定）。
-- **P4-O03: PASS** — 証跡書込みはP4のみ（P1〜P3は照合のみ）、実行前後で
-  `artifacts/phase-1〜3`のSHA-256不変を実測。
+- **P4-O03: PASS** — 必須4 suite（P1-O01〜P4-O01）が各1件存在（欠落・重複なし）、
+  証跡書込みはP4のみ（P1〜P3は照合のみ）、実行前後で`artifacts/phase-1〜3`の
+  SHA-256不変を実測。3判定すべての成立で初めてPASSとなる（§18修正1）。
 - 3 IDの結果と総合判定は`artifacts/phase-4/oracle-result.md`へ、`npm run test:oracle`の
-  レポート生成処理が**実判定から**出力する（固定文字列ではない。§17修正2参照）。
+  レポート生成処理が**実判定から**出力する（固定文字列ではない。§17修正2・§18修正1参照）。
 
 ### 再レビュー追加分（P4-D41 / D42 / O02 / O03）: すべて成功
 
@@ -121,15 +122,16 @@ findAny・count注記・traits・凡例・STREAM CONSUMED。
 |---|---|---|
 | P4-D41 | `P4-D41 Terminal DSLのclosed schema検証`（it 2件） | 未知追加フィールド（functionBody / javaCode / evalExpr等）の拒否とパス報告、正常variant受理、既存検証の非退行 |
 | P4-D42 | `P4-D42 string identityのJava文字列リテラル生成`（it 2件） | 引用符・バックスラッシュ・LF / CR / タブ / backspace / form feed / 制御文字のエスケープ、生改行非混入、元文字列との同値復元 |
-| P4-O02 | `P4-O02 Long境界値の損失なしOracle照合`（it 4件） | expected JSONの境界値がstringで正確な10進値、近接誤値（±1）の不一致判定、parse / stringify不変、Coreラベルとの意味一致 |
-| P4-O03 | `P4-O03 Oracle証跡の書込み対象`（it 2件） | P1〜P4全件が照合対象、書込みはP4のみ（P1〜P3はwriteReportPath null）、任意1件の失敗で全体失敗 |
+| P4-O02 | `P4-O02 Long境界値の損失なしOracle照合`（it 5件） | expected JSONの境界値がstringで正確な10進値、近接誤値（±1）の不一致判定、parse / stringify不変、Coreラベルとの意味一致、**結果欄が`verifyLongBoundaryStrings`の実結果から生成されFAILが総合判定へ伝播すること** |
+| P4-O03 | `P4-O03 Oracle証跡の書込み対象`（it 4件） | P1〜P4全件が照合対象、書込みはP4のみ（P1〜P3はwriteReportPath null）、任意1件の失敗で全体失敗、**必須4 suiteの欠落・重複・書込み先異常の検出（P1/P2/P3/P4各欠落 → O03 FAIL）**、**結果欄の実判定生成・FAIL伝播・buildReportへのレポート統合** |
 
 **Domain 42 + Application 7 + React 10 + E2E 10 + Oracle 3 = 72 ID、すべて実装・成功。**
 
 ## 5. 全Vitest件数
 
-**310件 全成功**（36ファイル。P1 + P2 + P3 + P4 + 第1回・第2回再レビュー対応。
-失敗0・skip 0・todo 0・未実行0。第2回対応でP4-O02 / O03の結果欄生成検証2件を追加）。
+**311件 全成功**（36ファイル。P1 + P2 + P3 + P4 + 第1回〜第3回再レビュー対応。
+失敗0・skip 0・todo 0・未実行0。第2回対応で結果欄生成検証2件、
+第3回対応でsuite構成の厳密判定1件を追加）。
 
 ## 6. 全Playwright件数
 
@@ -247,7 +249,9 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
   Oracle結果欄の実判定生成 + 報告整合性修正 + P4証跡更新。21ファイル・+582 / -107行）
 - 最終テスト実数（第2回是正後）: Vitest **310件**（36ファイル、失敗・skip・todo 0）/
   Playwright **50件**（失敗・skip 0）/ Oracle P1-O01〜P4-O01 + P4-O02 / O03 すべてPASS
-- 最終HEADは本欄を追記したreport-only commit（`git log`先頭）。SHAは最終回答で報告する。
+- 第2回report-only commit: `d8ab9ae`
+- 第3回再レビュー是正commit（§18）のSHAと最終テスト実数は、本欄へのreport-only commitで
+  追記する（作成時点で未確定のSHAはファイルへ記載しない）。
 
 ## 15. push・PR・mergeの状態
 
@@ -259,7 +263,11 @@ P4-D40が短絡合成（sorted → findFirst / flatMap → anyMatch / limit → 
   ユーザーのpush指示に基づいて`origin/phase-4`へpushされた。
 - **第2回独立レビュー時点で、`origin/phase-4`は`7a77a79`を指していた。**
   `2c6a864` / `7a77a79`は現在も`origin/phase-4`に存在する。
-- **第2回是正作業（本§17の対応）ではpushしていない**（第2回の是正commitは未push）。
+- **第2回是正作業（§17の対応）の間、Claude Codeはpushしていない**
+  （是正commit `693e8b2` / report-only `d8ab9ae`の作成まではローカルのみ）。
+  その後、ユーザーのpush指示に基づいて両commitが`origin/phase-4`へpushされた。
+- **第3回独立レビュー時点で、`origin/phase-4`は`d8ab9ae`を指していた。**
+- **第3回是正作業（§18の対応）ではpushしていない**（第3回の是正commitは未push）。
 - Pull Requestは作成していない。
 - `main`へのmergeは行っていない。
 - force push / amend / squash / rebase / reset / restore / stashは行っていない。
@@ -427,3 +435,57 @@ Phase 5の先行実装はしていない。
   未追跡は既知の指示書コピー2件（リポジトリ直下と`docs/`のPhase 3指示書）のみで、
   削除・変更・stage・コミットはしていない。第1回対応時に存在した複製docx
   （`docs/01-...-2-.docx`）は第2回対応開始時点で存在しなかった（当方は削除していない）。
+
+## 18. 第3回再レビュー対応（2026-08-08、HEAD `d8ab9ae`時点の指摘2件）
+
+判断の詳細は`docs/phase-4-decisions.md` §11。基準状態: 第3回独立レビュー時点で
+`origin/phase-4` = `d8ab9ae`（ローカルHEADと同一）。既存6 commit（`c17704c` / `02b4f99` /
+`2c6a864` / `7a77a79` / `693e8b2` / `d8ab9ae`）は改変していない。
+E2E capture helper・各E2E spec・当初4件の修正ロジック・既存72 IDの意味は無変更。
+Phase 5の先行実装はしていない。
+
+### 修正1: P4-O03のsuite構成判定が欠落を検出しない
+
+- 原因: `evaluateOracleIds`の`configOnlyP4Writes`が「P4以外の存在するsuiteが
+  writeReportPath: null」しか確認せず、P1-O01〜P3-O01がsuite構成から欠落しても
+  P4-O03と総合判定がPASSになり得た。
+- 修正: 必須suite判定`requiredSuitesPresent`を追加し、`REQUIRED_SUITE_IDS`
+  （P1-O01 / P2-O01 / P3-O01 / P4-O01）の各IDがsuite構成に**ちょうど1件**存在する
+  ことを実判定する（欠落・重複はFAIL）。書込み判定も強化し、writerがP4-O01ただ1件で
+  書込み先が`artifacts/phase-4/oracle-result.md`であることまで確認する。
+  P4-O03は「必須4 suiteが各1件存在」「書込みはP4のみ」「過去Phase証跡のSHA-256不変
+  （実測）」の3判定すべての成立で初めてPASSとなり、いずれかの不成立で総合判定と
+  `npm run test:oracle`がFAILになる。結果欄では前2者を**別々の実判定**として表示する。
+  固定文字列のPASSは出力しない。
+- 変更ファイル: `oracle/oracle-lib.mjs` / `tests/domain/p4-review.test.ts` /
+  `artifacts/phase-4/oracle-result.md`（`npm run test:oracle`再実行による生成。手修正なし。
+  `run-oracle.mjs`は評価結果をそのまま埋め込む構造のため変更不要だった）
+- 検証: P4-O03テストへ構成異常系を追加し成功 — P1-O01 / P2-O01 / P3-O01 / P4-O01の
+  各欠落 → O03 FAIL・総合FAIL、必須suiteの重複 → O03 FAIL、P1〜P3への書込み先設定 →
+  O03 FAIL、P4の書込み先異常 → O03 FAIL、正常な実SUITES構成 → O03 PASS、
+  結果欄への2判定の分離出力。新しいOracle IDは追加していない。
+
+### 修正2: 完了報告の件数訂正
+
+- §4の再レビュー追加分のit件数を最終実数へ更新: P4-D41: 2件 / P4-D42: 2件 /
+  P4-O02: 5件 / P4-O03: 4件（今回の構成異常系1件を含む）。
+- P4-O02 / O03の検証内容欄へ結果欄生成・FAIL伝播・レポート統合・suite欠落検出を明記。
+- §15のpush状態を時系列で区別して更新（第2回是正作業中はClaude Code未push →
+  ユーザー指示によるpush → 第3回独立レビュー時点`origin/phase-4` = `d8ab9ae`）。
+- 判断記録は`docs/phase-4-decisions.md`へ§11として追記（§1〜§10は無変更）。
+
+### 再検証結果（第3回是正後、すべて実測）
+
+| 項目 | 結果 |
+|---|---|
+| `npm run lint` / `npm run typecheck` | 成功（警告0） |
+| `npm run test:unit` | 成功（**36ファイル / 311件**、失敗・skip・todo 0） |
+| `npm run build` | 成功 |
+| `npm run test:e2e` | 成功（**50件**、失敗・skip 0） |
+| `npm run test:oracle` | P1-O01〜P4-O01 / P4-O02 / P4-O03 すべてPASS |
+| E2E前後のP1〜P3証跡SHA-256 | 26ファイル完全一致（diff空、復元操作なし） |
+| Oracle前後のP1〜P3証跡SHA-256 | 26ファイル完全一致（diff空） |
+| `git diff --check` | 問題なし |
+
+- 最終作業ツリー状態（コミット前）: 追跡対象の変更は今回の修正対象ファイルのみ。
+  未追跡は既知のPhase 3指示書コピー2件のみ（無変更で保持）。

@@ -85,9 +85,14 @@ export function allSuitesPassed(results) {
  * P4必須Oracle ID（P4-O01〜O03）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
  * - P4-O01: P4 suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
  * - P4-O02: verifyLongBoundaryStringsの実結果（期待値・実測値の双方がstringかつ正確な10進値）
- * - P4-O03: suite構成（P1〜P3はwriteReportPath: nullで照合のみ）と、
- *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果
+ * - P4-O03: 必須4 suite（P1-O01〜P4-O01）が各1件存在するsuite構成であること、
+ *           書込みがP4のみ（P1〜P3はwriteReportPath: nullで照合のみ）であること、
+ *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果、の3判定すべて
  */
+
+/** P4-O03が要求する必須suite ID（欠落・重複はFAIL） */
+export const REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01']
+
 export function evaluateOracleIds({
   suiteResults,
   expectedBoundary,
@@ -97,16 +102,25 @@ export function evaluateOracleIds({
 }) {
   const o01Passed = suiteResults.some((result) => result.id === 'P4-O01' && result.passed === true)
   const o02Passed = expectedBoundary?.ok === true && actualBoundary?.ok === true
+  // 必須4 suiteが各1件（ちょうど1件）存在すること。P1〜P3の欠落や重複はここでFAILになる
+  const requiredSuitesPresent = REQUIRED_SUITE_IDS.every(
+    (id) => suites.filter((suite) => suite.id === id).length === 1,
+  )
+  // 書込みはP4のみ: writerがP4-O01ただ1件で、書込み先がartifacts/phase-4/oracle-result.md、
+  // かつP4以外の全suiteがwriteReportPath: null（照合のみ）であること
   const writers = suites.filter((suite) => suite.writeReportPath != null)
   const configOnlyP4Writes =
     writers.length === 1 &&
     writers[0].id === 'P4-O01' &&
+    Array.isArray(writers[0].writeReportPath) &&
+    writers[0].writeReportPath.join('/') === 'artifacts/phase-4/oracle-result.md' &&
     suites.filter((suite) => suite.id !== 'P4-O01').every((suite) => suite.writeReportPath === null)
-  const o03Passed = configOnlyP4Writes && pastArtifactsUnchanged === true
+  const o03Passed = requiredSuitesPresent && configOnlyP4Writes && pastArtifactsUnchanged === true
   return {
     o01Passed,
     o02Passed,
     o03Passed,
+    requiredSuitesPresent,
     configOnlyP4Writes,
     overallPassed: o01Passed && o02Passed && o03Passed,
   }
@@ -128,7 +142,8 @@ export function buildOracleIdSection({ evaluation, expectedBoundary, actualBound
     '  - 比較方式: 10進文字列のまま完全一致比較（JavaScript numberへ変換せず、1桁も損失しない）',
     `  - string型・正確値の検証（期待値 / 実測値）: ${verdictOf(expectedBoundary?.ok === true)} / ${verdictOf(actualBoundary?.ok === true)}`,
     `- P4-O03: ${verdictOf(evaluation.o03Passed)}（Oracle証跡書込みのP4限定）`,
-    `  - suite構成: P1〜P3はwriteReportPath: nullの照合のみ（過去Phase artifactsへ書き込まない）: ${verdictOf(evaluation.configOnlyP4Writes)}`,
+    `  - 必須4 suite（${REQUIRED_SUITE_IDS.join(' / ')}）が各1件存在（欠落・重複なし）: ${verdictOf(evaluation.requiredSuitesPresent)}`,
+    `  - 書込みはP4のみ（P1〜P3はwriteReportPath: nullの照合のみ。書込み先はartifacts/phase-4/oracle-result.mdだけ）: ${verdictOf(evaluation.configOnlyP4Writes)}`,
     `  - 実行前後でartifacts/phase-1〜3のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
     `- 総合判定: ${verdictOf(evaluation.overallPassed)}（P4-O01〜O03のいずれかがFAILなら総合もFAIL）`,
   ]

@@ -301,6 +301,79 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
     expect(allSuitesPassed([])).toBe(false)
   })
 
+  it('P4-O03: 必須4 suiteの欠落・重複・書込み先異常をFAILと判定する（構成の厳密判定）', () => {
+    const okBoundary = { ok: true, reason: null }
+    const allPassed = [
+      { id: 'P1-O01', passed: true },
+      { id: 'P2-O01', passed: true },
+      { id: 'P3-O01', passed: true },
+      { id: 'P4-O01', passed: true },
+    ]
+    const evaluate = (suites: unknown) =>
+      evaluateOracleIds({
+        suiteResults: allPassed,
+        expectedBoundary: okBoundary,
+        actualBoundary: okBoundary,
+        pastArtifactsUnchanged: true,
+        suites,
+      })
+    // 正常な4 suite構成（実SUITES）→ O03 PASS
+    const normal = evaluate(SUITES)
+    expect(normal.requiredSuitesPresent).toBe(true)
+    expect(normal.o03Passed).toBe(true)
+    // P1-O01 / P2-O01 / P3-O01の各欠落 → O03 FAIL・総合FAIL（P4だけ残ってもPASSにしない）
+    for (const missingId of ['P1-O01', 'P2-O01', 'P3-O01']) {
+      const missing = evaluate(SUITES.filter((s) => s.id !== missingId))
+      expect(missing.requiredSuitesPresent, `${missingId} 欠落`).toBe(false)
+      expect(missing.o03Passed, `${missingId} 欠落`).toBe(false)
+      expect(missing.overallPassed, `${missingId} 欠落`).toBe(false)
+    }
+    // P4-O01の欠落もFAIL
+    const missingP4 = evaluate(SUITES.filter((s) => s.id !== 'P4-O01'))
+    expect(missingP4.requiredSuitesPresent).toBe(false)
+    expect(missingP4.o03Passed).toBe(false)
+    // 必須suiteの重複 → O03 FAIL（各1件でなければならない）
+    const duplicated = evaluate([...SUITES, SUITES.find((s) => s.id === 'P2-O01')!])
+    expect(duplicated.requiredSuitesPresent).toBe(false)
+    expect(duplicated.o03Passed).toBe(false)
+    // P1〜P3への書込み先設定 → O03 FAIL（構成の4件は揃っていても書込み範囲で失敗）
+    const p3Writes = evaluate(
+      SUITES.map((s) =>
+        s.id === 'P3-O01' ? { ...s, writeReportPath: ['artifacts', 'phase-3', 'oracle-result.md'] } : s,
+      ),
+    )
+    expect(p3Writes.requiredSuitesPresent).toBe(true)
+    expect(p3Writes.configOnlyP4Writes).toBe(false)
+    expect(p3Writes.o03Passed).toBe(false)
+    // P4の書込み先がartifacts/phase-4/oracle-result.md以外 → O03 FAIL
+    const wrongTarget = evaluate(
+      SUITES.map((s) =>
+        s.id === 'P4-O01' ? { ...s, writeReportPath: ['artifacts', 'phase-1', 'oracle-result.md'] } : s,
+      ),
+    )
+    expect(wrongTarget.configOnlyP4Writes).toBe(false)
+    expect(wrongTarget.o03Passed).toBe(false)
+    // レポートには「必須4 suiteが各1件存在」と「書込みはP4のみ」が別々の実判定として出力される
+    const missingSection = buildOracleIdSection({
+      evaluation: evaluate(SUITES.filter((s) => s.id !== 'P1-O01')),
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    }).join('\n')
+    expect(missingSection).toContain('必須4 suite（P1-O01 / P2-O01 / P3-O01 / P4-O01）が各1件存在（欠落・重複なし）: FAIL')
+    expect(missingSection).toContain('書込みはP4のみ')
+    expect(missingSection).toContain('P4-O03: FAIL')
+    expect(missingSection).toContain('総合判定: FAIL')
+    const normalSection = buildOracleIdSection({
+      evaluation: normal,
+      expectedBoundary: okBoundary,
+      actualBoundary: okBoundary,
+      pastArtifactsUnchanged: true,
+    }).join('\n')
+    expect(normalSection).toContain('必須4 suite（P1-O01 / P2-O01 / P3-O01 / P4-O01）が各1件存在（欠落・重複なし）: PASS')
+    expect(normalSection).toContain('P4-O03: PASS')
+  })
+
   it('P4-O03: 結果欄がsuite構成とP1〜P3証跡不変の実結果から生成され、レポートへ組み込まれる', () => {
     const okBoundary = { ok: true, reason: null }
     const allPassed = [
