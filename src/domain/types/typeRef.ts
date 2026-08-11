@@ -29,7 +29,14 @@ export type TypeRef =
 export const TYPE_EMPLOYEE: TypeRef = { kind: 'object', name: 'Employee' }
 export const TYPE_DEPARTMENT: TypeRef = { kind: 'object', name: 'Department' }
 export const TYPE_INT: TypeRef = { kind: 'primitive', name: 'int' }
+export const TYPE_LONG: TypeRef = { kind: 'primitive', name: 'long' }
+export const TYPE_DOUBLE: TypeRef = { kind: 'primitive', name: 'double' }
 export const TYPE_STRING: TypeRef = { kind: 'object', name: 'String' }
+/**
+ * wrapper Boolean（Phase 5指示 §6.3-1）。partitioningByの結果は`Map<Boolean, ...>`であり、
+ * primitiveの`boolean`（`{kind:'primitive', name:'boolean'}`）と混同しない。
+ */
+export const TYPE_BOOLEAN_WRAPPER: TypeRef = { kind: 'object', name: 'Boolean' }
 
 export function streamOf(elementType: TypeRef): TypeRef {
   return { kind: 'stream', elementType }
@@ -37,6 +44,18 @@ export function streamOf(elementType: TypeRef): TypeRef {
 
 export function listOf(elementType: TypeRef): TypeRef {
   return { kind: 'collection', container: 'List', elementType }
+}
+
+export function setOf(elementType: TypeRef): TypeRef {
+  return { kind: 'collection', container: 'Set', elementType }
+}
+
+export function mapOf(keyType: TypeRef, valueType: TypeRef): TypeRef {
+  return { kind: 'map', keyType, valueType }
+}
+
+export function optionalOf(elementType: TypeRef): TypeRef {
+  return { kind: 'optional', elementType }
 }
 
 /** Java表示用の型ラベルを導出する。 */

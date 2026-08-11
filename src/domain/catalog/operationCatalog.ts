@@ -40,6 +40,11 @@ export type TypeRule =
   | { readonly kind: 'fromMapper' }
   /** terminal結果型は入力Stream型とノード構成から導出する（Phase 4指示 §9。instantiateで解決） */
   | { readonly kind: 'fromTerminal' }
+  /**
+   * collect結果型はCollector ASTを再帰的にたどって内側から外側へ組み上げる
+   * （Phase 5指示 §7.2・§7.3。instantiateで解決）
+   */
+  | { readonly kind: 'fromCollector' }
   | {
       readonly kind: 'fixedPrimitiveStream'
       readonly name: 'IntStream' | 'LongStream' | 'DoubleStream'
@@ -114,6 +119,7 @@ export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): Type
     case 'fromSource':
     case 'fromMapper':
     case 'fromTerminal':
+    case 'fromCollector':
     case 'boxedWrapper':
       throw new Error(`rule ${rule.kind} はこの関数では解決できません`)
   }

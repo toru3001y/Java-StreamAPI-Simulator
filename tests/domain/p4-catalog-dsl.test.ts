@@ -65,8 +65,9 @@ describe('P4-D01 OperationCatalog（terminal）', () => {
     expect(catalog.get('anyMatch').visualizationKind).toBe('短絡検索・判定型')
     expect(catalog.get('toArray').visualizationKind).toBe('結果化型')
     expect(catalog.get('forEach').visualizationKind).toBe('結果化型')
-    // Phase 5のcollect / Collectorsは登録しない
-    expect(catalog.has('collect')).toBe(false)
+    // Phase 5でcollect（Collector）が実装され登録済みになったため期待値を反転した
+    // （Phase 5指示 §12の許可範囲。検証意味は「Catalog登録状態が現状と一致すること」を維持）
+    expect(catalog.has('collect')).toBe(true)
   })
 })
 

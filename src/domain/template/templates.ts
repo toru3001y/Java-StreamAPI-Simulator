@@ -47,6 +47,7 @@ import {
 } from '../catalog/operations'
 import { CONSUMER_ALLOWED_FIELDS } from '../dsl/consumerAst'
 import { EMPLOYEE_COMPARATOR_FIELDS } from '../dsl/comparatorAst'
+import { P5_TEMPLATES } from './templatesP5'
 
 /**
  * Phase 2までの定義済み教材template（§8、Phase 2指示 §8）。
@@ -1457,6 +1458,8 @@ export const ALL_TEMPLATES: readonly PipelineTemplate[] = [
   PEEK_MID_EMPTY_TEMPLATE,
   // ---- Phase 4 ----
   ...P4_TEMPLATES,
+  // ---- Phase 5（Collector・持越しtemplate） ----
+  ...P5_TEMPLATES,
 ]
 
 export function createDefaultTemplateRegistry(): TemplateRegistry {

@@ -763,3 +763,140 @@ summary:focus-visible {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---- Phase 5: Collector構造ツリー・Map / Collection結果（指示§10.2） ---- */
+.collector-structure {
+  overflow-x: auto;
+}
+
+.collector-tree {
+  list-style: none;
+  margin: 4px 0 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--color-border);
+}
+
+.collector-tree-root {
+  padding-left: 0;
+  border-left: none;
+}
+
+.collector-node {
+  margin: 4px 0;
+  min-width: 0;
+}
+
+.collector-node[data-active='true'] > .collector-node-head {
+  background: var(--color-active-bg);
+  border-radius: 4px;
+}
+
+.collector-node-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  padding: 2px 4px;
+}
+
+.collector-node-marker {
+  font-weight: 700;
+}
+
+.collector-node-label {
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.collector-node-types {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+.collector-node-template .collector-node-label {
+  opacity: 0.7;
+}
+
+.collector-accumulation,
+.collector-finisher,
+.collector-current-path {
+  margin: 2px 0 2px 18px;
+  font-size: 0.8rem;
+}
+
+.collector-acc-label {
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.collector-buckets {
+  list-style: none;
+  margin: 4px 0 0;
+  padding-left: 14px;
+}
+
+.collector-bucket {
+  margin: 4px 0;
+  padding: 2px 4px;
+  border-left: 2px dashed var(--color-border);
+}
+
+.collector-bucket[data-active='true'] {
+  background: var(--color-active-bg);
+}
+
+.collector-bucket-new {
+  margin-left: 6px;
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
+.collector-teeing {
+  margin: 4px 0 4px 18px;
+}
+
+.branch-state {
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 3px;
+}
+
+.map-entries {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+}
+
+.map-entries > li {
+  margin: 4px 0;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.map-key {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.map-value {
+  display: inline-block;
+  vertical-align: top;
+  min-width: 0;
+}
+
+.nested-list {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding-left: 16px;
+}
+
+.collection-meta,
+.record-name {
+  font-size: 0.8rem;
+  margin: 2px 0;
+}

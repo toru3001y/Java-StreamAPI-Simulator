@@ -5,6 +5,7 @@ import type {
   ScenarioProvider,
 } from './scenarioProvider'
 import { EMPTY_EMPLOYEES, STANDARD_EMPLOYEES } from '../domain/fixtures/employees'
+import { NUMERIC_COLLECTOR_TEMPLATE_IDS } from '../domain/template/templatesP5'
 import { DSL_VERSION } from '../domain/dsl/ast'
 import { deepFreeze } from '../domain/util/deepFreeze'
 import type { ScenarioRevision } from '../domain/types/ids'
@@ -60,6 +61,739 @@ function fx(
     provenance: PROVENANCE,
   }
 }
+
+/** Phase 5 Collector fixture（指示§8。標準Employee 4件を再利用する） */
+const nameMapper5 = { kind: 'fieldAccess', field: 'name' } as const
+const skillsMapper5 = { kind: 'fieldAccess', field: 'skills' } as const
+/** 途中0件modeのfilter Predicate（全件false: age >= 200） */
+const rejectAllPredicate = {
+  kind: 'fieldCompare',
+  field: 'age',
+  operator: 'GTE',
+  value: { type: 'int', value: 200 },
+} as const
+/** salary >= 5_000_000L（§8の基準Pipeline例） */
+const salaryGte5m = {
+  kind: 'fieldCompare',
+  field: 'salary',
+  operator: 'GTE',
+  value: { type: 'long', value: 5_000_000 },
+} as const
+/** age >= 30（partitioningByの基準Pipeline例） */
+const ageGte30 = {
+  kind: 'fieldCompare',
+  field: 'age',
+  operator: 'GTE',
+  value: { type: 'int', value: 30 },
+} as const
+const deptNameClassifier = { kind: 'departmentField', field: 'name' } as const
+const regionClassifier = { kind: 'employeeField', field: 'region' } as const
+const departmentClassifier = { kind: 'employeeDepartment' } as const
+
+const P5_FIXTURES: readonly FixtureDefinition[] = [
+  fx(
+    'tmpl-collect-tolist',
+    'standard',
+    'collect(toList())標準',
+    'Employee 4件をCollectors.toList()でListへ収集します。期待結果はList<Employee> 4件です。',
+    { 'slot-collector': { kind: 'toList' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tolist',
+    'emptySource',
+    'collect(toList())空ソース',
+    '入力0件のため空Listが確定します。',
+    { 'slot-collector': { kind: 'toList' } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tolist-midempty',
+    'midEmpty',
+    'collect(toList())途中0件',
+    'age >= 200で全件除外され、Collectorへは1件も届かず空Listが確定します。',
+    { 'slot-predicate-f': rejectAllPredicate, 'slot-collector': { kind: 'toList' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-toset',
+    'standard',
+    'collect(map + toSet())標準（関東の2件目で無変化）',
+    'regionへ変換してtoSet()へ収集します。期待結果は{関東, 関西, 中部}の3件で、高橋（関東）の追加ではSetが変化しません。',
+    { 'slot-mapper-1': { kind: 'fieldAccess', field: 'region' }, 'slot-collector': { kind: 'toSet' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-toset',
+    'emptySource',
+    'collect(toSet())空ソース',
+    '入力0件のため空Setが確定します。',
+    { 'slot-mapper-1': { kind: 'fieldAccess', field: 'region' }, 'slot-collector': { kind: 'toSet' } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tocollection',
+    'standard',
+    'collect(toCollection(ArrayList::new))標準',
+    'supplierでArrayListを生成し、4件のEmployeeを追加します。期待結果はList<Employee> 4件です。',
+    { 'slot-collector': { kind: 'toCollection', supplierId: 'ArrayList::new' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tocollection',
+    'emptySource',
+    'collect(toCollection(ArrayList::new))空ソース',
+    'supplierは適用されますが要素は追加されず、空のArrayListが確定します。',
+    { 'slot-collector': { kind: 'toCollection', supplierId: 'ArrayList::new' } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining',
+    'standard',
+    'collect(map + joining())標準',
+    'nameへ変換して区切りなしで連結します。期待結果は"佐藤鈴木高橋田中"です。',
+    { 'slot-mapper-1': nameMapper5, 'slot-collector': { kind: 'joining', delimiter: null, prefix: null, suffix: null } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining',
+    'emptySource',
+    'collect(joining())空ソース',
+    '入力0件のため結果は空文字列（""）です。',
+    { 'slot-mapper-1': nameMapper5, 'slot-collector': { kind: 'joining', delimiter: null, prefix: null, suffix: null } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining-delimiter',
+    'standard',
+    'collect(map + joining(", "))標準',
+    'nameへ変換して", "で連結します。期待結果は"佐藤, 鈴木, 高橋, 田中"です。',
+    {
+      'slot-mapper-1': nameMapper5,
+      'slot-collector': { kind: 'joining', delimiter: { type: 'string', value: ', ' }, prefix: null, suffix: null },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining-delimiter',
+    'emptySource',
+    'collect(joining(", "))空ソース',
+    '入力0件のため結果は空文字列（""）です。',
+    {
+      'slot-mapper-1': nameMapper5,
+      'slot-collector': { kind: 'joining', delimiter: { type: 'string', value: ', ' }, prefix: null, suffix: null },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining-full',
+    'standard',
+    'collect(map + joining(", ", "[", "]"))標準',
+    'nameへ変換し、prefix "[" とsuffix "]" を付けて連結します。期待結果は"[佐藤, 鈴木, 高橋, 田中]"です。',
+    {
+      'slot-mapper-1': nameMapper5,
+      'slot-collector': {
+        kind: 'joining',
+        delimiter: { type: 'string', value: ', ' },
+        prefix: { type: 'string', value: '[' },
+        suffix: { type: 'string', value: ']' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-joining-full',
+    'emptySource',
+    'collect(joining(", ", "[", "]"))空ソース',
+    '入力0件でもprefixとsuffixは付与され、結果は"[]"です（JDK 25実測）。',
+    {
+      'slot-mapper-1': nameMapper5,
+      'slot-collector': {
+        kind: 'joining',
+        delimiter: { type: 'string', value: ', ' },
+        prefix: { type: 'string', value: '[' },
+        suffix: { type: 'string', value: ']' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-counting',
+    'standard',
+    'collect(counting())標準',
+    '要素数を数えます。期待結果は4Lです。',
+    { 'slot-collector': { kind: 'counting' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-counting',
+    'emptySource',
+    'collect(counting())空ソース',
+    '入力0件のため結果は0Lです。',
+    { 'slot-collector': { kind: 'counting' } },
+    EMPTY_EMPLOYEES,
+  ),
+  // 数値集計（summing / averaging / summarizing × Int / Long / Double）
+  ...NUMERIC_COLLECTOR_TEMPLATE_IDS.flatMap(({ templateId, kind, field }) => [
+    fx(
+      templateId,
+      'standard',
+      `collect(${kind}(Employee::${field}))標準`,
+      `各Employeeの${field}を${kind}で集計します。`,
+      { 'slot-collector': { kind, field } },
+      STANDARD_EMPLOYEES,
+    ),
+    fx(
+      templateId,
+      'emptySource',
+      `collect(${kind}(Employee::${field}))空ソース`,
+      '入力0件のときの空結果（型別0 / 0.0 / 統計の正規初期値）を確認します。',
+      { 'slot-collector': { kind, field } },
+      EMPTY_EMPLOYEES,
+    ),
+  ]),
+  fx(
+    'tmpl-collect-minby',
+    'standard',
+    'collect(minBy(comparingInt(age)))標準',
+    'ageが最小のEmployeeを求めます。期待結果はOptional[鈴木]です。',
+    {
+      'slot-collector': {
+        kind: 'minBy',
+        comparator: { kind: 'employeeKeys', keys: [{ field: 'age', direction: 'ASC' }] },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-minby',
+    'emptySource',
+    'collect(minBy)空ソース',
+    '入力0件のため結果はOptional.empty()です。',
+    {
+      'slot-collector': {
+        kind: 'minBy',
+        comparator: { kind: 'employeeKeys', keys: [{ field: 'age', direction: 'ASC' }] },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-maxby',
+    'standard',
+    'collect(maxBy(comparingLong(salary)))標準',
+    'salaryが最大のEmployeeを求めます。期待結果はOptional[高橋]です。',
+    {
+      'slot-collector': {
+        kind: 'maxBy',
+        comparator: { kind: 'employeeKeys', keys: [{ field: 'salary', direction: 'ASC' }] },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-maxby',
+    'emptySource',
+    'collect(maxBy)空ソース',
+    '入力0件のため結果はOptional.empty()です。',
+    {
+      'slot-collector': {
+        kind: 'maxBy',
+        comparator: { kind: 'employeeKeys', keys: [{ field: 'salary', direction: 'ASC' }] },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-reducing',
+    'standard',
+    'collect(map + reducing((a, b) -> a + b))標準',
+    'nameへ変換してaccumulatorで連結します。期待結果はOptional[佐藤鈴木高橋田中]です。',
+    { 'slot-mapper-1': nameMapper5, 'slot-collector': { kind: 'reducing', reduction: { kind: 'stringConcat' } } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-reducing',
+    'emptySource',
+    'collect(reducing)空ソース',
+    '入力0件のため結果はOptional.empty()です。',
+    { 'slot-mapper-1': nameMapper5, 'slot-collector': { kind: 'reducing', reduction: { kind: 'stringConcat' } } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-mapping',
+    'standard',
+    'collect(groupingBy(部署名) + mapping(name, toList()))標準',
+    '部署名でグループ化し、各bucketではnameへ変換して収集します。期待結果は{開発部=[佐藤, 高橋], 営業部=[鈴木, 田中]}です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'mapping', mapper: nameMapper5, downstream: { kind: 'toList' } },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-mapping',
+    'emptySource',
+    'collect(groupingBy + mapping)空ソース',
+    '入力0件のため結果は空Mapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'mapping', mapper: nameMapper5, downstream: { kind: 'toList' } },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-filtering',
+    'standard',
+    'collect(groupingBy(部署名) + filtering(salary >= 5_000_000L, toList()))標準',
+    'bucket決定後にPredicateを評価します。期待結果は{開発部=[佐藤, 高橋], 営業部=[]}で、営業部が空bucketとして残ることがStream.filterとの差です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'filtering', predicate: salaryGte5m, downstream: { kind: 'toList' } },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-filtering',
+    'emptySource',
+    'collect(groupingBy + filtering)空ソース',
+    '入力0件のため結果は空Mapです（bucket自体が生成されません）。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'filtering', predicate: salaryGte5m, downstream: { kind: 'toList' } },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-flatmapping',
+    'standard',
+    'collect(groupingBy(部署名) + flatMapping(skills展開, toList()))標準',
+    'bucket内でskillsを展開しflattenして収集します。期待結果は{開発部=[Java, SQL, Java, 設計], 営業部=[営業, 英語, SQL, 分析]}です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'flatMapping', mapper: skillsMapper5, downstream: { kind: 'toList' } },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-flatmapping',
+    'emptySource',
+    'collect(groupingBy + flatMapping)空ソース',
+    '入力0件のため結果は空Mapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: deptNameClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'flatMapping', mapper: skillsMapper5, downstream: { kind: 'toList' } },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-collectingandthen',
+    'standard',
+    'collect(collectingAndThen(toList(), List::copyOf))標準',
+    'downstream完了後にfinisherを独立snapshotで適用します。期待結果はList<Employee> 4件です。',
+    {
+      'slot-collector': {
+        kind: 'collectingAndThen',
+        downstream: { kind: 'toList' },
+        finisherId: 'List::copyOf',
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-collectingandthen',
+    'emptySource',
+    'collect(collectingAndThen)空ソース',
+    '空のdownstream結果へfinisherが適用されます。',
+    {
+      'slot-collector': {
+        kind: 'collectingAndThen',
+        downstream: { kind: 'toList' },
+        finisherId: 'List::copyOf',
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby',
+    'standard',
+    'collect(groupingBy(Employee::department))標準',
+    'Department recordをキーにグループ化します。期待結果は開発部=[佐藤, 高橋]、営業部=[鈴木, 田中]です。キー等価はrecordの全フィールド比較です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: departmentClassifier,
+        mapFactoryId: null,
+        downstream: null,
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby',
+    'emptySource',
+    'collect(groupingBy)空ソース',
+    '入力0件のため結果は空Mapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: departmentClassifier,
+        mapFactoryId: null,
+        downstream: null,
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-midempty',
+    'midEmpty',
+    'collect(groupingBy)途中0件',
+    'age >= 200で全件除外され、bucketが1つも生成されず空Mapが確定します。',
+    {
+      'slot-predicate-f': rejectAllPredicate,
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: null,
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-counting',
+    'standard',
+    'collect(groupingBy(region) + counting())標準',
+    'regionでグループ化して件数を数えます。期待結果は{関東=2, 関西=1, 中部=1}です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'counting' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-counting',
+    'emptySource',
+    'collect(groupingBy + counting)空ソース',
+    '入力0件のため結果は空Mapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'counting' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-averaging',
+    'standard',
+    'collect(groupingBy(region) + averagingLong(salary))標準',
+    'regionごとのsalary平均を求めます。bucketごとにfinisherがbucket生成順で適用されます。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'averagingLong', field: 'salary' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-averaging',
+    'emptySource',
+    'collect(groupingBy + averagingLong)空ソース',
+    '入力0件のため結果は空Mapです（bucketがないためfinisherも発行されません）。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: { kind: 'averagingLong', field: 'salary' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-treemap',
+    'standard',
+    'collect(groupingBy(region, TreeMap::new, toList()))標準',
+    'classifier / mapFactory / downstreamを分離表示します。TreeMapのキー順（中部 → 関西 → 関東）で確定します。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: 'TreeMap::new',
+        downstream: { kind: 'toList' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-treemap',
+    'emptySource',
+    'collect(groupingBy + TreeMap)空ソース',
+    '入力0件のため結果は空TreeMapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: 'TreeMap::new',
+        downstream: { kind: 'toList' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-nested',
+    'standard',
+    'collect(nested groupingBy: department → region)標準',
+    '外側classifier → 内側groupingBy → 最終コンテナの経路を確認します。期待結果は開発部={関東=[佐藤, 高橋]}、営業部={関西=[鈴木], 中部=[田中]}です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: departmentClassifier,
+        mapFactoryId: null,
+        downstream: {
+          kind: 'groupingBy',
+          classifier: regionClassifier,
+          mapFactoryId: null,
+          downstream: null,
+        },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-groupingby-nested',
+    'emptySource',
+    'collect(nested groupingBy)空ソース',
+    '入力0件のため結果は空Mapです。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: departmentClassifier,
+        mapFactoryId: null,
+        downstream: {
+          kind: 'groupingBy',
+          classifier: regionClassifier,
+          mapFactoryId: null,
+          downstream: null,
+        },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-partitioningby',
+    'standard',
+    'collect(partitioningBy(age >= 30))標準',
+    'true / falseの2分岐を固定表示します。期待結果は{false=[鈴木, 田中], true=[佐藤, 高橋]}です。',
+    {
+      'slot-collector': { kind: 'partitioningBy', predicate: ageGte30, downstream: null },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-partitioningby',
+    'emptySource',
+    'collect(partitioningBy)空ソース（空partition）',
+    '入力0件でもtrue / false両キーを保持し、各downstreamは空Listになります。',
+    {
+      'slot-collector': { kind: 'partitioningBy', predicate: ageGte30, downstream: null },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-partitioningby-counting',
+    'standard',
+    'collect(partitioningBy(age >= 30) + counting())標準',
+    '各partitionでdownstreamを実行します。期待結果は{false=2, true=2}です。',
+    {
+      'slot-collector': {
+        kind: 'partitioningBy',
+        predicate: ageGte30,
+        downstream: { kind: 'counting' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-partitioningby-counting',
+    'emptySource',
+    'collect(partitioningBy + counting)空ソース',
+    '入力0件でも両キーを保持し、各downstreamは0Lになります。',
+    {
+      'slot-collector': {
+        kind: 'partitioningBy',
+        predicate: ageGte30,
+        downstream: { kind: 'counting' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-teeing',
+    'standard',
+    'collect(teeing(counting(), averagingLong(salary), SalarySummary::new))標準',
+    '同じEmployeeが左右両方のCollectorへ渡ります。期待結果はSalarySummary[employeeCount=4, averageSalary=5425000.0]です。',
+    {
+      'slot-collector': {
+        kind: 'teeing',
+        left: { kind: 'counting' },
+        right: { kind: 'averagingLong', field: 'salary' },
+        mergerId: 'SalarySummary::new',
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-teeing',
+    'emptySource',
+    'collect(teeing)空ソース',
+    '蓄積0件でも左右のfinisherとmergerが適用されます。期待結果はSalarySummary[employeeCount=0, averageSalary=0.0]です。',
+    {
+      'slot-collector': {
+        kind: 'teeing',
+        left: { kind: 'counting' },
+        right: { kind: 'averagingLong', field: 'salary' },
+        mergerId: 'SalarySummary::new',
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-teeing-midempty',
+    'midEmpty',
+    'collect(teeing)途中0件',
+    'age >= 200で全件除外されても、左右のfinisher×2とmerger 1回は適用されます。',
+    {
+      'slot-predicate-f': rejectAllPredicate,
+      'slot-collector': {
+        kind: 'teeing',
+        left: { kind: 'counting' },
+        right: { kind: 'averagingLong', field: 'salary' },
+        mergerId: 'SalarySummary::new',
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-triple',
+    'standard',
+    'collect(ArrayList::new, ArrayList::add, ArrayList::addAll)標準',
+    'supplierでArrayListを生成し、accumulatorで4件のEmployeeを直接追加します。combinerはsequential実行のため呼ばれません（定義表示のみ）。',
+    {
+      'slot-collect-triple': {
+        kind: 'collectTriple',
+        supplierId: 'ArrayList::new',
+        accumulatorId: 'ArrayList::add',
+        combinerId: 'ArrayList::addAll',
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-triple',
+    'emptySource',
+    'collect(3引数)空ソース',
+    'supplierは適用されますがaccumulatorは呼ばれず、空Listが確定します。',
+    {
+      'slot-collect-triple': {
+        kind: 'collectTriple',
+        supplierId: 'ArrayList::new',
+        accumulatorId: 'ArrayList::add',
+        combinerId: 'ArrayList::addAll',
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  // ---- Phase 3からの持越し: takeWhile / dropWhileのEmployee fieldCompare（指示§5.3） ----
+  fx(
+    'tmpl-takewhile-employee',
+    'standard',
+    'takeWhile標準（Employee: salary >= 5_000_000L）',
+    '佐藤（5_500_000）は通過し、鈴木（4_200_000）で境界到達して短絡します。高橋（7_200_000）はPredicateならtrueですが未評価のままです。期待結果は[佐藤]です。',
+    { 'slot-predicate-1': salaryGte5m },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-takewhile-employee',
+    'midEmpty',
+    'takeWhile途中0件（最初の要素がfalse）',
+    '先頭の鈴木（4_200_000）がfalseのため1件も通過せず短絡します。',
+    { 'slot-predicate-1': salaryGte5m },
+    [
+      STANDARD_EMPLOYEES[1],
+      STANDARD_EMPLOYEES[2],
+      STANDARD_EMPLOYEES[3],
+    ].filter((e): e is NonNullable<typeof e> => e !== undefined),
+  ),
+  fx(
+    'tmpl-takewhile-employee',
+    'emptySource',
+    'takeWhile空ソース',
+    '入力0件のためPredicateは一度も評価されず、空Listが確定します。',
+    { 'slot-predicate-1': salaryGte5m },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-dropwhile-employee',
+    'standard',
+    'dropWhile標準（Employee: salary >= 5_000_000L）',
+    '佐藤（5_500_000）をdropし、鈴木（4_200_000）で通過モードへ遷移します。以降はPredicateを再評価しません。期待結果は[鈴木, 高橋, 田中]です。',
+    { 'slot-predicate-1': salaryGte5m },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-dropwhile-employee',
+    'midEmpty',
+    'dropWhile途中0件（全要素がtrue）',
+    '佐藤・高橋はいずれもtrueのため全件dropされ、結果は空Listです。',
+    { 'slot-predicate-1': salaryGte5m },
+    [STANDARD_EMPLOYEES[0], STANDARD_EMPLOYEES[2]].filter(
+      (e): e is NonNullable<typeof e> => e !== undefined,
+    ),
+  ),
+  fx(
+    'tmpl-dropwhile-employee',
+    'emptySource',
+    'dropWhile空ソース',
+    '入力0件のためPredicateは一度も評価されず、空Listが確定します。',
+    { 'slot-predicate-1': salaryGte5m },
+    EMPTY_EMPLOYEES,
+  ),
+]
 
 const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
   // ---- Phase 1: filter ----
@@ -1307,6 +2041,8 @@ const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
       'slot-consumer': { kind: 'printValue' },
     },
   ),
+  // ---- Phase 5: Collector（指示§8） ----
+  ...P5_FIXTURES,
 ])
 
 export class FixtureScenarioProvider implements ScenarioProvider {

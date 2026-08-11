@@ -43,6 +43,23 @@ export type SnapshotKind =
   | 'STATISTICS_UPDATED'
   | 'ARRAY_ELEMENT_STORED'
   | 'CONSUMER_ACTION_PERFORMED'
+  // ---- Phase 5（Collector。指示§9.1、docs/phase-5-decisions.md §4.1） ----
+  /** supplier適用によるコンテナ生成確定 */
+  | 'CONTAINER_CREATED'
+  /** groupingBy classifierの評価確定（partitioningByのpredicateはPREDICATE_EVALUATEDを再利用） */
+  | 'CLASSIFIER_EVALUATED'
+  /** bucket決定確定（新規生成か既存かを区別して表示） */
+  | 'BUCKET_SELECTED'
+  /** コンテナ / bucketへの蓄積更新確定 */
+  | 'CONTAINER_UPDATED'
+  /** Collector finisher適用確定（collectingAndThen finisherを含む） */
+  | 'COLLECTOR_FINISHED'
+  /** teeingの左右branchの蓄積更新確定（activeBranchで左右を区別する） */
+  | 'TEE_BRANCH_ACCUMULATED'
+  /** teeingの左右branchのfinisher適用確定（R1 / R2を確定） */
+  | 'TEE_BRANCH_FINISHED'
+  /** teeing mergerの適用確定（R1・R2から最終結果Rを生成） */
+  | 'TEE_MERGER_APPLIED'
 
 /** 処理中パネルの表示内容（§12.3 処理中）。UIはこの確定値を描画するだけで独自計算しない。 */
 export interface ProcessingView {
@@ -95,6 +112,130 @@ export interface SortedOrderEntry {
   readonly id: ElementId
   readonly label: string
   readonly keyLabel: string
+}
+
+/**
+ * Collector蓄積状態の表示view（Phase 5指示 §6.3-3・§9.1）。
+ * `SimValue`をMap / コンテナ相当へ拡張せず、**表示用の構造化されたプレーンな木**として保持する
+ * （`structuredClone`可能・`deepFreeze`可能。Map / Set / 関数 / 循環参照を含めない）。
+ */
+export type CollectorAccumulationView =
+  /** 蓄積表現を持たないノード（mapping等のpass-through） */
+  | { readonly kind: 'NONE' }
+  /** 可変コンテナへの追加（toList / toSet / toCollection / 3引数collect） */
+  | {
+      readonly kind: 'ELEMENTS'
+      readonly containerLabel: string
+      readonly items: readonly SnapshotOutputItem[]
+      /** 直前の追加でコンテナが変化したか（toSetの重複無変化を表示するため） */
+      readonly changedByLast: boolean | null
+    }
+  /** joiningの現在連結文字列 */
+  | { readonly kind: 'TEXT'; readonly valueLabel: string }
+  /** counting / summing系の集約値 */
+  | { readonly kind: 'NUMBER'; readonly valueLabel: string }
+  /** averaging系の蓄積（合計・件数）と平均 */
+  | {
+      readonly kind: 'AVERAGE'
+      readonly sumLabel: string
+      readonly countLabel: string
+      readonly averageLabel: string | null
+    }
+  /** summarizing系の統計コンテナ */
+  | {
+      readonly kind: 'STATISTICS'
+      readonly countLabel: string
+      readonly sumLabel: string
+      readonly minLabel: string
+      readonly maxLabel: string
+      readonly averageLabel: string
+    }
+  /** minBy / maxBy / reducingの候補・accumulator */
+  | {
+      readonly kind: 'CANDIDATE'
+      readonly candidateLabel: string | null
+      readonly candidateElementId: ElementId | null
+      readonly updateCount: number
+    }
+  /** groupingBy / partitioningByのMap本体（bucketはCollectorNodeView.bucketsが持つ） */
+  | { readonly kind: 'MAP'; readonly containerLabel: string; readonly size: number }
+
+/** Collector finisherの状態（指示§9.1発行表・§9.3） */
+export interface CollectorFinisherView {
+  /** 表示ラベル（例: List::copyOf、joiningの連結確定、averageへの変換） */
+  readonly label: string
+  readonly state: 'PENDING' | 'APPLIED'
+  /** finisher適用前の値と型（適用前はnull） */
+  readonly beforeLabel: string | null
+  readonly beforeTypeLabel: string | null
+  readonly afterLabel: string | null
+  readonly afterTypeLabel: string | null
+}
+
+/** groupingBy / partitioningByのbucket（生成順で保持する。指示§9.1規則7） */
+export interface CollectorBucketView {
+  readonly keyLabel: string
+  /** キーの安定キー文字列（値等価。履歴復元・照合用） */
+  readonly keyRef: string
+  /** bucket生成順（1始まり） */
+  readonly createdSeq: number
+  /** 直前のbucket決定で新規生成されたか */
+  readonly createdByLast: boolean
+  readonly active: boolean
+  readonly node: CollectorNodeView
+}
+
+/** teeing固有context（docs/phase-5-decisions.md §6の契約項目） */
+export interface CollectorTeeingView {
+  readonly teeingNodeKey: string
+  readonly leftNodeKey: string
+  readonly rightNodeKey: string
+  readonly currentElementId: ElementId | null
+  readonly activeBranch: 'NONE' | 'LEFT' | 'RIGHT'
+  readonly leftState: 'PENDING' | 'ACCUMULATING' | 'ACCUMULATED' | 'FINISHED'
+  readonly rightState: 'PENDING' | 'ACCUMULATING' | 'ACCUMULATED' | 'FINISHED'
+  readonly leftAccumulationLabel: string
+  readonly rightAccumulationLabel: string
+  /** finisher適用後の結果R1 / R2（未確定はnull） */
+  readonly leftResultLabel: string | null
+  readonly rightResultLabel: string | null
+  readonly leftResultTypeLabel: string
+  readonly rightResultTypeLabel: string
+  /** merger DSL / 識別子（例: SalarySummary::new） */
+  readonly mergerLabel: string
+  readonly mergerApplied: boolean
+  /** 最終結果R（merger適用前はnull。先行表示しない） */
+  readonly finalResultLabel: string | null
+  readonly resultTypeLabel: string
+  /** 教材上のbranch表示順が左→右であること */
+  readonly branchDisplayOrderNote: string
+  /** 左→右がJDKの呼出し順保証ではない旨の注記（§11） */
+  readonly jdkOrderNote: string
+}
+
+/**
+ * Collector ASTノードのview（Draft v0.8 §12.3「Collector: AST、現在経路、
+ * ノード別蓄積、finisher状態」、§15.2「内側から外側へ組み上がる結果TypeRef」）。
+ */
+export interface CollectorNodeView {
+  /** AST上の安定パス（例: c0、c0.down、c0.left、c0.bucket#1.down） */
+  readonly nodeKey: string
+  readonly collectorKind: string
+  /** このノード単独の表示ラベル（例: Collectors.counting()） */
+  readonly label: string
+  readonly inputTypeLabel: string
+  readonly resultTypeLabel: string
+  /** 現在要素が通っているノードか（現在経路） */
+  readonly active: boolean
+  readonly accumulation: CollectorAccumulationView
+  /** finisher発行対象variantのみ非null（指示§9.1発行表） */
+  readonly finisher: CollectorFinisherView | null
+  /** 構造上のdownstream（groupingBy / partitioningByでは各bucketの雛形） */
+  readonly downstream: CollectorNodeView | null
+  readonly left: CollectorNodeView | null
+  readonly right: CollectorNodeView | null
+  readonly buckets: readonly CollectorBucketView[]
+  readonly teeing: CollectorTeeingView | null
 }
 
 export type OperationContextView =
@@ -241,6 +382,27 @@ export type OperationContextView =
       /** forEachとforEachOrderedの順序保証差の補助説明 */
       readonly orderingNote: string
     }
+  // ---- Phase 5: Collector固有状態（指示§9.1、Draft v0.8 §12.3・§12.5） ----
+  | {
+      readonly kind: 'collector'
+      readonly nodeId: NodeId
+      readonly op: 'collect' | 'collectTriple'
+      /** Collector構造ツリー（AST + ノード別蓄積 + 結果TypeRef + finisher状態） */
+      readonly root: CollectorNodeView
+      /** 現在経路（rootからのnodeKey列） */
+      readonly currentPath: readonly string[]
+      /** 現在経路の表示（例: 佐藤 → classifier → 関東 → counting） */
+      readonly currentPathLabel: string | null
+      /** 3引数collectのsupplier / accumulator / combiner（collectTripleのみ） */
+      readonly triple: {
+        readonly supplierId: string
+        readonly accumulatorId: string
+        readonly combinerId: string
+        /** sequential実行のためcombinerは実行済みのように表示しない（呼出し0回） */
+        readonly combinerCallCount: number
+        readonly combinerNote: string
+      } | null
+    }
 
 /**
  * Side Effect履歴entry（Phase 3指示 §7.8）。
@@ -307,6 +469,59 @@ export type TerminalResultView =
       readonly emptyNote: string | null
     }
   | { readonly kind: 'VOID' }
+  // ---- Phase 5: Collector結果（指示§9.5） ----
+  | {
+      /** toSet / toCollection用。toSetをLIST扱いにしない（重複排除と表示順注記を構造で保持する） */
+      readonly kind: 'COLLECTION'
+      /** コンテナ表示名（Set / ArrayList / List等） */
+      readonly containerLabel: string
+      readonly elementTypeLabel: string
+      readonly size: number
+      /** 安定elementId参照 + 表示ラベルの列 */
+      readonly items: readonly SnapshotOutputItem[]
+      /** 表示順が学習用projectionである旨のメタ情報（JDK順序意味論を持つ場合はnull） */
+      readonly displayOrderNote: string | null
+      /**
+       * Setの要素ID規則の注記。等価値が複数の入力要素から集約される場合は
+       * 最初に受理した入力要素のelementIdを保持し、後続の等価値追加では置換しない。
+       * これは表示・履歴復元用の教材規約であり、JDKのSet内部動作やiteration order保証ではない。
+       */
+      readonly elementIdNote: string | null
+    }
+  | {
+      /** groupingBy / partitioningBy用 */
+      readonly kind: 'MAP'
+      /** Map表示型（Map / TreeMap） */
+      readonly containerLabel: string
+      readonly keyTypeLabel: string
+      readonly valueTypeLabel: string
+      readonly size: number
+      readonly entries: readonly CollectorMapEntryView[]
+      /** JDKの順序意味論を持つか（TreeMap等）。falseなら学習用表示順 */
+      readonly jdkOrdered: boolean
+      readonly displayOrderNote: string | null
+    }
+  | {
+      /** teeing用（merger結果record） */
+      readonly kind: 'RECORD'
+      readonly recordName: string
+      readonly fields: readonly {
+        readonly name: string
+        readonly typeLabel: string
+        readonly valueLabel: string
+      }[]
+    }
+
+/**
+ * Mapのentry（§9.5）。値はdownstream結果として**入れ子のresult view構造**を持つ
+ * （nested groupingByではvalueがMAP、groupingBy + countingではSCALAR等）。
+ */
+export interface CollectorMapEntryView {
+  readonly keyLabel: string
+  /** キーの安定キー文字列（値等価。履歴復元・Oracle照合の正規化に使用） */
+  readonly keyRef: string
+  readonly value: TerminalResultView
+}
 
 export interface SnapshotOutput {
   readonly elementIds: readonly ElementId[]

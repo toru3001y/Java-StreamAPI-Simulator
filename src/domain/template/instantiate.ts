@@ -3,6 +3,14 @@ import type { ParameterSlot } from './pipelineTemplate'
 import type { OperationCatalog } from '../catalog/operationCatalog'
 import { resolveTypeRule } from '../catalog/operationCatalog'
 import type { DslPredicate } from '../dsl/ast'
+import type { CollectTripleDsl, CollectorDsl } from '../dsl/collectorAst'
+import { collectorKindsOf } from '../dsl/collectorAst'
+import {
+  resolveCollectTripleType,
+  resolveCollectorType,
+  validateCollectTriple,
+  validateCollectorStructure,
+} from '../dsl/validateCollector'
 import type { ComparatorDsl } from '../dsl/comparatorAst'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
@@ -349,6 +357,8 @@ export function instantiateTemplate(
   const reductions = new Map<SlotId, ReductionDsl>()
   const identities = new Map<SlotId, ReductionIdentity>()
   const arrayGenerators = new Map<SlotId, ArrayGeneratorDsl>()
+  const collectors = new Map<SlotId, CollectorDsl>()
+  const collectTriples = new Map<SlotId, CollectTripleDsl>()
   for (const slot of template.parameterSlots) {
     const raw = input.dslParameters[slot.slotId]
     if (raw === undefined) continue
@@ -383,6 +393,14 @@ export function instantiateTemplate(
     } else if (slot.kind === 'arrayGenerator') {
       const result = validateArrayGenerator(raw, `dslParameters.${slot.slotId}`)
       if (result.ok) arrayGenerators.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'collector') {
+      const result = validateCollectorStructure(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) collectors.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'collectTriple') {
+      const result = validateCollectTriple(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) collectTriples.set(slot.slotId, result.value)
       else structureIssues.push(...result.issues)
     }
   }
@@ -502,6 +520,21 @@ export function instantiateTemplate(
           ),
         )
       }
+    } else if (slot.kind === 'collector') {
+      const collector = collectors.get(slot.slotId)
+      if (!collector) continue
+      // AST中の全ノードのcollectorKindがslotの許可範囲内であることを検証する（入れ子を含む）
+      for (const kind of new Set(collectorKindsOf(collector))) {
+        if (!slot.allowedCollectorKinds.includes(kind)) {
+          whitelistIssues.push(
+            issue(
+              'WHITELIST_KIND',
+              `このslotで許可されていないcollector kindです: ${kind}`,
+              `dslParameters.${slot.slotId}`,
+            ),
+          )
+        }
+      }
     }
   }
   if (whitelistIssues.length > 0) return fail(whitelistIssues)
@@ -522,6 +555,8 @@ export function instantiateTemplate(
   const reductionsByNode = new Map<string, ReductionDsl>()
   const identitiesByNode = new Map<string, ReductionIdentity>()
   const arrayGeneratorsByNode = new Map<string, ArrayGeneratorDsl>()
+  const collectorsByNode = new Map<string, CollectorDsl>()
+  const collectTriplesByNode = new Map<string, CollectTripleDsl>()
   for (const slot of template.parameterSlots) {
     if (slot.kind === 'predicate') {
       const p = predicates.get(slot.slotId)
@@ -547,6 +582,12 @@ export function instantiateTemplate(
     } else if (slot.kind === 'arrayGenerator') {
       const g = arrayGenerators.get(slot.slotId)
       if (g) arrayGeneratorsByNode.set(slot.targetNodeId, g)
+    } else if (slot.kind === 'collector') {
+      const c = collectors.get(slot.slotId)
+      if (c) collectorsByNode.set(slot.targetNodeId, c)
+    } else if (slot.kind === 'collectTriple') {
+      const c = collectTriples.get(slot.slotId)
+      if (c) collectTriplesByNode.set(slot.targetNodeId, c)
     }
   }
 
@@ -658,6 +699,48 @@ export function instantiateTemplate(
           consumer: consumersByNode.get(node.nodeId) ?? null,
           arrayGenerator: arrayGeneratorsByNode.get(node.nodeId) ?? null,
         })
+        if (!resolved.ok) return fail(resolved.issues)
+        outputType = resolved.value
+        break
+      }
+      case 'fromCollector': {
+        // Collector ASTを再帰的にたどり、内側から外側へ結果TypeRefを組み上げる（§7.2・§7.3）
+        if (!currentType || currentType.kind !== 'stream') {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `node ${node.nodeId}（${op.displayName}）はobject Streamの入力が必要です（primitive特化Streamのcollectは対象外）`,
+              `nodes.${node.nodeId}`,
+            ),
+          ])
+        }
+        const collector = collectorsByNode.get(node.nodeId) ?? null
+        const triple = collectTriplesByNode.get(node.nodeId) ?? null
+        if (node.operationId === 'collect') {
+          if (!collector) {
+            return fail([
+              issue('SLOT_MISSING', `node ${node.nodeId}にCollectorがありません`, `nodes.${node.nodeId}`),
+            ])
+          }
+          const resolved = resolveCollectorType(
+            collector,
+            currentType.elementType,
+            `nodes.${node.nodeId}.collector`,
+          )
+          if (!resolved.ok) return fail(resolved.issues)
+          outputType = resolved.value
+          break
+        }
+        if (!triple) {
+          return fail([
+            issue('SLOT_MISSING', `node ${node.nodeId}に3引数collectの定義がありません`, `nodes.${node.nodeId}`),
+          ])
+        }
+        const resolved = resolveCollectTripleType(
+          triple,
+          currentType.elementType,
+          `nodes.${node.nodeId}.collectTriple`,
+        )
         if (!resolved.ok) return fail(resolved.issues)
         outputType = resolved.value
         break
@@ -805,6 +888,8 @@ export function instantiateTemplate(
       // sequential実行ではcombinerは呼ばれない（§6.1）
       hasCombiner: reduction?.kind === 'employeeFieldSum',
       arrayGenerator: arrayGeneratorsByNode.get(node.nodeId) ?? null,
+      collector: collectorsByNode.get(node.nodeId) ?? null,
+      collectTriple: collectTriplesByNode.get(node.nodeId) ?? null,
       inputType: currentType,
       outputType,
       lineId: lineIdForNode(node.nodeId),
@@ -1042,6 +1127,8 @@ export function instantiateTemplate(
       identity: n.identity,
       hasCombiner: n.hasCombiner,
       arrayGenerator: n.arrayGenerator,
+      collector: n.collector,
+      collectTriple: n.collectTriple,
     })),
     resultType: terminalNode.outputType,
   })

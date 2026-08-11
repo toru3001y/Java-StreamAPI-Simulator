@@ -53,7 +53,7 @@ afterEach(() => {
 })
 
 describe('P4 React統合', () => {
-  it('P4-R01: Phase 4の終端操作が選択可能で、Phase 5以降だけが未実装表示', async () => {
+  it('P4-R01: Phase 4の終端操作とPhase 5のCollector操作が選択可能で、未実装リストが空である', async () => {
     const user = userEvent.setup()
     renderApp()
     const select = screen.getByTestId('operation-select') as HTMLSelectElement
@@ -79,12 +79,15 @@ describe('P4 React統合', () => {
       expect(byValue(op), op).toBeDefined()
       expect(byValue(op)?.disabled, op).toBe(false)
     }
-    // Phase 5以降だけが未実装
+    // Phase 5指示§10.1により、Phase 5の未実装項目は0件へ移行した。
+    // 「Phase 5で実装予定」文言の検証を「未実装リストが空・空optgroup非描画・
+    // Collector操作が選択可能」の検証へ更新する（Phase 4終端の検証意味は上で維持）
     const unimplemented = options.filter((o) => o.value.startsWith('unimplemented-'))
-    expect(unimplemented.length).toBeGreaterThanOrEqual(7)
-    for (const o of unimplemented) {
-      expect(o.disabled).toBe(true)
-      expect(o.textContent).toMatch(/Phase 5で実装予定/)
+    expect(unimplemented).toHaveLength(0)
+    expect(within(screen.getByTestId('operation-select')).queryByText(/未実装/)).toBeNull()
+    for (const op of ['collect', 'collectTriple']) {
+      expect(byValue(op), op).toBeDefined()
+      expect(byValue(op)?.disabled, op).toBe(false)
     }
     // 終端操作を選択するとscenarioが切替わる
     await selectOperation(user, 'count')

@@ -1,5 +1,6 @@
 import type { OperationContextView } from '../../domain/engine/snapshot'
 import type { Snapshot } from '../../domain/engine/snapshot'
+import { CollectorStructurePanel } from './CollectorStructurePanel'
 
 const SORTED_PHASE_LABELS = {
   BUFFERING: 'buffer蓄積中',
@@ -413,6 +414,8 @@ export function OperationStatePanel({ snapshot }: { snapshot: Snapshot }) {
             return <ArrayContext key={ctx.nodeId} ctx={ctx} />
           case 'forEach':
             return <ForEachContext key={ctx.nodeId} ctx={ctx} />
+          case 'collector':
+            return <CollectorStructurePanel key={ctx.nodeId} ctx={ctx} />
         }
       })}
     </div>

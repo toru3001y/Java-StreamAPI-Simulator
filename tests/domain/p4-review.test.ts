@@ -27,7 +27,30 @@ import { finalSnapshot } from '../p3-helpers'
  * P4-D42: string identityの正しいJava文字列リテラル生成
  * P4-O02: Long境界値の損失なしOracle照合
  * P4-O03: P1〜P3は照合のみ・P4だけ証跡を書き込むことの検証
+ *
+ * Phase 5でOracle suite構成が変わった（5 suite・P5単独書込み）ため、P4-O03の構成検証は
+ * **Phase 4時点の構成をfixture（P4_SUITES_FIXTURE）として固定**し、同じ契約を検証し続ける
+ * （Phase 5指示 §12冒頭。検証意味は変更・緩和しない）。
+ * ライブ構成の検証はP5-O02（tests/domain/p5-review.test.ts）が担う。
  */
+
+/** Phase 4時点のOracle suite構成（必須4 suite各1件・P4のみが証跡を書き込む） */
+const P4_SUITES_FIXTURE: readonly {
+  id: string
+  javaFile: string
+  expectedFile: string
+  writeReportPath: readonly string[] | null
+}[] = [
+  { id: 'P1-O01', javaFile: 'OracleP1.java', expectedFile: 'expected-from-core.json', writeReportPath: null },
+  { id: 'P2-O01', javaFile: 'OracleP2.java', expectedFile: 'expected-p2-from-core.json', writeReportPath: null },
+  { id: 'P3-O01', javaFile: 'OracleP3.java', expectedFile: 'expected-p3-from-core.json', writeReportPath: null },
+  {
+    id: 'P4-O01',
+    javaFile: 'OracleP4.java',
+    expectedFile: 'expected-p4-from-core.json',
+    writeReportPath: ['artifacts', 'phase-4', 'oracle-result.md'],
+  },
+]
 
 describe('P4-D41 Terminal DSLのclosed schema検証', () => {
   it('P4-D41: 未知の追加フィールド（任意コード文字列の混入経路）を拒否する', () => {
@@ -264,23 +287,31 @@ describe('P4-O02 Long境界値の損失なしOracle照合', () => {
 
 describe('P4-O03 Oracle証跡の書込み対象', () => {
   it('P4-O03: P1〜P4すべてが照合対象で、証跡を書き込むのはP4だけである', () => {
-    // P1〜P4のすべてが照合対象
-    expect(SUITES.map((s) => s.id)).toEqual(['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01'])
+    // Phase 5でsuite構成が変わったため、Phase 4時点の構成をfixtureとして固定し
+    // 同じ契約（必須4 suite各1件・P4のみが書込み）を検証し続ける（Phase 5指示 §12冒頭）。
+    // ライブ構成（5 suite・P5単独書込み）の検証はP5-O02（tests/domain/p5-review.test.ts）が担う。
+    expect(P4_SUITES_FIXTURE.map((s) => s.id)).toEqual(['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01'])
     // P1〜P3は証跡ファイルを書き込まない（writeReportPath: null）
     for (const id of ['P1-O01', 'P2-O01', 'P3-O01']) {
-      const suite = SUITES.find((s) => s.id === id)!
+      const suite = P4_SUITES_FIXTURE.find((s) => s.id === id)!
       expect(suite.writeReportPath, id).toBeNull()
     }
     // P4だけがartifacts/phase-4/oracle-result.mdを書き込む
-    const p4 = SUITES.find((s) => s.id === 'P4-O01')!
+    const p4 = P4_SUITES_FIXTURE.find((s) => s.id === 'P4-O01')!
     expect(p4.writeReportPath).toEqual(['artifacts', 'phase-4', 'oracle-result.md'])
-    const writers = SUITES.filter((s) => s.writeReportPath !== null)
+    const writers = P4_SUITES_FIXTURE.filter((s) => s.writeReportPath !== null)
     expect(writers).toHaveLength(1)
     expect(writers[0]?.id).toBe('P4-O01')
     // 書込み先はphase-4配下のみ（phase-1〜3へは書き込まない）
     for (const suite of writers) {
       expect(suite.writeReportPath?.join('/')).toContain('phase-4')
       expect(suite.writeReportPath?.join('/')).not.toMatch(/phase-[123]/)
+    }
+    // Phase 4時点のjavaFile / expectedFile構成もライブ定義と一致していること（回帰）
+    for (const suite of P4_SUITES_FIXTURE) {
+      const live = SUITES.find((s) => s.id === suite.id)!
+      expect(live.javaFile, suite.id).toBe(suite.javaFile)
+      expect(live.expectedFile, suite.id).toBe(suite.expectedFile)
     }
   })
 
@@ -318,27 +349,27 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
         suites,
       })
     // 正常な4 suite構成（実SUITES）→ O03 PASS
-    const normal = evaluate(SUITES)
+    const normal = evaluate(P4_SUITES_FIXTURE)
     expect(normal.requiredSuitesPresent).toBe(true)
     expect(normal.o03Passed).toBe(true)
     // P1-O01 / P2-O01 / P3-O01の各欠落 → O03 FAIL・総合FAIL（P4だけ残ってもPASSにしない）
     for (const missingId of ['P1-O01', 'P2-O01', 'P3-O01']) {
-      const missing = evaluate(SUITES.filter((s) => s.id !== missingId))
+      const missing = evaluate(P4_SUITES_FIXTURE.filter((s) => s.id !== missingId))
       expect(missing.requiredSuitesPresent, `${missingId} 欠落`).toBe(false)
       expect(missing.o03Passed, `${missingId} 欠落`).toBe(false)
       expect(missing.overallPassed, `${missingId} 欠落`).toBe(false)
     }
     // P4-O01の欠落もFAIL
-    const missingP4 = evaluate(SUITES.filter((s) => s.id !== 'P4-O01'))
+    const missingP4 = evaluate(P4_SUITES_FIXTURE.filter((s) => s.id !== 'P4-O01'))
     expect(missingP4.requiredSuitesPresent).toBe(false)
     expect(missingP4.o03Passed).toBe(false)
     // 必須suiteの重複 → O03 FAIL（各1件でなければならない）
-    const duplicated = evaluate([...SUITES, SUITES.find((s) => s.id === 'P2-O01')!])
+    const duplicated = evaluate([...P4_SUITES_FIXTURE, P4_SUITES_FIXTURE.find((s) => s.id === 'P2-O01')!])
     expect(duplicated.requiredSuitesPresent).toBe(false)
     expect(duplicated.o03Passed).toBe(false)
     // P1〜P3への書込み先設定 → O03 FAIL（構成の4件は揃っていても書込み範囲で失敗）
     const p3Writes = evaluate(
-      SUITES.map((s) =>
+      P4_SUITES_FIXTURE.map((s) =>
         s.id === 'P3-O01' ? { ...s, writeReportPath: ['artifacts', 'phase-3', 'oracle-result.md'] } : s,
       ),
     )
@@ -347,7 +378,7 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
     expect(p3Writes.o03Passed).toBe(false)
     // P4の書込み先がartifacts/phase-4/oracle-result.md以外 → O03 FAIL
     const wrongTarget = evaluate(
-      SUITES.map((s) =>
+      P4_SUITES_FIXTURE.map((s) =>
         s.id === 'P4-O01' ? { ...s, writeReportPath: ['artifacts', 'phase-1', 'oracle-result.md'] } : s,
       ),
     )
@@ -355,7 +386,7 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
     expect(wrongTarget.o03Passed).toBe(false)
     // レポートには「必須4 suiteが各1件存在」と「書込みはP4のみ」が別々の実判定として出力される
     const missingSection = buildOracleIdSection({
-      evaluation: evaluate(SUITES.filter((s) => s.id !== 'P1-O01')),
+      evaluation: evaluate(P4_SUITES_FIXTURE.filter((s) => s.id !== 'P1-O01')),
       expectedBoundary: okBoundary,
       actualBoundary: okBoundary,
       pastArtifactsUnchanged: true,
@@ -382,12 +413,13 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
       { id: 'P3-O01', passed: true },
       { id: 'P4-O01', passed: true },
     ]
-    // PASS側: 実SUITES構成（P4のみ書込み）+ SHA-256不変の実測true
+    // PASS側: Phase 4時点のsuite構成（P4のみ書込み）+ SHA-256不変の実測true
     const passEval = evaluateOracleIds({
       suiteResults: allPassed,
       expectedBoundary: okBoundary,
       actualBoundary: okBoundary,
       pastArtifactsUnchanged: true,
+      suites: P4_SUITES_FIXTURE,
     })
     expect(passEval).toMatchObject({
       o01Passed: true,
@@ -402,11 +434,12 @@ describe('P4-O03 Oracle証跡の書込み対象', () => {
       expectedBoundary: okBoundary,
       actualBoundary: okBoundary,
       pastArtifactsUnchanged: false,
+      suites: P4_SUITES_FIXTURE,
     })
     expect(changedEval.o03Passed).toBe(false)
     expect(changedEval.overallPassed).toBe(false)
     // FAIL側2: P1〜P3へ書き込むsuite構成はO03をFAILにする
-    const badSuites = SUITES.map((suite) =>
+    const badSuites = P4_SUITES_FIXTURE.map((suite) =>
       suite.id === 'P1-O01'
         ? { ...suite, writeReportPath: ['artifacts', 'phase-1', 'oracle-result.md'] }
         : suite,

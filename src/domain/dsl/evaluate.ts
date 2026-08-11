@@ -17,15 +17,20 @@ function compareByOperator(operator: string, left: number, right: number): boole
   }
 }
 
+/** 数値比較に使えるliteral型（int / long。型整合はvalidateTypesで保証済み） */
+function numericLiteralValue(predicate: DslPredicate): number {
+  if (predicate.value.type !== 'int' && predicate.value.type !== 'long') {
+    throw new Error(`unsupported literal type: ${predicate.value.type}`)
+  }
+  return predicate.value.value
+}
+
 export function evaluatePredicate(predicate: DslPredicate, employee: EmployeeValue): boolean {
   if (predicate.kind !== 'fieldCompare') {
     throw new Error(`unsupported predicate kind: ${predicate.kind}`)
   }
-  const fieldValue = readIntField(predicate.field, employee)
-  if (predicate.value.type !== 'int') {
-    throw new Error(`unsupported literal type: ${predicate.value.type}`)
-  }
-  return compareByOperator(predicate.operator, fieldValue, predicate.value.value)
+  const fieldValue = readNumericField(predicate.field, employee)
+  return compareByOperator(predicate.operator, fieldValue, numericLiteralValue(predicate))
 }
 
 /** currentValueCompareで比較可能な数値SimValueを取り出す（Phase 3指示 §6.2） */
@@ -54,7 +59,7 @@ export function predicateComparisonValue(predicate: DslPredicate, value: SimValu
     if (value.kind !== 'employee') {
       throw new Error('fieldCompareはEmployee要素が必要です')
     }
-    return readIntField(predicate.field, value.value)
+    return readNumericField(predicate.field, value.value)
   }
   return numericValueOf(value)
 }
@@ -64,21 +69,26 @@ export function predicateComparisonValue(predicate: DslPredicate, value: SimValu
  * fieldCompareはEmployee要素、currentValueCompareはprimitive / wrapper要素へ適用する。
  */
 export function evaluateValuePredicate(predicate: DslPredicate, value: SimValue): boolean {
-  if (predicate.value.type !== 'int') {
-    throw new Error(`unsupported literal type: ${predicate.value.type}`)
-  }
   return compareByOperator(
     predicate.operator,
     predicateComparisonValue(predicate, value),
-    predicate.value.value,
+    numericLiteralValue(predicate),
   )
 }
 
-function readIntField(field: string, employee: EmployeeValue): number {
+/**
+ * Predicateが比較するEmployeeの数値field（Phase 5でsalary / evaluationへ拡張）。
+ * field型とliteral型の整合はvalidateTypes（§9.3手順4）で事前に保証される。
+ */
+function readNumericField(field: string, employee: EmployeeValue): number {
   switch (field) {
     case 'age':
       return employee.age
+    case 'salary':
+      return employee.salary
+    case 'evaluation':
+      return employee.evaluation
     default:
-      throw new Error(`unsupported int field: ${field}`)
+      throw new Error(`unsupported numeric field: ${field}`)
   }
 }

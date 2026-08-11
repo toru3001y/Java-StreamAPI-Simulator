@@ -2,7 +2,7 @@ import type { DslPredicate, DslProfile } from './ast'
 import type { Result, ValidationIssue } from '../types/result'
 import { fail, issue, ok } from '../types/result'
 import { EMPLOYEE_FIELDS } from '../model/employee'
-import { typeRefEquals, TYPE_INT } from '../types/typeRef'
+import { typeRefEquals, TYPE_INT, TYPE_LONG } from '../types/typeRef'
 
 /**
  * DSL検証（§9.3の手順1・3・4に対応）。
@@ -44,6 +44,19 @@ export function validateStructure(input: unknown, path = 'predicate'): Result<Ds
           issue(
             'TYPE_MISMATCH',
             `int定数はJava intの範囲（${INT32_MIN}〜${INT32_MAX}）が必要です: ${v['value']}`,
+            `${path}.value.value`,
+          ),
+        )
+      }
+    } else if (v['type'] === 'long') {
+      // long定数（Phase 5指示 §8）。JavaScript numberで安全に表現できる整数だけを許可する
+      if (typeof v['value'] !== 'number' || !Number.isInteger(v['value'])) {
+        issues.push(issue('STRUCTURE_INVALID', 'long定数のvalueは整数が必要です', `${path}.value.value`))
+      } else if (!Number.isSafeInteger(v['value'])) {
+        issues.push(
+          issue(
+            'TYPE_MISMATCH',
+            `long定数はsafe integer範囲が必要です: ${v['value']}`,
             `${path}.value.value`,
           ),
         )
@@ -118,6 +131,19 @@ export function validateTypes(predicate: DslPredicate, path = 'predicate'): Resu
         issue(
           'TYPE_MISMATCH',
           `field ${predicate.field}（${fieldInfo.javaType.kind === 'primitive' ? fieldInfo.javaType.name : 'object'}型）とint定数は比較できません`,
+          `${path}.value`,
+        ),
+      ])
+    }
+    return ok(predicate)
+  }
+  if (predicate.value.type === 'long') {
+    // long定数はlong fieldにのみ適用する（Phase 5指示 §8のsalary基準例）
+    if (!typeRefEquals(fieldInfo.javaType, TYPE_LONG)) {
+      return fail([
+        issue(
+          'TYPE_MISMATCH',
+          `field ${predicate.field}（${fieldInfo.javaType.kind === 'primitive' ? fieldInfo.javaType.name : 'object'}型）とlong定数は比較できません`,
           `${path}.value`,
         ),
       ])
