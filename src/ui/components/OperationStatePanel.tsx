@@ -217,6 +217,165 @@ function PeekContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'peek
   )
 }
 
+// ---- Phase 4: terminal固有状態（指示§12） ----
+
+function ReduceContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'reduce' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-reduce" data-node-id={ctx.nodeId}>
+      <h4>reduceの状態</h4>
+      <p className="op-context-code">
+        <code data-testid="reduce-expression">{ctx.expression}</code>
+      </p>
+      {ctx.identityLabel !== null && (
+        <p data-testid="reduce-identity">
+          identity: <code>{ctx.identityLabel}</code>
+        </p>
+      )}
+      <p data-testid="reduce-accumulator">
+        現在の累積値: {ctx.accumulatorLabel ?? '（未初期化）'}
+      </p>
+      {ctx.history.length > 0 && (
+        <>
+          <p className="op-context-label">accumulator履歴（{ctx.stepCount}回）</p>
+          <ol className="op-context-list" data-testid="reduce-history">
+            {ctx.history.map((h) => (
+              <li key={h.seq}>
+                #{h.seq} {h.beforeLabel === null ? `初期値 = ${h.afterLabel}` : `${h.beforeLabel} + 要素 → ${h.afterLabel}`}
+                <span className="op-context-key">{h.inputLabel}</span>
+              </li>
+            ))}
+          </ol>
+        </>
+      )}
+      {ctx.hasCombiner && (
+        <p className="op-context-note" data-testid="reduce-combiner-note">
+          combiner呼出し {ctx.combinerCallCount}回（sequential実行では呼ばれません。parallel
+          reductionで部分結果の結合に必要になります）
+        </p>
+      )}
+      <p className="op-context-note">accumulatorは結合則（associativity）を満たす必要があります。</p>
+    </div>
+  )
+}
+
+function CountContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'count' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-count" data-node-id={ctx.nodeId}>
+      <h4>countの状態</h4>
+      <p data-testid="count-current">現在件数: {ctx.currentCount}</p>
+      <p className="op-context-note" data-testid="count-elision-note">
+        {ctx.elisionNote}
+      </p>
+    </div>
+  )
+}
+
+function MinMaxContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'minmax' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-minmax" data-node-id={ctx.nodeId}>
+      <h4>{ctx.op}の状態</h4>
+      <p className="op-context-code">
+        <code data-testid="minmax-comparator">{ctx.comparatorLabel}</code>
+      </p>
+      <p data-testid="minmax-candidate">
+        現在候補: {ctx.candidateLabel ?? '（なし）'}
+        <span className="op-context-key">更新{ctx.updateCount}回</span>
+      </p>
+    </div>
+  )
+}
+
+function MatchContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'match' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-match" data-node-id={ctx.nodeId}>
+      <h4>
+        {ctx.op}の状態
+        {ctx.decided && (
+          <span className="badge badge-shortcircuit" data-testid="match-decided">
+            結果確定（STOP）
+          </span>
+        )}
+      </h4>
+      <p className="op-context-code">
+        <code data-testid="match-predicate">{ctx.predicateText}</code>
+      </p>
+      <p data-testid="match-progress">
+        Predicate評価 {ctx.evaluatedCount}回 / 結果:{' '}
+        {ctx.resultValue === null ? '未確定' : String(ctx.resultValue)}
+      </p>
+      {ctx.vacuousNote && (
+        <p className="op-context-note" data-testid="match-vacuous-note">
+          {ctx.vacuousNote}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function FindContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'find' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-find" data-node-id={ctx.nodeId}>
+      <h4>
+        {ctx.op}の状態
+        {ctx.decided && (
+          <span className="badge badge-shortcircuit" data-testid="find-decided">
+            結果確定（STOP）
+          </span>
+        )}
+      </h4>
+      <p data-testid="find-selected">選択要素: {ctx.selectedLabel ?? '（未選択）'}</p>
+      {ctx.nondeterminismNote && (
+        <p className="op-context-note" data-testid="find-nondeterminism-note">
+          {ctx.nondeterminismNote}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function AggregateContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'aggregate' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-aggregate" data-node-id={ctx.nodeId}>
+      <h4>{ctx.op}の状態</h4>
+      <p data-testid="aggregate-progress">
+        件数 {ctx.count} / 合計 {ctx.sumLabel}
+        {ctx.averageLabel !== null && ` / 平均 ${ctx.averageLabel}`}
+      </p>
+      {ctx.op === 'summaryStatistics' && (
+        <p className="op-context-note">
+          min {ctx.minLabel ?? '（なし）'} / max {ctx.maxLabel ?? '（なし）'}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function ArrayContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'array' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-array" data-node-id={ctx.nodeId}>
+      <h4>toArrayの状態</h4>
+      <p data-testid="array-progress">
+        component type: <code>{ctx.componentTypeLabel}</code> / 格納済み {ctx.storedCount}件
+      </p>
+    </div>
+  )
+}
+
+function ForEachContext({ ctx }: { ctx: Extract<OperationContextView, { kind: 'forEach' }> }) {
+  return (
+    <div className="op-context" data-testid="op-context-foreach" data-node-id={ctx.nodeId}>
+      <h4>{ctx.op}の状態</h4>
+      <p className="op-context-code">
+        <code data-testid="foreach-consumer">{ctx.consumerText}</code>
+      </p>
+      <p data-testid="foreach-call-count">Consumer呼出し {ctx.callCount}回（戻り値はvoid）</p>
+      <p className="op-context-note" data-testid="foreach-ordering-note">
+        {ctx.orderingNote}
+      </p>
+    </div>
+  )
+}
+
 export function OperationStatePanel({ snapshot }: { snapshot: Snapshot }) {
   const contexts = Object.values(snapshot.operationContexts)
   if (contexts.length === 0) return null
@@ -238,6 +397,22 @@ export function OperationStatePanel({ snapshot }: { snapshot: Snapshot }) {
             return <DropWhileContext key={ctx.nodeId} ctx={ctx} />
           case 'peek':
             return <PeekContext key={ctx.nodeId} ctx={ctx} />
+          case 'reduce':
+            return <ReduceContext key={ctx.nodeId} ctx={ctx} />
+          case 'count':
+            return <CountContext key={ctx.nodeId} ctx={ctx} />
+          case 'minmax':
+            return <MinMaxContext key={ctx.nodeId} ctx={ctx} />
+          case 'match':
+            return <MatchContext key={ctx.nodeId} ctx={ctx} />
+          case 'find':
+            return <FindContext key={ctx.nodeId} ctx={ctx} />
+          case 'aggregate':
+            return <AggregateContext key={ctx.nodeId} ctx={ctx} />
+          case 'array':
+            return <ArrayContext key={ctx.nodeId} ctx={ctx} />
+          case 'forEach':
+            return <ForEachContext key={ctx.nodeId} ctx={ctx} />
         }
       })}
     </div>

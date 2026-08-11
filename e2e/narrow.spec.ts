@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { captureArtifact } from './capture-helper'
 import { forward, selectTemplate } from './utils'
 
 /** 狭幅レイアウト検証（chromium-narrowプロジェクト、375px幅で実行される） */
@@ -61,7 +62,7 @@ test('P1-E09: 狭幅でコード / 説明が縦積みになり、Pipelineは横�
 
 test('capture-narrow: 狭幅の画面キャプチャを保存する', async ({ page }) => {
   await forward(page, 4)
-  await page.screenshot({ path: 'artifacts/phase-1/capture-narrow-standard.png', fullPage: true })
+  await captureArtifact(page, 1, 'capture-narrow-standard.png')
   await selectTemplate(page, 'tmpl-filter-chain')
-  await page.screenshot({ path: 'artifacts/phase-1/capture-narrow-chain.png', fullPage: true })
+  await captureArtifact(page, 1, 'capture-narrow-chain.png')
 })

@@ -7,9 +7,15 @@ import type { ComparatorDsl } from '../dsl/comparatorAst'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
+import type { ArrayGeneratorDsl, ReductionDsl, ReductionIdentity } from '../dsl/terminalAst'
 import { validateStructure, validateTypes, validateWhitelist } from '../dsl/validate'
 import { validateComparatorStructure } from '../dsl/validateComparator'
 import { validateConsumerStructure, validateCount } from '../dsl/validateConsumer'
+import {
+  validateArrayGenerator,
+  validateReductionIdentity,
+  validateReductionStructure,
+} from '../dsl/validateTerminal'
 import { validateMapperStructure, resolveMapperOutputType } from '../dsl/validateMapper'
 import { validateSourceStructure, sourceStreamType } from '../dsl/validateSource'
 import {
@@ -69,6 +75,223 @@ function elementTypeOf(streamType: TypeRef): TypeRef {
   throw new Error(`Stream型ではありません: ${formatTypeRef(streamType)}`)
 }
 
+function primitiveNameOf(streamType: TypeRef): 'int' | 'long' | 'double' | null {
+  if (streamType.kind !== 'primitiveStream') return null
+  return streamType.name === 'IntStream' ? 'int' : streamType.name === 'LongStream' ? 'long' : 'double'
+}
+
+function primitiveOptionalOf(primitive: 'int' | 'long' | 'double'): TypeRef {
+  return {
+    kind: 'primitiveOptional',
+    name: primitive === 'int' ? 'OptionalInt' : primitive === 'long' ? 'OptionalLong' : 'OptionalDouble',
+  }
+}
+
+interface TerminalNodeConfig {
+  readonly operationId: string
+  readonly nodeId: string
+  readonly streamType: TypeRef
+  readonly reduction: ReductionDsl | null
+  readonly identity: ReductionIdentity | null
+  readonly comparator: ComparatorDsl | null
+  readonly predicate: DslPredicate | null
+  readonly consumer: ConsumerDsl | null
+  readonly arrayGenerator: ArrayGeneratorDsl | null
+}
+
+/**
+ * Phase 4 terminalの型検証と結果型導出（指示§7・§9）。
+ * operationIdだけで型検証を迂回せず、入力Stream型・DSL構成から結果TypeRefを導出する。
+ */
+function resolveTerminalNode(cfg: TerminalNodeConfig): Result<TypeRef> {
+  const { operationId, nodeId, streamType } = cfg
+  const path = `nodes.${nodeId}`
+  const element = elementTypeOf(streamType)
+  const primitive = primitiveNameOf(streamType)
+  const isEmployee = element.kind === 'object' && element.name === 'Employee'
+
+  switch (operationId) {
+    case 'count':
+      return ok({ kind: 'primitive', name: 'long' })
+    case 'reduce': {
+      const reduction = cfg.reduction
+      if (!reduction) return fail([issue('SLOT_MISSING', `node ${nodeId} のreductionがありません`, path)])
+      if (reduction.kind === 'numericSum') {
+        if (!primitive) {
+          return fail([
+            issue('TYPE_MISMATCH', `numericSumはprimitive Streamにのみ適用できます（実際: ${formatTypeRef(streamType)}）`, path),
+          ])
+        }
+        if (cfg.identity && cfg.identity.type !== primitive) {
+          return fail([
+            issue('TYPE_MISMATCH', `identityの型${cfg.identity.type}は${primitive}要素と一致しません`, path),
+          ])
+        }
+        return ok(cfg.identity ? { kind: 'primitive', name: primitive } : primitiveOptionalOf(primitive))
+      }
+      if (reduction.kind === 'stringConcat') {
+        if (!(element.kind === 'object' && element.name === 'String')) {
+          return fail([
+            issue('TYPE_MISMATCH', `stringConcatはStream<String>にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+          ])
+        }
+        if (cfg.identity && cfg.identity.type !== 'string') {
+          return fail([
+            issue('TYPE_MISMATCH', `identityの型${cfg.identity.type}はString要素と一致しません`, path),
+          ])
+        }
+        return ok(
+          cfg.identity ? { kind: 'object', name: 'String' } : { kind: 'optional', elementType: element },
+        )
+      }
+      // employeeFieldSum: 累積型がU（≠T）となるためJava上3引数reduceが必須（identity + combiner）
+      if (!isEmployee) {
+        return fail([
+          issue('TYPE_MISMATCH', `employeeFieldSumはStream<Employee>にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+        ])
+      }
+      if (!cfg.identity) {
+        return fail([
+          issue('SLOT_MISSING', `3引数reduce（employeeFieldSum）にはidentityが必要です`, path),
+        ])
+      }
+      const expectedType = reduction.field === 'salary' ? 'long' : 'int'
+      if (cfg.identity.type !== expectedType) {
+        return fail([
+          issue('TYPE_MISMATCH', `${reduction.field}の合計のidentityは${expectedType}型が必要です（実際: ${cfg.identity.type}）`, path),
+        ])
+      }
+      return ok({ kind: 'primitive', name: expectedType })
+    }
+    case 'min':
+    case 'max': {
+      if (primitive) {
+        if (cfg.comparator) {
+          return fail([
+            issue('TYPE_MISMATCH', `primitive Streamの${operationId}()へComparatorは指定できません`, path),
+          ])
+        }
+        return ok(primitiveOptionalOf(primitive))
+      }
+      // object StreamのStream.min / maxはComparatorが必須（Java API）
+      if (!cfg.comparator) {
+        return fail([
+          issue('SLOT_MISSING', `Stream.${operationId}(Comparator)にはComparatorが必要です`, path),
+        ])
+      }
+      if (cfg.comparator.kind === 'employeeKeys' && !isEmployee) {
+        return fail([
+          issue('TYPE_MISMATCH', `EmployeeキーのComparatorはStream<Employee>にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+        ])
+      }
+      if (cfg.comparator.kind === 'natural') {
+        const comparable =
+          element.kind === 'object' &&
+          ['String', 'Integer', 'Long', 'Double', 'LocalDate'].includes(element.name)
+        if (!comparable) {
+          return fail([
+            issue('TYPE_MISMATCH', `naturalOrder Comparatorは要素型がComparableである必要があります（実際: ${formatTypeRef(element)}）`, path),
+          ])
+        }
+      }
+      return ok({ kind: 'optional', elementType: element })
+    }
+    case 'findFirst':
+    case 'findAny':
+      return ok(primitive ? primitiveOptionalOf(primitive) : { kind: 'optional', elementType: element })
+    case 'anyMatch':
+    case 'allMatch':
+    case 'noneMatch': {
+      const predicate = cfg.predicate
+      if (!predicate) return fail([issue('SLOT_MISSING', `node ${nodeId} のPredicateがありません`, path)])
+      if (predicate.kind === 'currentValueCompare') {
+        const numeric =
+          element.kind === 'primitive' ||
+          (element.kind === 'object' && ['Integer', 'Long', 'Double'].includes(element.name))
+        if (!numeric) {
+          return fail([
+            issue('TYPE_MISMATCH', `currentValueCompareは数値要素にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+          ])
+        }
+      } else if (!isEmployee) {
+        return fail([
+          issue('TYPE_MISMATCH', `fieldCompareはEmployee要素にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+        ])
+      }
+      return ok({ kind: 'primitive', name: 'boolean' })
+    }
+    case 'sum':
+      if (!primitive) {
+        return fail([
+          issue('TYPE_MISMATCH', `sum()はprimitive Streamにのみ適用できます（実際: ${formatTypeRef(streamType)}）`, path),
+        ])
+      }
+      return ok({ kind: 'primitive', name: primitive })
+    case 'average':
+      if (!primitive) {
+        return fail([
+          issue('TYPE_MISMATCH', `average()はprimitive Streamにのみ適用できます（実際: ${formatTypeRef(streamType)}）`, path),
+        ])
+      }
+      return ok({ kind: 'primitiveOptional', name: 'OptionalDouble' })
+    case 'summaryStatistics': {
+      if (!primitive) {
+        return fail([
+          issue('TYPE_MISMATCH', `summaryStatistics()はprimitive Streamにのみ適用できます（実際: ${formatTypeRef(streamType)}）`, path),
+        ])
+      }
+      const name =
+        primitive === 'int'
+          ? 'IntSummaryStatistics'
+          : primitive === 'long'
+            ? 'LongSummaryStatistics'
+            : 'DoubleSummaryStatistics'
+      return ok({ kind: 'statistics', name })
+    }
+    case 'toArray': {
+      if (primitive) {
+        if (cfg.arrayGenerator) {
+          return fail([
+            issue('TYPE_MISMATCH', `primitive StreamのtoArray()へgeneratorは指定できません`, path),
+          ])
+        }
+        return ok({ kind: 'array', elementType: { kind: 'primitive', name: primitive } })
+      }
+      const generator = cfg.arrayGenerator
+      if (!generator) {
+        // Stream.toArray()はObject[]を返す
+        return ok({ kind: 'array', elementType: { kind: 'object', name: 'Object' } })
+      }
+      if (generator.elementTypeName !== 'Object') {
+        const matches = element.kind === 'object' && element.name === generator.elementTypeName
+        if (!matches) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `generator ${generator.elementTypeName}[]::new は要素型${formatTypeRef(element)}と一致しません`,
+              path,
+            ),
+          ])
+        }
+      }
+      return ok({ kind: 'array', elementType: { kind: 'object', name: generator.elementTypeName } })
+    }
+    case 'forEach':
+    case 'forEachOrdered': {
+      const consumer = cfg.consumer
+      if (!consumer) return fail([issue('SLOT_MISSING', `node ${nodeId} のConsumerがありません`, path)])
+      if (consumer.kind === 'printField' && !isEmployee) {
+        return fail([
+          issue('TYPE_MISMATCH', `PRINT_FIELDはEmployee要素にのみ適用できます（実際: ${formatTypeRef(element)}）`, path),
+        ])
+      }
+      return ok({ kind: 'void' })
+    }
+    default:
+      return fail([issue('STRUCTURE_INVALID', `未対応のterminal操作です: ${operationId}`, path)])
+  }
+}
+
 export function instantiateTemplate(
   registry: TemplateRegistry,
   catalog: OperationCatalog,
@@ -123,6 +346,9 @@ export function instantiateTemplate(
   const comparators = new Map<SlotId, ComparatorDsl>()
   const consumers = new Map<SlotId, ConsumerDsl>()
   const counts = new Map<SlotId, number>()
+  const reductions = new Map<SlotId, ReductionDsl>()
+  const identities = new Map<SlotId, ReductionIdentity>()
+  const arrayGenerators = new Map<SlotId, ArrayGeneratorDsl>()
   for (const slot of template.parameterSlots) {
     const raw = input.dslParameters[slot.slotId]
     if (raw === undefined) continue
@@ -145,6 +371,18 @@ export function instantiateTemplate(
     } else if (slot.kind === 'count') {
       const result = validateCount(raw, `dslParameters.${slot.slotId}`)
       if (result.ok) counts.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'reduction') {
+      const result = validateReductionStructure(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) reductions.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'identity') {
+      const result = validateReductionIdentity(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) identities.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'arrayGenerator') {
+      const result = validateArrayGenerator(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) arrayGenerators.set(slot.slotId, result.value)
       else structureIssues.push(...result.issues)
     }
   }
@@ -240,6 +478,30 @@ export function instantiateTemplate(
           ),
         )
       }
+    } else if (slot.kind === 'reduction') {
+      const reduction = reductions.get(slot.slotId)
+      if (!reduction) continue
+      if (!slot.allowedReductionKinds.includes(reduction.kind)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_KIND',
+            `このslotで許可されていないreduction kindです: ${reduction.kind}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      }
+    } else if (slot.kind === 'arrayGenerator') {
+      const generator = arrayGenerators.get(slot.slotId)
+      if (!generator) continue
+      if (!slot.allowedElementTypeNames.includes(generator.elementTypeName)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_KIND',
+            `このslotで許可されていないgenerator要素型です: ${generator.elementTypeName}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      }
     }
   }
   if (whitelistIssues.length > 0) return fail(whitelistIssues)
@@ -257,6 +519,9 @@ export function instantiateTemplate(
   const comparatorsByNode = new Map<string, ComparatorDsl>()
   const consumersByNode = new Map<string, ConsumerDsl>()
   const countsByNode = new Map<string, number>()
+  const reductionsByNode = new Map<string, ReductionDsl>()
+  const identitiesByNode = new Map<string, ReductionIdentity>()
+  const arrayGeneratorsByNode = new Map<string, ArrayGeneratorDsl>()
   for (const slot of template.parameterSlots) {
     if (slot.kind === 'predicate') {
       const p = predicates.get(slot.slotId)
@@ -273,6 +538,15 @@ export function instantiateTemplate(
     } else if (slot.kind === 'count') {
       const c = counts.get(slot.slotId)
       if (c !== undefined) countsByNode.set(slot.targetNodeId, c)
+    } else if (slot.kind === 'reduction') {
+      const r = reductions.get(slot.slotId)
+      if (r) reductionsByNode.set(slot.targetNodeId, r)
+    } else if (slot.kind === 'identity') {
+      const i = identities.get(slot.slotId)
+      if (i) identitiesByNode.set(slot.targetNodeId, i)
+    } else if (slot.kind === 'arrayGenerator') {
+      const g = arrayGenerators.get(slot.slotId)
+      if (g) arrayGeneratorsByNode.set(slot.targetNodeId, g)
     }
   }
 
@@ -365,6 +639,27 @@ export function instantiateTemplate(
         const primitive =
           currentType.name === 'IntStream' ? 'int' : currentType.name === 'LongStream' ? 'long' : 'double'
         outputType = streamOf({ kind: 'object', name: WRAPPER_NAMES[primitive] })
+        break
+      }
+      case 'fromTerminal': {
+        if (!currentType || (currentType.kind !== 'stream' && currentType.kind !== 'primitiveStream')) {
+          return fail([
+            issue('TYPE_MISMATCH', `node ${node.nodeId}（${op.displayName}）はStreamの入力が必要です`, `nodes.${node.nodeId}`),
+          ])
+        }
+        const resolved = resolveTerminalNode({
+          operationId: node.operationId,
+          nodeId: node.nodeId,
+          streamType: currentType,
+          reduction: reductionsByNode.get(node.nodeId) ?? null,
+          identity: identitiesByNode.get(node.nodeId) ?? null,
+          comparator: comparatorsByNode.get(node.nodeId) ?? null,
+          predicate: predicatesByNode.get(node.nodeId) ?? null,
+          consumer: consumersByNode.get(node.nodeId) ?? null,
+          arrayGenerator: arrayGeneratorsByNode.get(node.nodeId) ?? null,
+        })
+        if (!resolved.ok) return fail(resolved.issues)
+        outputType = resolved.value
         break
       }
       default:
@@ -492,6 +787,7 @@ export function instantiateTemplate(
         }
       }
     }
+    const reduction = reductionsByNode.get(node.nodeId) ?? null
     nodeDefs.push({
       nodeId: node.nodeId,
       operationId: node.operationId,
@@ -503,6 +799,12 @@ export function instantiateTemplate(
       comparator,
       consumer,
       count,
+      reduction,
+      identity: identitiesByNode.get(node.nodeId) ?? null,
+      // employeeFieldSumは累積型がU（≠T）のためJava上3引数reduce（combinerあり）となる。
+      // sequential実行ではcombinerは呼ばれない（§6.1）
+      hasCombiner: reduction?.kind === 'employeeFieldSum',
+      arrayGenerator: arrayGeneratorsByNode.get(node.nodeId) ?? null,
       inputType: currentType,
       outputType,
       lineId: lineIdForNode(node.nodeId),
@@ -736,6 +1038,10 @@ export function instantiateTemplate(
       comparator: n.comparator,
       consumer: n.consumer,
       count: n.count,
+      reduction: n.reduction,
+      identity: n.identity,
+      hasCombiner: n.hasCombiner,
+      arrayGenerator: n.arrayGenerator,
     })),
     resultType: terminalNode.outputType,
   })
@@ -771,13 +1077,19 @@ export function instantiateTemplate(
     ])
   }
 
-  // 途中0件モードは結果0件であること（事前実行結果で検証）
+  // 途中0件モードはterminalへの入力が0件であること（事前実行結果で検証。
+  // scalar / Optional等の非List結果も含めて、terminalへ到達した要素の有無で判定する）
   if (input.mode === 'midEmpty') {
     const last = timeline[timeline.length - 1]
-    if (last && last.output.count !== 0) {
-      return fail([
-        issue('TEACHING_CONSTRAINT', '途中0件モードは最終結果が0件である必要があります', 'dataset'),
-      ])
+    if (last) {
+      const reachedTerminal = Object.values(last.elementNodeStates).some(
+        (states) => states[terminalNode.nodeId] === 'PASSED',
+      )
+      if (last.output.count !== 0 || reachedTerminal) {
+        return fail([
+          issue('TEACHING_CONSTRAINT', '途中0件モードはterminalへの入力が0件である必要があります', 'dataset'),
+        ])
+      }
     }
   }
 

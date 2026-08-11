@@ -1,15 +1,17 @@
 import type { SessionState } from '../../application/session'
 
 /**
- * Side Effectビュー（Phase 3指示 §7.8・§11.2）。
- * peekのConsumer実行履歴を、通常のStream結果と視覚的・意味的に分離して表示する。
+ * Side Effectビュー（Phase 3指示 §7.8・§11.2、Phase 4指示 §6.5）。
+ * peek / forEach系のConsumer実行履歴を、通常のStream結果と視覚的・意味的に分離して表示する。
  * ブラウザconsoleの内容は読み取らず、snapshotへ保持された不変履歴だけを描画する。
  * 履歴は現在snapshotまでのものであり、「戻る」で減り、再進行で同じentryが復元される。
  */
 export function SideEffectPanel({ state }: { state: SessionState }) {
   const { snapshot, scenario } = state
-  const hasPeek = scenario.pipeline.nodes.some((n) => n.operationId === 'peek')
-  if (!hasPeek) return null
+  const consumerOps = scenario.pipeline.nodes
+    .filter((n) => n.consumer !== null)
+    .map((n) => n.displayName)
+  if (consumerOps.length === 0) return null
   return (
     <section
       className="panel side-effect-panel"
@@ -18,11 +20,11 @@ export function SideEffectPanel({ state }: { state: SessionState }) {
       data-testid="side-effect-panel"
     >
       <h3>
-        Side Effectビュー（peek）
+        Side Effectビュー（{consumerOps.join(' / ')}）
         <span className="badge badge-side-effect">通常の結果とは別物</span>
       </h3>
       <p className="side-effect-note">
-        peekのConsumerによるSystem.out出力の履歴です。Streamの結果（出力パネル）には影響しません。
+        ConsumerによるSystem.out出力の履歴です。Streamの結果（出力パネル）には影響しません。
       </p>
       {snapshot.sideEffects.length === 0 ? (
         <p className="empty-note" data-testid="side-effect-empty">

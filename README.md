@@ -3,11 +3,11 @@
 Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅延評価）を1ステップずつ可視化する学習教材アプリ。
 
 - 基準仕様: `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`（Draft v0.8 / Java SE 25基準）
-- 実装状況: **Phase 3 完了**（stateful中間操作 distinct / sorted / limit / skip / takeWhile / dropWhile / peek と
-  無限sourceの有限化。詳細は `docs/phase-3-completion-report.md`）
+- 実装状況: **Phase 4 完了**（終端操作 reduce / count / min・max / find / match / sum / average /
+  summaryStatistics / toArray / forEach系。詳細は `docs/phase-4-completion-report.md`）
 - 実装指示: `docs/Claude_Code_Phase1_Implementation_Instructions.md` / `docs/Claude_Code_Phase2_Implementation_Instructions.md` / `docs/Claude_Code_Phase3_Implementation_Instructions.md`
 
-## 実装済み操作（Phase 3時点）
+## 実装済み操作（Phase 4時点）
 
 - **Stream生成**: `Collection.stream()` / `Arrays.stream()`（object・int[]・long[]・double[]）/ `Stream.of()` /
   `Stream.generate()` / `Stream.iterate(seed, operator)` / `Stream.iterate(seed, predicate, operator)` /
@@ -22,7 +22,15 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   - sortedはJ-2契約どおり「全入力buffer → 順序確定（処理中0件・1回のみ）→ 1件ずつ放出」
   - limit / takeWhileの短絡後は残りを未評価（`UNEVALUATED`）として保持
   - peekのConsumer実行履歴は通常結果と分離した不変のSide Effect履歴としてsnapshotへ保持
-- **終端**: `toList()`（primitive Streamは `boxed().toList()` で結果化）
+- **終端**: `toList()` / `reduce()`（1・2・3引数、primitive版含む） / `count()` /
+  `min` / `max`（Comparator・primitive版） / `findFirst` / `findAny` /
+  `anyMatch` / `allMatch` / `noneMatch` / `sum` / `average` / `summaryStatistics`（int・long・double） /
+  `toArray()` / `toArray(generator)` / `forEach` / `forEachOrdered`
+  - 結果はtagged union（LIST / SCALAR / OPTIONAL / ARRAY / STATISTICS / VOID）として構造化し、
+    Optional・primitive Optional・空Stream結果（vacuous truth・統計の正規初期値含む）をJava 25と一致させる
+  - find / matchはshort-circuiting。確定後の残り（source・flatMap子・sorted未放出）は未評価のまま
+  - `findAny`の非決定性・`count`の評価省略可能性は常設注記（fixtureは決定的、JDK保証とは区別）
+  - forEach系のConsumer実行はSide Effect履歴としてsnapshotへ保存（戻り値void）
 
 ## 技術構成
 

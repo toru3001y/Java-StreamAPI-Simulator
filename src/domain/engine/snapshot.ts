@@ -33,6 +33,16 @@ export type SnapshotKind =
   | 'SHORT_CIRCUIT_CONFIRMED'
   | 'DROP_MODE_ENTERED'
   | 'PEEK_ACTION_PERFORMED'
+  // ---- Phase 4（終端操作。指示§10） ----
+  | 'REDUCTION_INITIALIZED'
+  | 'ACCUMULATOR_UPDATED'
+  | 'COUNT_UPDATED'
+  | 'CANDIDATE_UPDATED'
+  | 'MATCH_EVALUATED'
+  | 'FIND_SELECTED'
+  | 'STATISTICS_UPDATED'
+  | 'ARRAY_ELEMENT_STORED'
+  | 'CONSUMER_ACTION_PERFORMED'
 
 /** 処理中パネルの表示内容（§12.3 処理中）。UIはこの確定値を描画するだけで独自計算しない。 */
 export interface ProcessingView {
@@ -149,6 +159,88 @@ export type OperationContextView =
       readonly consumerText: string
       readonly callCount: number
     }
+  // ---- Phase 4: terminal固有状態（指示§10・§12） ----
+  | {
+      readonly kind: 'reduce'
+      readonly nodeId: NodeId
+      readonly expression: string
+      /** identityの表示（identityなしはnull） */
+      readonly identityLabel: string | null
+      readonly hasCombiner: boolean
+      /** sequential実行ではcombinerを実行済みのように表示しない（呼出し0回） */
+      readonly combinerCallCount: number
+      readonly accumulatorLabel: string | null
+      readonly stepCount: number
+      readonly history: readonly {
+        readonly seq: number
+        readonly inputLabel: string
+        readonly beforeLabel: string | null
+        readonly afterLabel: string
+      }[]
+    }
+  | {
+      readonly kind: 'count'
+      readonly nodeId: NodeId
+      readonly currentCount: number
+      /** JDKによる評価省略可能性の常設注記 */
+      readonly elisionNote: string
+    }
+  | {
+      readonly kind: 'minmax'
+      readonly nodeId: NodeId
+      readonly op: 'min' | 'max'
+      readonly comparatorLabel: string
+      readonly candidateLabel: string | null
+      readonly candidateElementId: ElementId | null
+      readonly updateCount: number
+    }
+  | {
+      readonly kind: 'match'
+      readonly nodeId: NodeId
+      readonly op: 'anyMatch' | 'allMatch' | 'noneMatch'
+      readonly predicateText: string
+      readonly evaluatedCount: number
+      readonly decided: boolean
+      readonly resultValue: boolean | null
+      /** 空Streamのvacuous truth説明（該当時のみ） */
+      readonly vacuousNote: string | null
+    }
+  | {
+      readonly kind: 'find'
+      readonly nodeId: NodeId
+      readonly op: 'findFirst' | 'findAny'
+      readonly decided: boolean
+      readonly selectedLabel: string | null
+      readonly selectedElementId: ElementId | null
+      /** findAnyの非決定性・encounter orderなしのfindFirstの常設注記 */
+      readonly nondeterminismNote: string | null
+    }
+  | {
+      readonly kind: 'aggregate'
+      readonly nodeId: NodeId
+      readonly op: 'sum' | 'average' | 'summaryStatistics'
+      readonly primitive: 'int' | 'long' | 'double'
+      readonly count: number
+      readonly sumLabel: string
+      readonly minLabel: string | null
+      readonly maxLabel: string | null
+      readonly averageLabel: string | null
+    }
+  | {
+      readonly kind: 'array'
+      readonly nodeId: NodeId
+      readonly componentTypeLabel: string
+      readonly storedCount: number
+    }
+  | {
+      readonly kind: 'forEach'
+      readonly nodeId: NodeId
+      readonly op: 'forEach' | 'forEachOrdered'
+      readonly consumerText: string
+      readonly callCount: number
+      /** forEachとforEachOrderedの順序保証差の補助説明 */
+      readonly orderingNote: string
+    }
 
 /**
  * Side Effect履歴entry（Phase 3指示 §7.8）。
@@ -172,12 +264,58 @@ export interface SnapshotOutputItem {
   readonly label: string
 }
 
+/**
+ * 終端結果の識別可能Union（Phase 4指示 §7）。
+ * scalar / Optional / array / statistics / boolean / voidを文字列だけでなく
+ * 構造として保持し、UIは独自計算せずこの確定値だけを描画する。
+ * LISTの値は既存のSnapshotOutput.items（非破壊）を使用する。
+ */
+export type TerminalResultView =
+  | { readonly kind: 'LIST' }
+  | {
+      readonly kind: 'SCALAR'
+      /** 例: long / int / boolean */
+      readonly typeLabel: string
+      readonly valueLabel: string
+    }
+  | {
+      readonly kind: 'OPTIONAL'
+      /** Optional / OptionalInt / OptionalLong / OptionalDouble */
+      readonly optionalTypeLabel: string
+      /** object Optionalの要素型（primitive Optionalではnull） */
+      readonly elementTypeLabel: string | null
+      readonly present: boolean
+      readonly valueLabel: string | null
+      readonly valueElementId: ElementId | null
+    }
+  | {
+      readonly kind: 'ARRAY'
+      readonly componentTypeLabel: string
+      readonly length: number
+      readonly items: readonly { readonly index: number; readonly label: string }[]
+    }
+  | {
+      readonly kind: 'STATISTICS'
+      /** IntSummaryStatistics等 */
+      readonly statisticsTypeLabel: string
+      readonly countLabel: string
+      readonly sumLabel: string
+      readonly minLabel: string
+      readonly maxLabel: string
+      readonly averageLabel: string
+      /** 空Streamの正規初期値であることの注記（非空ではnull） */
+      readonly emptyNote: string | null
+    }
+  | { readonly kind: 'VOID' }
+
 export interface SnapshotOutput {
   readonly elementIds: readonly ElementId[]
   readonly items: readonly SnapshotOutputItem[]
   readonly count: number
   readonly confirmed: boolean
   readonly resultTypeLabel: string
+  /** 終端結果の構造化view（Phase 4指示 §7。toListはLIST） */
+  readonly result: TerminalResultView
 }
 
 export interface Snapshot {

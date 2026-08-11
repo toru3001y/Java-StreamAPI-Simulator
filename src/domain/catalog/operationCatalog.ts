@@ -38,6 +38,8 @@ export type TypeRule =
   | { readonly kind: 'streamToList' }
   | { readonly kind: 'fromSource' }
   | { readonly kind: 'fromMapper' }
+  /** terminal結果型は入力Stream型とノード構成から導出する（Phase 4指示 §9。instantiateで解決） */
+  | { readonly kind: 'fromTerminal' }
   | {
       readonly kind: 'fixedPrimitiveStream'
       readonly name: 'IntStream' | 'LongStream' | 'DoubleStream'
@@ -111,6 +113,7 @@ export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): Type
     case 'none':
     case 'fromSource':
     case 'fromMapper':
+    case 'fromTerminal':
     case 'boxedWrapper':
       throw new Error(`rule ${rule.kind} はこの関数では解決できません`)
   }

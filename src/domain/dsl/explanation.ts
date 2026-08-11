@@ -70,6 +70,18 @@ export function describeConsumer(consumer: ConsumerDsl): string {
   return `Employeeの${consumer.field}()をSystem.out.printlnへ出力します（値は変更しません）`
 }
 
+/** Reduction DSLの自然文説明（Phase 4指示 §8） */
+export function describeReduction(reduction: import('./terminalAst').ReductionDsl): string {
+  switch (reduction.kind) {
+    case 'numericSum':
+      return '累積値と現在値を加算して新しい累積値を作ります'
+    case 'stringConcat':
+      return '累積文字列へ現在の文字列を連結します'
+    case 'employeeFieldSum':
+      return `累積値へEmployeeの${reduction.field}()を加算します`
+  }
+}
+
 /** mapperの自然文説明（Phase 2指示 §7.2） */
 export function describeMapper(mapper: MapperDsl): string {
   switch (mapper.kind) {

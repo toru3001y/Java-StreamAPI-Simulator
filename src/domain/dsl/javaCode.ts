@@ -4,6 +4,7 @@ import { COMPARATOR_FIELD_JAVA_KIND } from './comparatorAst'
 import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
+import type { ArrayGeneratorDsl, ReductionDsl, ReductionIdentity } from './terminalAst'
 import type { DatasetElement, EmployeeValue } from '../model/employee'
 import { EMPLOYEE_FIELDS } from '../model/employee'
 import { formatDoubleLiteral, formatLongLiteral } from '../model/value'
@@ -32,6 +33,10 @@ export interface JavaCodeNodeSource {
   readonly comparator: ComparatorDsl | null
   readonly consumer: ConsumerDsl | null
   readonly count: number | null
+  readonly reduction: ReductionDsl | null
+  readonly identity: ReductionIdentity | null
+  readonly hasCombiner: boolean
+  readonly arrayGenerator: ArrayGeneratorDsl | null
 }
 
 export interface JavaCodeInput {
@@ -136,6 +141,96 @@ export function consumerToJavaExpr(consumer: ConsumerDsl): string {
   if (consumer.kind === 'printValue') return 'System.out::println'
   const accessor = EMPLOYEE_FIELDS[consumer.field]?.accessor ?? `${consumer.field}()`
   return `e -> System.out.println(e.${accessor})`
+}
+
+/** Reduction DSLのaccumulator式（Phase 4指示 §8） */
+export function reductionToJavaExpr(reduction: ReductionDsl): string {
+  switch (reduction.kind) {
+    case 'numericSum':
+    case 'stringConcat':
+      return '(a, b) -> a + b'
+    case 'employeeFieldSum':
+      return `(acc, e) -> acc + e.${reduction.field}()`
+  }
+}
+
+/** 3引数reduceのcombiner式（identity型に応じたメソッド参照） */
+export function combinerToJavaExpr(identity: ReductionIdentity): string {
+  switch (identity.type) {
+    case 'int':
+      return 'Integer::sum'
+    case 'long':
+      return 'Long::sum'
+    case 'double':
+      return 'Double::sum'
+    case 'string':
+      return 'String::concat'
+  }
+}
+
+/**
+ * Java文字列リテラルの生成（レビュー対応）。
+ * 元の文字列値を変更せず、同じ値を表す正当なJava 25文字列リテラルへエスケープする。
+ * 生の改行・未エスケープ引用符をJavaコード表示へ混入させない。
+ * 現時点の適用範囲はstring identityのみ（未確認の別DSLへは広げない）。
+ */
+function javaStringLiteral(value: string): string {
+  let escaped = ''
+  for (const ch of value) {
+    switch (ch) {
+      case '\\':
+        escaped += '\\\\'
+        break
+      case '"':
+        escaped += '\\"'
+        break
+      case '\n':
+        escaped += '\\n'
+        break
+      case '\r':
+        escaped += '\\r'
+        break
+      case '\t':
+        escaped += '\\t'
+        break
+      case '\b':
+        escaped += '\\b'
+        break
+      case '\f':
+        escaped += '\\f'
+        break
+      default: {
+        const code = ch.codePointAt(0) ?? 0
+        // その他の制御文字（C0 / DEL / C1）はunicode escapeで安全に表現する
+        if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) {
+          escaped += `\\u${code.toString(16).padStart(4, '0')}`
+        } else {
+          escaped += ch
+        }
+        break
+      }
+    }
+  }
+  return `"${escaped}"`
+}
+
+/** identityのJava literal */
+export function identityToJavaLiteral(identity: ReductionIdentity): string {
+  switch (identity.type) {
+    case 'int':
+      return String(identity.value)
+    case 'long':
+      return formatLongLiteral(Number(identity.value))
+    case 'double':
+      return formatDoubleLiteral(Number(identity.value))
+    case 'string':
+      return javaStringLiteral(String(identity.value))
+  }
+}
+
+/** Array Generator DSLのJava式（例: String[]::new） */
+export function arrayGeneratorToJavaExpr(generator: ArrayGeneratorDsl): string {
+  return `${generator.elementTypeName}[]::new`
 }
 
 /** 表示用mapper式（例: Employee::name、n -> "No." + n） */
@@ -323,6 +418,48 @@ function nodeLineText(node: JavaCodeNodeSource): string {
     case 'peek':
       if (!node.consumer) throw new Error(`node ${node.nodeId} has no consumer`)
       return `        .peek(${consumerToJavaExpr(node.consumer)})`
+    // ---- Phase 4 terminal（指示§8） ----
+    case 'count':
+      return '        .count();'
+    case 'findFirst':
+      return '        .findFirst();'
+    case 'findAny':
+      return '        .findAny();'
+    case 'sum':
+      return '        .sum();'
+    case 'average':
+      return '        .average();'
+    case 'summaryStatistics':
+      return '        .summaryStatistics();'
+    case 'min':
+    case 'max':
+      return node.comparator
+        ? `        .${node.operationId}(${comparatorToJavaExpr(node.comparator)});`
+        : `        .${node.operationId}();`
+    case 'anyMatch':
+    case 'allMatch':
+    case 'noneMatch':
+      if (!node.predicate) throw new Error(`node ${node.nodeId} has no predicate`)
+      return `        .${node.operationId}(${predicateToJavaExpr(node.predicate)});`
+    case 'reduce': {
+      if (!node.reduction) throw new Error(`node ${node.nodeId} has no reduction`)
+      const parts: string[] = []
+      if (node.identity) parts.push(identityToJavaLiteral(node.identity))
+      parts.push(reductionToJavaExpr(node.reduction))
+      if (node.hasCombiner) {
+        if (!node.identity) throw new Error(`node ${node.nodeId} combiner requires identity`)
+        parts.push(combinerToJavaExpr(node.identity))
+      }
+      return `        .reduce(${parts.join(', ')});`
+    }
+    case 'toArray':
+      return node.arrayGenerator
+        ? `        .toArray(${arrayGeneratorToJavaExpr(node.arrayGenerator)});`
+        : '        .toArray();'
+    case 'forEach':
+    case 'forEachOrdered':
+      if (!node.consumer) throw new Error(`node ${node.nodeId} has no consumer`)
+      return `        .${node.operationId}(${consumerToJavaExpr(node.consumer)});`
     default:
       throw new Error(`コード生成未対応のoperationです: ${node.operationId}`)
   }
@@ -350,9 +487,13 @@ export function generateJavaCode(input: JavaCodeInput): readonly JavaCodeLine[] 
 
   for (const node of input.nodes) {
     if (node.role === 'source') {
+      // void結果（forEach系）は代入文にせず、source式だけの文にする（正当なJava構文）
+      const isVoid = input.resultType.kind === 'void'
       lines.push({
         lineId: lineIdForNode(node.nodeId),
-        text: `${formatTypeRef(input.resultType)} result = ${sourceToJavaExpr(input.source)}`,
+        text: isVoid
+          ? sourceToJavaExpr(input.source)
+          : `${formatTypeRef(input.resultType)} result = ${sourceToJavaExpr(input.source)}`,
         nodeId: node.nodeId,
       })
     } else {
