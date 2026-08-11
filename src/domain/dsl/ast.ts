@@ -10,13 +10,22 @@ export interface DslIntLiteral {
   readonly value: number
 }
 
+/**
+ * long定数（Phase 5指示 §8のsalary基準Pipeline例 `e.salary() >= 5_000_000L` 用に追加）。
+ * Java long相当の整数のみを許可し、safe integer範囲を検証で保証する。
+ */
+export interface DslLongLiteral {
+  readonly type: 'long'
+  readonly value: number
+}
+
 export interface DslStringLiteral {
   readonly type: 'string'
   readonly value: string
 }
 
 /** 構造としては複数型を受理し、型検証（§9.3手順4）で許可範囲へ絞る。 */
-export type DslLiteral = DslIntLiteral | DslStringLiteral
+export type DslLiteral = DslIntLiteral | DslLongLiteral | DslStringLiteral
 
 export interface FieldComparePredicate {
   readonly kind: 'fieldCompare'

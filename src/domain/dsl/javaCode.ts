@@ -1,4 +1,6 @@
 import type { DslPredicate } from './ast'
+import type { ClassifierDsl, CollectTripleDsl, CollectorDsl } from './collectorAst'
+import { TEEING_MERGER_RECORDS } from './collectorAst'
 import type { ComparatorDsl, ComparatorKey } from './comparatorAst'
 import { COMPARATOR_FIELD_JAVA_KIND } from './comparatorAst'
 import type { ConsumerDsl } from './consumerAst'
@@ -37,6 +39,10 @@ export interface JavaCodeNodeSource {
   readonly identity: ReductionIdentity | null
   readonly hasCombiner: boolean
   readonly arrayGenerator: ArrayGeneratorDsl | null
+  /** collect(Collector)のCollector AST（Phase 5） */
+  readonly collector: CollectorDsl | null
+  /** 3引数collectの定義済みID組合せ（Phase 5） */
+  readonly collectTriple: CollectTripleDsl | null
 }
 
 export interface JavaCodeInput {
@@ -57,17 +63,22 @@ export function operatorToJava(operator: string): string {
   return op
 }
 
-/** 表示用Java式（例: e -> e.age() >= 30、n -> n < 5） */
+/** Predicateの数値literalをJavaリテラル表記へ（long定数は`5_000_000L`形式。§17.4はASCII） */
+export function predicateLiteralToJava(predicate: DslPredicate): string {
+  if (predicate.value.type === 'int') return String(predicate.value.value)
+  if (predicate.value.type === 'long') return formatLongLiteral(predicate.value.value)
+  throw new Error(`unsupported literal type: ${predicate.value.type}`)
+}
+
+/** 表示用Java式（例: e -> e.age() >= 30、e -> e.salary() >= 5_000_000L、n -> n < 5） */
 export function predicateToJavaExpr(predicate: DslPredicate): string {
   const op = operatorToJava(predicate.operator)
-  if (predicate.value.type !== 'int') {
-    throw new Error(`unsupported literal type: ${predicate.value.type}`)
-  }
+  const literal = predicateLiteralToJava(predicate)
   if (predicate.kind === 'currentValueCompare') {
-    return `n -> n ${op} ${predicate.value.value}`
+    return `n -> n ${op} ${literal}`
   }
   const accessor = EMPLOYEE_FIELDS[predicate.field]?.accessor ?? `${predicate.field}()`
-  return `e -> e.${accessor} ${op} ${predicate.value.value}`
+  return `e -> e.${accessor} ${op} ${literal}`
 }
 
 /** Comparatorキーの抽出式（method referenceまたはネストfieldのlambda） */
@@ -172,9 +183,10 @@ export function combinerToJavaExpr(identity: ReductionIdentity): string {
  * Java文字列リテラルの生成（レビュー対応）。
  * 元の文字列値を変更せず、同じ値を表す正当なJava 25文字列リテラルへエスケープする。
  * 生の改行・未エスケープ引用符をJavaコード表示へ混入させない。
- * 現時点の適用範囲はstring identityのみ（未確認の別DSLへは広げない）。
+ * 適用範囲: string identity、およびPhase 5のjoining delimiter / prefix / suffix
+ * （どちらも型付きString定数。生の埋め込みはしない）。
  */
-function javaStringLiteral(value: string): string {
+export function javaStringLiteral(value: string): string {
   let escaped = ''
   for (const ch of value) {
     switch (ch) {
@@ -231,6 +243,99 @@ export function identityToJavaLiteral(identity: ReductionIdentity): string {
 /** Array Generator DSLのJava式（例: String[]::new） */
 export function arrayGeneratorToJavaExpr(generator: ArrayGeneratorDsl): string {
   return `${generator.elementTypeName}[]::new`
+}
+
+// ---- Phase 5: Collector AST（指示§7.4）。入れ子式を正当なJava 25構文で生成する ----
+
+/** groupingBy classifierのJava式（method referenceまたはネストfieldのlambda） */
+export function classifierToJavaExpr(classifier: ClassifierDsl): string {
+  switch (classifier.kind) {
+    case 'employeeField':
+      return `Employee::${classifier.field}`
+    case 'employeeDepartment':
+      return 'Employee::department'
+    case 'departmentField':
+      return `e -> e.department().${classifier.field}()`
+  }
+}
+
+/** 数値集計Collectorの抽出関数式（例: Employee::salary） */
+function numericExtractorExpr(field: string): string {
+  return `Employee::${field}`
+}
+
+/** flatMappingの展開式（例: e -> e.skills().stream()） */
+function flatMappingExpr(mapper: MapperDsl): string {
+  if (mapper.kind !== 'fieldAccess') {
+    throw new Error(`flatMappingで未対応のmapperです: ${mapper.kind}`)
+  }
+  const accessor = EMPLOYEE_FIELDS[mapper.field]?.accessor ?? `${mapper.field}()`
+  return `e -> e.${accessor}.stream()`
+}
+
+/**
+ * Collector ASTからのJava式生成（再帰）。
+ * 例: Collectors.groupingBy(Employee::region, Collectors.counting())
+ */
+export function collectorToJavaExpr(dsl: CollectorDsl): string {
+  switch (dsl.kind) {
+    case 'toList':
+      return 'Collectors.toList()'
+    case 'toSet':
+      return 'Collectors.toSet()'
+    case 'toCollection':
+      return `Collectors.toCollection(${dsl.supplierId})`
+    case 'joining': {
+      const args: string[] = []
+      if (dsl.delimiter !== null) args.push(javaStringLiteral(dsl.delimiter.value))
+      if (dsl.prefix !== null) args.push(javaStringLiteral(dsl.prefix.value))
+      if (dsl.suffix !== null) args.push(javaStringLiteral(dsl.suffix.value))
+      return `Collectors.joining(${args.join(', ')})`
+    }
+    case 'counting':
+      return 'Collectors.counting()'
+    case 'summingInt':
+    case 'summingLong':
+    case 'summingDouble':
+    case 'averagingInt':
+    case 'averagingLong':
+    case 'averagingDouble':
+    case 'summarizingInt':
+    case 'summarizingLong':
+    case 'summarizingDouble':
+      return `Collectors.${dsl.kind}(${numericExtractorExpr(dsl.field)})`
+    case 'minBy':
+    case 'maxBy':
+      return `Collectors.${dsl.kind}(${comparatorToJavaExpr(dsl.comparator)})`
+    case 'reducing':
+      return `Collectors.reducing(${reductionToJavaExpr(dsl.reduction)})`
+    case 'mapping':
+      return `Collectors.mapping(${mapperToJavaExpr(dsl.mapper)}, ${collectorToJavaExpr(dsl.downstream)})`
+    case 'filtering':
+      return `Collectors.filtering(${predicateToJavaExpr(dsl.predicate)}, ${collectorToJavaExpr(dsl.downstream)})`
+    case 'flatMapping':
+      return `Collectors.flatMapping(${flatMappingExpr(dsl.mapper)}, ${collectorToJavaExpr(dsl.downstream)})`
+    case 'collectingAndThen':
+      return `Collectors.collectingAndThen(${collectorToJavaExpr(dsl.downstream)}, ${dsl.finisherId})`
+    case 'groupingBy': {
+      const args = [classifierToJavaExpr(dsl.classifier)]
+      if (dsl.mapFactoryId !== null) args.push(dsl.mapFactoryId)
+      if (dsl.downstream !== null) args.push(collectorToJavaExpr(dsl.downstream))
+      return `Collectors.groupingBy(${args.join(', ')})`
+    }
+    case 'partitioningBy': {
+      const args = [predicateToJavaExpr(dsl.predicate)]
+      if (dsl.downstream !== null) args.push(collectorToJavaExpr(dsl.downstream))
+      return `Collectors.partitioningBy(${args.join(', ')})`
+    }
+    case 'teeing':
+      return `Collectors.teeing(${collectorToJavaExpr(dsl.left)}, ${collectorToJavaExpr(dsl.right)}, ${dsl.mergerId})`
+  }
+}
+
+/** 3引数collectの引数列（例: ArrayList::new, ArrayList::add, ArrayList::addAll） */
+export function collectTripleToJavaArgs(dsl: CollectTripleDsl): string {
+  return `${dsl.supplierId}, ${dsl.accumulatorId}, ${dsl.combinerId}`
 }
 
 /** 表示用mapper式（例: Employee::name、n -> "No." + n） */
@@ -332,6 +437,48 @@ const RECORD_LINES = [
   '        Department department,',
   '        List<String> skills) {}',
 ] as const
+
+/** Collector AST中のteeing merger IDを収集する（再帰） */
+function collectMergerIds(dsl: CollectorDsl, out: Set<string>): void {
+  switch (dsl.kind) {
+    case 'teeing':
+      out.add(dsl.mergerId)
+      collectMergerIds(dsl.left, out)
+      collectMergerIds(dsl.right, out)
+      break
+    case 'mapping':
+    case 'filtering':
+    case 'flatMapping':
+    case 'collectingAndThen':
+      collectMergerIds(dsl.downstream, out)
+      break
+    case 'groupingBy':
+    case 'partitioningBy':
+      if (dsl.downstream !== null) collectMergerIds(dsl.downstream, out)
+      break
+    default:
+      break
+  }
+}
+
+/**
+ * teeing mergerが生成するrecordの宣言行（例: record SalarySummary(long employeeCount, double averageSalary) {}）。
+ * teeingを含まないPipelineでは空配列を返し、既存表示を変えない。
+ */
+function mergerRecordDeclLines(nodes: readonly JavaCodeNodeSource[]): string[] {
+  const ids = new Set<string>()
+  for (const node of nodes) {
+    if (node.collector) collectMergerIds(node.collector, ids)
+  }
+  const lines: string[] = []
+  for (const id of ids) {
+    const record = TEEING_MERGER_RECORDS[id as keyof typeof TEEING_MERGER_RECORDS]
+    if (!record) continue
+    const params = record.fields.map((f) => `${f.javaType} ${f.name}`).join(', ')
+    lines.push(`record ${record.recordName}(${params}) {}`)
+  }
+  return lines
+}
 
 /** sourceが必要とする宣言行（record定義・dataset・配列・nested list等） */
 function sourceDeclLines(source: SourceDsl, employeeDataset: readonly DatasetElement[]): string[] {
@@ -460,6 +607,13 @@ function nodeLineText(node: JavaCodeNodeSource): string {
     case 'forEachOrdered':
       if (!node.consumer) throw new Error(`node ${node.nodeId} has no consumer`)
       return `        .${node.operationId}(${consumerToJavaExpr(node.consumer)});`
+    case 'collect':
+      // 行とノードの対応を崩さないため、collect行が長くなっても1ノード=1行を維持する（§7.4）
+      if (!node.collector) throw new Error(`collect node ${node.nodeId} has no collector`)
+      return `        .collect(${collectorToJavaExpr(node.collector)});`
+    case 'collectTriple':
+      if (!node.collectTriple) throw new Error(`collect node ${node.nodeId} has no collectTriple`)
+      return `        .collect(${collectTripleToJavaArgs(node.collectTriple)});`
     default:
       throw new Error(`コード生成未対応のoperationです: ${node.operationId}`)
   }
@@ -483,7 +637,13 @@ export function generateJavaCode(input: JavaCodeInput): readonly JavaCodeLine[] 
 
   const decls = sourceDeclLines(input.source, input.employeeDataset)
   for (const text of decls) pushStatic(text)
-  if (decls.length > 0) pushStatic('')
+  // teeing mergerが生成するrecordの宣言（既存Employee / Department record表示と同じ規約。§7.4）
+  const mergerRecords = mergerRecordDeclLines(input.nodes)
+  if (mergerRecords.length > 0) {
+    if (decls.length > 0) pushStatic('')
+    for (const text of mergerRecords) pushStatic(text)
+  }
+  if (decls.length > 0 || mergerRecords.length > 0) pushStatic('')
 
   for (const node of input.nodes) {
     if (node.role === 'source') {

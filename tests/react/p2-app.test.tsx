@@ -30,7 +30,7 @@ afterEach(() => {
 })
 
 describe('P2 React統合', () => {
-  it('P2-R01: 実装済み操作だけ選択可能で、非実行sourceと未実装操作の理由が読める', () => {
+  it('P2-R01: 実装済み操作だけ選択可能で、非実行sourceの理由が読め、未実装リストが空である', () => {
     renderApp()
     const select = screen.getByTestId('operation-select') as HTMLSelectElement
     const options = [...select.querySelectorAll('option')]
@@ -46,13 +46,14 @@ describe('P2 React統合', () => {
     expect(byValue('source.generate')?.disabled).toBe(false)
     expect(byValue('source.iterate2')?.disabled).toBe(false)
     expect(screen.queryByTestId('disabled-operation-notes')).toBeNull()
-    // Phase 4以降の未実装操作は選択不能で理由（Phase表記）が読める
+    // Phase 5指示§10.1により、collect / Collectors各種が実装され未実装リストは0件となった。
+    // Phase 2時点の「未実装操作が選択不能で理由が読める」の検証は、
+    // Phase 5の正動作「未実装リストが空で、空のoptgroupを描画しない」の検証へ更新する
     const unimplemented = options.filter((o) => o.value.startsWith('unimplemented-'))
-    expect(unimplemented.length).toBeGreaterThanOrEqual(7)
-    for (const o of unimplemented) {
-      expect(o.disabled).toBe(true)
-      expect(o.textContent).toMatch(/Phase [3-5]で実装予定/)
-    }
+    expect(unimplemented).toHaveLength(0)
+    expect(
+      within(screen.getByTestId('operation-select')).queryByText(/未実装/),
+    ).toBeNull()
   })
 
   it('P2-R02: Pipeline・処理中・出力・説明の型表示が同じsnapshotと一致する', async () => {

@@ -30,9 +30,35 @@ export const SUITES = [
     id: 'P4-O01',
     javaFile: 'OracleP4.java',
     expectedFile: 'expected-p4-from-core.json',
-    // P4だけが証跡を生成・更新する
-    writeReportPath: ['artifacts', 'phase-4', 'oracle-result.md'],
+    // Phase 5着手に伴い証跡書込みを停止した（artifacts/phase-4/oracle-result.mdは過去証跡として保持）。
+    // 照合自体は回帰として継続実行し、P4-O02のLong境界値照合ロジックも引き続きこのsuiteへ適用する
+    writeReportPath: null,
   },
+  {
+    id: 'P5-O01',
+    javaFile: 'OracleP5.java',
+    expectedFile: 'expected-p5-from-core.json',
+    // 現行Phase（P5）だけが証跡を生成・更新する
+    writeReportPath: ['artifacts', 'phase-5', 'oracle-result.md'],
+  },
+]
+
+/** Phase 4時点の必須suite ID（P4-O03契約の検証で使用する。履歴として固定する） */
+export const P4_REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01']
+
+/** Long境界値照合（P4-O02）を適用するsuite。ID再定義はしない */
+export const BOUNDARY_SUITE_ID = 'P4-O01'
+
+/** 現行Phaseのsuite（証跡を書き込む唯一のsuite） */
+export const CURRENT_PHASE_SUITE_ID = 'P5-O01'
+export const CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-5/oracle-result.md'
+
+/** 実行前後で不変であることを検証する過去Phase証跡（現行Phaseは含めない） */
+export const PAST_ARTIFACT_DIRS = [
+  'artifacts/phase-1',
+  'artifacts/phase-2',
+  'artifacts/phase-3',
+  'artifacts/phase-4',
 ]
 
 /** Long境界値の正確な10進文字列（1桁も失わない比較の基準） */
@@ -90,31 +116,42 @@ export function allSuitesPassed(results) {
  *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果、の3判定すべて
  */
 
-/** P4-O03が要求する必須suite ID（欠落・重複はFAIL） */
-export const REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01']
+/** 現行Phaseの必須suite ID（欠落・重複はFAIL。P5-O02が検証する） */
+export const REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01', 'P5-O01']
 
+/**
+ * Phase 4時点のOracle ID（P4-O01〜O03）契約の判定。
+ *
+ * Phase 5でsuite構成が変わった（5 suite・P5単独書込み）ため、この関数は
+ * **Phase 4時点の構成をfixtureとして渡して**同じ契約を検証し続ける用途で使用する
+ * （Phase 5指示 §12冒頭。検証意味は変更・緩和しない）。
+ * ライブ構成の検証はevaluateCurrentPhaseOracleIds（P5-O02）が担う。
+ */
 export function evaluateOracleIds({
   suiteResults,
   expectedBoundary,
   actualBoundary,
   pastArtifactsUnchanged,
   suites = SUITES,
+  requiredSuiteIds = P4_REQUIRED_SUITE_IDS,
+  writerSuiteId = 'P4-O01',
+  writerReportPath = 'artifacts/phase-4/oracle-result.md',
 }) {
   const o01Passed = suiteResults.some((result) => result.id === 'P4-O01' && result.passed === true)
   const o02Passed = expectedBoundary?.ok === true && actualBoundary?.ok === true
-  // 必須4 suiteが各1件（ちょうど1件）存在すること。P1〜P3の欠落や重複はここでFAILになる
-  const requiredSuitesPresent = REQUIRED_SUITE_IDS.every(
+  // 必須suiteが各1件（ちょうど1件）存在すること。欠落や重複はここでFAILになる
+  const requiredSuitesPresent = requiredSuiteIds.every(
     (id) => suites.filter((suite) => suite.id === id).length === 1,
   )
-  // 書込みはP4のみ: writerがP4-O01ただ1件で、書込み先がartifacts/phase-4/oracle-result.md、
-  // かつP4以外の全suiteがwriteReportPath: null（照合のみ）であること
+  // 書込みは指定suiteのみ: writerが1件で、書込み先が指定パス、
+  // かつそれ以外の全suiteがwriteReportPath: null（照合のみ）であること
   const writers = suites.filter((suite) => suite.writeReportPath != null)
   const configOnlyP4Writes =
     writers.length === 1 &&
-    writers[0].id === 'P4-O01' &&
+    writers[0].id === writerSuiteId &&
     Array.isArray(writers[0].writeReportPath) &&
-    writers[0].writeReportPath.join('/') === 'artifacts/phase-4/oracle-result.md' &&
-    suites.filter((suite) => suite.id !== 'P4-O01').every((suite) => suite.writeReportPath === null)
+    writers[0].writeReportPath.join('/') === writerReportPath &&
+    suites.filter((suite) => suite.id !== writerSuiteId).every((suite) => suite.writeReportPath === null)
   const o03Passed = requiredSuitesPresent && configOnlyP4Writes && pastArtifactsUnchanged === true
   return {
     o01Passed,
@@ -126,13 +163,60 @@ export function evaluateOracleIds({
   }
 }
 
+/**
+ * P5必須Oracle ID（P5-O01・P5-O02）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
+ * - P5-O01: P5 suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
+ * - P5-O02: 必須suite（P1-O01〜P5-O01）が各1件存在すること、証跡書込みが現行Phase（P5）のみで
+ *           書込み先がartifacts/phase-5/oracle-result.mdだけであること、
+ *           実行前後のartifacts/phase-1〜phase-4 SHA-256不変の実測結果、の3判定すべて
+ */
+export function evaluateCurrentPhaseOracleIds({
+  suiteResults,
+  pastArtifactsUnchanged,
+  suites = SUITES,
+  requiredSuiteIds = REQUIRED_SUITE_IDS,
+  currentPhaseSuiteId = CURRENT_PHASE_SUITE_ID,
+  currentPhaseReportPath = CURRENT_PHASE_REPORT_PATH,
+}) {
+  const o01Passed = suiteResults.some(
+    (result) => result.id === currentPhaseSuiteId && result.passed === true,
+  )
+  const requiredSuitesPresent = requiredSuiteIds.every(
+    (id) => suites.filter((suite) => suite.id === id).length === 1,
+  )
+  const writers = suites.filter((suite) => suite.writeReportPath != null)
+  const configOnlyCurrentPhaseWrites =
+    writers.length === 1 &&
+    writers[0].id === currentPhaseSuiteId &&
+    Array.isArray(writers[0].writeReportPath) &&
+    writers[0].writeReportPath.join('/') === currentPhaseReportPath &&
+    suites
+      .filter((suite) => suite.id !== currentPhaseSuiteId)
+      .every((suite) => suite.writeReportPath === null)
+  const o02Passed =
+    requiredSuitesPresent && configOnlyCurrentPhaseWrites && pastArtifactsUnchanged === true
+  return {
+    o01Passed,
+    o02Passed,
+    requiredSuitesPresent,
+    configOnlyCurrentPhaseWrites,
+    overallPassed: o01Passed && o02Passed,
+  }
+}
+
 const verdictOf = (passed) => (passed ? 'PASS' : 'FAIL')
 
 /**
  * oracle-result.mdへ出力するP4-O01〜O03の結果セクション。
  * evaluateOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
  */
-export function buildOracleIdSection({ evaluation, expectedBoundary, actualBoundary, pastArtifactsUnchanged }) {
+export function buildOracleIdSection({
+  evaluation,
+  expectedBoundary,
+  actualBoundary,
+  pastArtifactsUnchanged,
+  requiredSuiteIds = P4_REQUIRED_SUITE_IDS,
+}) {
   return [
     '## P4必須Oracle IDの結果（P4-O01〜O03）',
     `- P4-O01: ${verdictOf(evaluation.o01Passed)}（JDK 25実測値とSimulation Core期待値のJSON完全一致）`,
@@ -142,10 +226,39 @@ export function buildOracleIdSection({ evaluation, expectedBoundary, actualBound
     '  - 比較方式: 10進文字列のまま完全一致比較（JavaScript numberへ変換せず、1桁も損失しない）',
     `  - string型・正確値の検証（期待値 / 実測値）: ${verdictOf(expectedBoundary?.ok === true)} / ${verdictOf(actualBoundary?.ok === true)}`,
     `- P4-O03: ${verdictOf(evaluation.o03Passed)}（Oracle証跡書込みのP4限定）`,
-    `  - 必須4 suite（${REQUIRED_SUITE_IDS.join(' / ')}）が各1件存在（欠落・重複なし）: ${verdictOf(evaluation.requiredSuitesPresent)}`,
+    `  - 必須${requiredSuiteIds.length} suite（${requiredSuiteIds.join(' / ')}）が各1件存在（欠落・重複なし）: ${verdictOf(evaluation.requiredSuitesPresent)}`,
     `  - 書込みはP4のみ（P1〜P3はwriteReportPath: nullの照合のみ。書込み先はartifacts/phase-4/oracle-result.mdだけ）: ${verdictOf(evaluation.configOnlyP4Writes)}`,
     `  - 実行前後でartifacts/phase-1〜3のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
     `- 総合判定: ${verdictOf(evaluation.overallPassed)}（P4-O01〜O03のいずれかがFAILなら総合もFAIL）`,
+  ]
+}
+
+/**
+ * artifacts/phase-5/oracle-result.mdへ出力するP5-O01・P5-O02の結果セクション。
+ * evaluateCurrentPhaseOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
+ */
+export function buildCurrentPhaseOracleIdSection({
+  evaluation,
+  pastArtifactsUnchanged,
+  regression,
+  requiredSuiteIds = REQUIRED_SUITE_IDS,
+  currentPhaseReportPath = CURRENT_PHASE_REPORT_PATH,
+}) {
+  return [
+    '## P5必須Oracle IDの結果（P5-O01・P5-O02）',
+    `- P5-O01: ${verdictOf(evaluation.o01Passed)}（JDK 25実測値とSimulation Core期待値のJSON完全一致）`,
+    '  - unordered結果の比較正規化: 順序意味論を持たないSet / Mapはキー・要素の表示文字列の辞書順へ正規化してから照合（正規化は比較のためだけであり、JDKのiteration order保証を意味しない）',
+    '  - TreeMap（順序意味論あり）は正規化せず実順序のまま照合（順序自体が検証対象）',
+    '  - 数値は正規化後もJSON文字列表現で厳密照合（64bit境界値・±Infinityは10進文字列のまま比較）',
+    `- P5-O02: ${verdictOf(evaluation.o02Passed)}（Oracle運用検証）`,
+    `  - 必須${requiredSuiteIds.length} suite（${requiredSuiteIds.join(' / ')}）が各1件存在（欠落・重複なし）: ${verdictOf(evaluation.requiredSuitesPresent)}`,
+    `  - 証跡書込みは現行Phase（P5）のみ（書込み先は${currentPhaseReportPath}だけ。P1〜P4はwriteReportPath: nullの照合のみ）: ${verdictOf(evaluation.configOnlyCurrentPhaseWrites)}`,
+    `  - 実行前後でartifacts/phase-1〜phase-4のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
+    '',
+    '## 過去Phase suiteの回帰結果（照合のみ・証跡書込みなし）',
+    ...regression.map((line) => `- ${line}`),
+    '',
+    `- 総合判定: ${verdictOf(evaluation.overallPassed)}（P5-O01・P5-O02のいずれかがFAILなら総合もFAIL）`,
   ]
 }
 

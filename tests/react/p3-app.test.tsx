@@ -49,7 +49,7 @@ afterEach(() => {
 })
 
 describe('P3 React統合', () => {
-  it('P3-R01: Phase 3操作とtemplateを選択でき、Phase 4以降は未実装表示', async () => {
+  it('P3-R01: Phase 3操作とtemplateを選択でき、未実装リストが空である', async () => {
     const user = userEvent.setup()
     renderApp()
     const select = screen.getByTestId('operation-select') as HTMLSelectElement
@@ -60,13 +60,11 @@ describe('P3 React統合', () => {
       expect(byValue(op), op).toBeDefined()
       expect(byValue(op)?.disabled, op).toBe(false)
     }
-    // Phase 4以降は未実装として選択不能
+    // Phase 5指示§10.1により未実装リストは0件となった（Phase 3時点の未実装表示検証を
+    // 「未実装リストが空で、空のoptgroupを描画しない」の検証へ更新する）
     const unimplemented = options.filter((o) => o.value.startsWith('unimplemented-'))
-    expect(unimplemented.length).toBeGreaterThanOrEqual(7)
-    for (const o of unimplemented) {
-      expect(o.disabled).toBe(true)
-      expect(o.textContent).toMatch(/Phase [4-5]で実装予定/)
-    }
+    expect(unimplemented).toHaveLength(0)
+    expect(within(screen.getByTestId('operation-select')).queryByText(/未実装/)).toBeNull()
     // sortedはnatural / Comparatorのtemplateを区別して選択できる
     await selectOperation(user, 'sorted')
     const templateSelect = screen.getByTestId('template-select') as HTMLSelectElement

@@ -106,7 +106,7 @@ describe('P4-D39 PROCESSING・deep freeze・予算', () => {
   })
 })
 
-describe('P4-D40 短絡合成とPhase 5未実装', () => {
+describe('P4-D40 短絡合成とCatalog登録範囲', () => {
   it('P4-D40: sorted → findFirstはsort後の最初の放出で短絡し、残りを放出しない', () => {
     const def = makeCustomDefinition(
       {
@@ -230,9 +230,16 @@ describe('P4-D40 短絡合成とPhase 5未実装', () => {
     expect(snapshots.slice(scIdx + 1).map((s) => s.kind)).toEqual(['RESULT_CONFIRMED', 'STREAM_CONSUMED'])
   })
 
-  it('P4-D40: Phase 5のcollect / Collectorsは未実装（Catalog未登録・template未登録）', () => {
+  it('P4-D40: collect / 3引数collectはcollector categoryで登録され、Collectors各種は操作ではなくCollector AST kindである', () => {
+    // Phase 5実装に伴い現状へ更新した（Phase 5指示 §12の許可範囲）。
+    // 検証意味は「OperationCatalogの登録範囲が仕様どおりであること」を維持する:
+    // collect / collectTripleは操作として登録し、Collectors.*は操作ではなくCollector AST kindとして扱う。
     const catalog = createDefaultCatalog()
-    expect(catalog.has('collect')).toBe(false)
+    expect(catalog.has('collect')).toBe(true)
+    expect(catalog.get('collect').category).toBe('collector')
+    expect(catalog.has('collectTriple')).toBe(true)
+    expect(catalog.get('collectTriple').category).toBe('collector')
+    // Collectors.groupingBy / partitioningByはCollector AST内のkindであり、操作としては登録しない
     expect(catalog.has('groupingBy')).toBe(false)
     expect(catalog.has('partitioningBy')).toBe(false)
     void tplSink

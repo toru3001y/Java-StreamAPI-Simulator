@@ -56,6 +56,7 @@ export function ScenarioControls({ app, state }: { app: AppInstance; state: Sess
   const sourceCategory = app.operations.filter((op) => op.category === 'source')
   const intermediateCategory = app.operations.filter((op) => op.category === 'intermediate')
   const terminalCategory = app.operations.filter((op) => op.category === 'terminal')
+  const collectorCategory = app.operations.filter((op) => op.category === 'collector')
 
   return (
     <section
@@ -99,13 +100,23 @@ export function ScenarioControls({ app, state }: { app: AppInstance; state: Sess
                 </option>
               ))}
             </optgroup>
-            <optgroup label="未実装（Phase 5以降）">
-              {UNIMPLEMENTED_OPERATIONS.map((op) => (
-                <option key={op.name} value={`unimplemented-${op.name}`} disabled>
-                  {op.name}（Phase {op.phase}で実装予定）
+            <optgroup label={CATEGORY_LABELS['collector'] ?? 'Collector'}>
+              {collectorCategory.map((op) => (
+                <option key={op.operationId} value={op.operationId}>
+                  {op.displayName}
                 </option>
               ))}
             </optgroup>
+            {/* 未実装リストが空のときは空のoptgroupを描画しない（Phase 5指示 §10.1） */}
+            {UNIMPLEMENTED_OPERATIONS.length > 0 && (
+              <optgroup label="未実装（Phase 6以降）">
+                {UNIMPLEMENTED_OPERATIONS.map((op) => (
+                  <option key={op.name} value={`unimplemented-${op.name}`} disabled>
+                    {op.name}（Phase {op.phase}で実装予定）
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </label>
         <label>

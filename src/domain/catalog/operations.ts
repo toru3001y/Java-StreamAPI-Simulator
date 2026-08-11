@@ -2,8 +2,9 @@ import { OperationCatalog } from './operationCatalog'
 import type { OperationDefinition } from './operationCatalog'
 
 /**
- * Phase 3までのOperation Catalog（Draft v0.8 §7、Phase 3指示 §5）。
- * Phase 4以降の操作（reduce等の終端、Collector）は登録しない。
+ * Operation Catalog（Draft v0.8 §7）。
+ * Phase 1〜3の生成・中間操作、Phase 4の終端操作、Phase 5のCollector系（collect / 3引数collect）
+ * を登録する。Phase 6のAI関連操作は登録しない。
  */
 
 // ---- source（§5.1） ----
@@ -58,6 +59,37 @@ export const OP_SUMMARY_STATISTICS = 'summaryStatistics'
 export const OP_TO_ARRAY = 'toArray'
 export const OP_FOR_EACH = 'forEach'
 export const OP_FOR_EACH_ORDERED = 'forEachOrdered'
+
+// ---- Phase 5 Collector（指示§5・§7.2） ----
+export const OP_COLLECT = 'collect'
+export const OP_COLLECT_TRIPLE = 'collectTriple'
+
+/**
+ * Phase 5 Collector系操作（指示§7.2）。
+ * categoryは`collector`（UIのCollector optgroup）、traitsはTERMINALのみ。
+ * Collector内部の蓄積状態はJava API上のstateful intermediate operationとは別概念のため
+ * STATEFUL traitは付けない（Phase 4 terminalと同じ規律）。
+ */
+const collectorDef = (
+  operationId: string,
+  displayName: string,
+  visualizationKind: string,
+  jdkNotes: readonly string[],
+  sourceRefs: readonly string[],
+): OperationDefinition => ({
+  operationId,
+  category: 'collector',
+  traits: ['TERMINAL'],
+  // primitive特化Streamのcollectは対象外のため、object Streamのみを受け付ける
+  inputTypeRule: { kind: 'anyStream' },
+  outputTypeRule: { kind: 'fromCollector' },
+  handlerId: `handler.${operationId}`,
+  visualizationKind,
+  legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED'],
+  jdkNotes,
+  sourceRefs,
+  displayName,
+})
 
 function sourceDef(
   operationId: string,
@@ -513,6 +545,34 @@ export function createDefaultCatalog(): OperationCatalog {
       'forEachOrderedはencounter orderでConsumerを実行する。戻り値はvoid。',
       'sequential実行ではforEachと同じ順序になるが、parallelでの順序保証の有無が両者の違いである（初版はsequential実行のみ）。',
     ], ['JDK25-STREAM']),
+  )
+
+  // ---- Phase 5 Collector（指示§5・§7.2）。結果型はCollector ASTから導出する ----
+  catalog.register(
+    collectorDef(
+      OP_COLLECT,
+      'collect（Collector）',
+      '単純Collector型',
+      [
+        'collect(Collector)は可変リダクションであり、Collectorがsupplier / accumulator / combiner / finisherを束ねる。',
+        'Collectors.toList()が返すListは可変性・型・thread-safetyを保証しない。Stream.toList()のunmodifiableとは異なる。',
+        'groupingBy / toSet等が返すMap / Setのiteration orderはJDKの保証対象ではない（教材の表示順は学習用の安定順序）。',
+      ],
+      ['JDK25-STREAM', 'JDK25-COLLECTORS'],
+    ),
+  )
+  catalog.register(
+    collectorDef(
+      OP_COLLECT_TRIPLE,
+      'collect（Supplier, BiConsumer, BiConsumer）',
+      '単純Collector型',
+      [
+        '3引数collectはsupplier / accumulator / combinerを直接渡す「裸の可変リダクション」であり、その抽象化がCollectorである。',
+        'combinerはparallel reductionで必要となる。sequential実行では呼ばれない（呼出し0回）。',
+        'primitive特化Streamの3引数collectは初版の対象外である。',
+      ],
+      ['JDK25-STREAM'],
+    ),
   )
 
   return catalog

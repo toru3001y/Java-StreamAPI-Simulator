@@ -1,4 +1,5 @@
 import type { DslPredicate } from '../dsl/ast'
+import type { CollectTripleDsl, CollectorDsl } from '../dsl/collectorAst'
 import type { ComparatorDsl } from '../dsl/comparatorAst'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
@@ -39,6 +40,10 @@ export interface PipelineNodeDef {
   readonly hasCombiner: boolean
   /** toArray(generator)の検証済みgenerator（Phase 4指示 §8） */
   readonly arrayGenerator: ArrayGeneratorDsl | null
+  /** collect(Collector)のCollector AST（Phase 5指示 §7.1） */
+  readonly collector: CollectorDsl | null
+  /** 3引数collectの定義済みID組合せ（Phase 5指示 §7.1） */
+  readonly collectTriple: CollectTripleDsl | null
   readonly inputType: TypeRef | null
   readonly outputType: TypeRef
   readonly lineId: LineId

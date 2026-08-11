@@ -27,6 +27,19 @@ import {
   reductionToJavaExpr,
 } from '../dsl/javaCode'
 import { distinctKeyOf } from './distinctKey'
+import type { CollectorRuntime } from './collectorRuntime'
+import {
+  collectorAccumulate,
+  collectorAtRootPath,
+  collectorContextView,
+  collectorCreateContainer,
+  collectorFinalLabel,
+  collectorFinish,
+  collectorNeedsContainerCreated,
+  collectorResultView,
+  collectorUsesOutputItems,
+  createCollectorRuntime,
+} from './collectorRuntime'
 import {
   formatDoubleLiteral,
   formatLongLiteral,
@@ -819,8 +832,30 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
 
   for (const element of def.dataset) b.registerElement(element.elementId)
 
-  // Phase 4 terminal runtime（toList以外の終端。§10）
-  const terminalRt = sink.operationId === 'toList' ? null : createTerminalRuntime(sink)
+  // Phase 5 Collector runtime（collect / 3引数collect。§9）
+  const isCollect = sink.operationId === 'collect' || sink.operationId === 'collectTriple'
+  let collectorRt: CollectorRuntime | null = null
+  if (isCollect) {
+    if (!sink.inputType || sink.inputType.kind !== 'stream') {
+      throw new EngineInvariantError(`node ${sink.nodeId} はobject Streamの入力が必要です`)
+    }
+    collectorRt = createCollectorRuntime(
+      sink.nodeId,
+      sink.inputType.elementType,
+      sink.collector,
+      sink.collectTriple,
+    )
+  }
+  const syncCollector = (): void => {
+    if (!collectorRt) return
+    b.setContext(sink.nodeId, collectorContextView(collectorRt))
+    b.terminalResult = collectorResultView(collectorRt)
+  }
+  syncCollector()
+
+  // Phase 4 terminal runtime（toList・collect系以外の終端。§10）
+  const terminalRt =
+    sink.operationId === 'toList' || isCollect ? null : createTerminalRuntime(sink)
   const syncTerminal = (): void => {
     if (!terminalRt) return
     const ctx = terminalContextView(terminalRt, def)
@@ -905,6 +940,46 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     const name = shortLabel(value)
     b.setState(elementId, sink.nodeId, 'PASSED')
     b.setLatest(elementId, 'PASSED')
+
+    // Phase 5 Collector: 到着 → 経路・蓄積の確定snapshot列（§9.1）
+    if (collectorRt) {
+      const rt = collectorRt
+      b.push({
+        kind: 'NODE_ARRIVAL',
+        activeNode: sink,
+        currentElementId: elementId,
+        parentElementId,
+        processing: {
+          title: `${sink.displayName}への要素到着`,
+          inputLabel: `${name} → collect`,
+          expression: null,
+          evaluation: null,
+          outcome: 'Collectorへ渡されます',
+        },
+        currentText: `${name}が${sink.displayName}へ到着しました。`,
+      })
+      collectorAccumulate(rt, elementId, value, (input) => {
+        // rootがLIST variantのときだけ既存のSnapshotOutput.itemsへ追加する（非破壊の再利用）
+        if (
+          collectorUsesOutputItems(rt) &&
+          input.kind === 'CONTAINER_UPDATED' &&
+          collectorAtRootPath(rt)
+        ) {
+          b.addOutput(elementId, label)
+        }
+        syncCollector()
+        b.push({
+          kind: input.kind,
+          activeNode: sink,
+          currentElementId: input.currentElementId,
+          parentElementId,
+          processing: input.processing,
+          currentText: input.currentText,
+          jdkNote: input.jdkNote ?? null,
+        })
+      })
+      return true
+    }
 
     // toList: Phase 1からの既存動作を維持
     if (!terminalRt) {
@@ -2032,6 +2107,22 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     confirmPendingShortCircuits()
   }
 
+  // ---- Collector: supplier適用によるコンテナ生成（3引数collectは必須。§9.1規則6・§9.4） ----
+  if (collectorRt && collectorNeedsContainerCreated(collectorRt)) {
+    const rt = collectorRt
+    collectorCreateContainer(rt, (input) => {
+      syncCollector()
+      b.push({
+        kind: input.kind,
+        activeNode: sink,
+        currentElementId: input.currentElementId,
+        processing: input.processing,
+        currentText: input.currentText,
+        jdkNote: input.jdkNote ?? null,
+      })
+    })
+  }
+
   // ---- identityありreduce: 実行開始時にidentityを累積初期値として常時表示する（§6.1） ----
   if (terminalRt && sink.operationId === 'reduce' && sink.identity && sink.reduction) {
     terminalRt.acc = identityToSimValue(
@@ -2261,7 +2352,41 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   }
 
   b.clearFlatMapCtx()
-  if (!terminalRt) {
+
+  // ---- Collector finish stage（全要素処理後の構造snapshot。§6.2・§9.1・§9.3） ----
+  if (collectorRt) {
+    const rt = collectorRt
+    collectorFinish(rt, (input) => {
+      syncCollector()
+      b.push({
+        kind: input.kind,
+        activeNode: sink,
+        currentElementId: input.currentElementId,
+        processing: input.processing,
+        currentText: input.currentText,
+        jdkNote: input.jdkNote ?? null,
+      })
+    })
+    syncCollector()
+    const finalLabel = collectorFinalLabel(rt)
+    b.push({
+      kind: 'RESULT_CONFIRMED',
+      activeNode: sink,
+      processing: {
+        title: '終端結果確定',
+        inputLabel: null,
+        expression: null,
+        evaluation: null,
+        outcome: `結果（${formatTypeRef(def.resultType)}）が確定しました: ${finalLabel}`,
+      },
+      currentText: `終端結果が確定しました。結果は${formatTypeRef(def.resultType)} = ${finalLabel}です。`,
+      jdkNote:
+        rt.op === 'collectTriple'
+          ? 'sequential実行のためcombinerは呼ばれませんでした（呼出し0回）。combinerはparallel reductionで必要になります。'
+          : 'Collectors.toList()等が返すコンテナの型・可変性・iteration orderはJDKの保証対象ではありません（Stream.toList()のunmodifiableとは異なります）。',
+      confirmed: true,
+    })
+  } else if (!terminalRt) {
     b.push({
       kind: 'RESULT_CONFIRMED',
       activeNode: sink,

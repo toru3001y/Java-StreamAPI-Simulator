@@ -1,9 +1,16 @@
 import type { SessionState } from '../../application/session'
+import type { TerminalResultView } from '../../domain/engine/snapshot'
 import {
   ELEMENT_STATE_LABELS,
   ELEMENT_STATE_SYMBOLS,
 } from '../../domain/engine/snapshot'
 import { formatSimValue } from '../../domain/model/value'
+import {
+  DISPLAY_ORDER_NOTICE,
+  JDK_ORDER_NOTICE,
+  projectEntryOrder,
+  projectItemOrder,
+} from '../displayOrderProjection'
 import { OperationStatePanel } from './OperationStatePanel'
 
 const INDEXED_SOURCE_KINDS = [
@@ -130,6 +137,174 @@ function TerminalResultOutput({ snapshot }: { snapshot: SessionState['snapshot']
           </span>
         </p>
       )
+    // ---- Phase 5: Collector結果（指示§9.5） ----
+    case 'COLLECTION':
+      return <CollectionResult result={result} />
+    case 'MAP':
+      return <MapResult result={result} />
+    case 'RECORD':
+      return (
+        <div data-testid="output-record">
+          <p className="record-name">
+            <code>{result.recordName}</code>
+          </p>
+          <table className="stats-table" data-testid="record-fields">
+            <tbody>
+              {result.fields.map((field) => (
+                <tr key={field.name}>
+                  <th>{field.name}</th>
+                  <td data-testid={`record-field-${field.name}`}>
+                    {field.valueLabel}
+                    <span className="scalar-type">（{field.typeLabel}）</span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
+  }
+}
+
+/** toSet / toCollection等のコンテナ結果（表示順はUIのDisplayOrderProjectionで決定的にする） */
+function CollectionResult({
+  result,
+}: {
+  result: Extract<TerminalResultView, { kind: 'COLLECTION' }>
+}) {
+  const jdkOrdered = result.displayOrderNote === null
+  const items = projectItemOrder(result.items, jdkOrdered)
+  return (
+    <div data-testid="output-collection" data-container={result.containerLabel}>
+      <p className="collection-meta" data-testid="collection-meta">
+        <code>
+          {result.containerLabel}&lt;{result.elementTypeLabel}&gt;
+        </code>{' '}
+        / size: {result.size}
+      </p>
+      {result.size === 0 ? (
+        <p className="empty-note" data-testid="collection-empty">
+          []（0件）
+        </p>
+      ) : (
+        <ol className="element-list output-list" data-testid="collection-items">
+          {items.map((item) => (
+            <li key={`${item.id}:${item.label}`} data-element-id={item.id}>
+              {item.label}
+            </li>
+          ))}
+        </ol>
+      )}
+      {result.displayOrderNote && (
+        <p className="op-context-note" data-testid="collection-order-note">
+          {DISPLAY_ORDER_NOTICE}
+        </p>
+      )}
+      {result.elementIdNote && (
+        <p className="op-context-note" data-testid="collection-element-id-note">
+          {result.elementIdNote}
+        </p>
+      )}
+    </div>
+  )
+}
+
+/**
+ * groupingBy / partitioningByのMap結果（値はdownstream結果として入れ子で描画する）。
+ * nested（Map値としての入れ子）ではtest idを重複させない。
+ */
+function MapResult({
+  result,
+  nested = false,
+}: {
+  result: Extract<TerminalResultView, { kind: 'MAP' }>
+  nested?: boolean
+}) {
+  const entries = projectEntryOrder(result.entries, result.jdkOrdered)
+  const testId = (name: string) => (nested ? undefined : name)
+  return (
+    <div
+      data-testid={testId('output-map')}
+      className={nested ? 'nested-map' : undefined}
+      data-container={result.containerLabel}
+      data-jdk-ordered={result.jdkOrdered || undefined}
+    >
+      <p className="collection-meta" data-testid={testId('map-meta')}>
+        <code>
+          {result.containerLabel}&lt;{result.keyTypeLabel}, {result.valueTypeLabel}&gt;
+        </code>{' '}
+        / size: {result.size}
+      </p>
+      {result.size === 0 ? (
+        <p className="empty-note" data-testid={testId('map-empty')}>
+          {'{}'}（0件）
+        </p>
+      ) : (
+        <ul className="map-entries" data-testid={testId('map-entries')}>
+          {entries.map((entry) => (
+            <li key={entry.keyRef} data-key-ref={entry.keyRef}>
+              <span className="map-key">{entry.keyLabel}</span>
+              <span className="map-arrow" aria-hidden="true">
+                {' = '}
+              </span>
+              <div className="map-value">
+                <NestedResult result={entry.value} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="op-context-note" data-testid={testId('map-order-note')}>
+        {result.jdkOrdered ? JDK_ORDER_NOTICE : DISPLAY_ORDER_NOTICE}
+      </p>
+    </div>
+  )
+}
+
+/** Map値（downstream結果）の入れ子描画。値も確定snapshotのview構造だけを使う */
+function NestedResult({ result }: { result: TerminalResultView }) {
+  switch (result.kind) {
+    case 'SCALAR':
+      return <code>{result.valueLabel}</code>
+    case 'OPTIONAL':
+      return (
+        <code>
+          {result.present
+            ? `${result.optionalTypeLabel}[${result.valueLabel}]`
+            : `${result.optionalTypeLabel}.empty()`}
+        </code>
+      )
+    case 'COLLECTION':
+      return result.size === 0 ? (
+        <code className="empty-note">[]</code>
+      ) : (
+        <ol className="element-list nested-list">
+          {projectItemOrder(result.items, result.displayOrderNote === null).map((item) => (
+            <li key={`${item.id}:${item.label}`} data-element-id={item.id}>
+              {item.label}
+            </li>
+          ))}
+        </ol>
+      )
+    case 'MAP':
+      return <MapResult result={result} nested />
+    case 'STATISTICS':
+      return (
+        <code>
+          count={result.countLabel}, sum={result.sumLabel}, min={result.minLabel}, average=
+          {result.averageLabel}, max={result.maxLabel}
+        </code>
+      )
+    case 'RECORD':
+      return (
+        <code>
+          {result.recordName}[{result.fields.map((f) => `${f.name}=${f.valueLabel}`).join(', ')}]
+        </code>
+      )
+    case 'LIST':
+    case 'ARRAY':
+    case 'VOID':
+      return <code>—</code>
   }
 }
 

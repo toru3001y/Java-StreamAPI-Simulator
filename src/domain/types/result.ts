@@ -18,6 +18,8 @@ export type ValidationCode =
   | 'UNSAFE_BOUNDEDNESS'
   /** unordered sourceへのtakeWhile / dropWhile（Phase 3指示 §7.6・§7.7） */
   | 'UNORDERED_WHILE'
+  /** Collector ASTの入れ子が教材制約の上限を超える（Phase 5指示 §7.1） */
+  | 'COLLECTOR_DEPTH'
 
 export interface ValidationIssue {
   readonly code: ValidationCode

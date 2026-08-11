@@ -71,6 +71,22 @@ export type ParameterSlot =
       readonly required: boolean
       readonly allowedElementTypeNames: readonly string[]
     }
+  /** collect(Collector)のCollector AST（Phase 5指示 §7.2） */
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'collector'
+      readonly required: boolean
+      /** AST中に現れるすべてのcollectorKindがこの範囲内であることを検証する */
+      readonly allowedCollectorKinds: readonly string[]
+    }
+  /** 3引数collect（Supplier / BiConsumer / BiConsumer）のID組合せ（Phase 5指示 §7.2） */
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'collectTriple'
+      readonly required: boolean
+    }
 
 export interface PipelineTemplateNode {
   readonly nodeId: NodeId

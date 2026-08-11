@@ -4,7 +4,8 @@ import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
 import { EMPLOYEE_FIELDS } from '../model/employee'
-import { operatorToJava } from './javaCode'
+import { formatLongLiteral } from '../model/value'
+import { operatorToJava, predicateLiteralToJava } from './javaCode'
 
 /**
  * 検証済みDSL / ASTからの自然文説明生成（§9.1）。
@@ -15,25 +16,25 @@ const OPERATOR_TEXT: Readonly<Record<string, string>> = {
   LT: '未満',
 }
 
+/** 比較対象の実値をliteral型に合わせて表示する（long定数は`5_500_000L`形式） */
+function predicateValueText(predicate: DslPredicate, value: number): string {
+  return predicate.value.type === 'long' ? formatLongLiteral(value) : String(value)
+}
+
 /** 例: 「ageが30以上かを判定します」「現在値nが5未満かを判定します」 */
 export function describePredicate(predicate: DslPredicate): string {
   const opText = OPERATOR_TEXT[predicate.operator]
   if (!opText) throw new Error(`unsupported operator: ${predicate.operator}`)
-  if (predicate.value.type !== 'int') {
-    throw new Error(`unsupported literal type: ${predicate.value.type}`)
-  }
+  const literal = predicateLiteralToJava(predicate)
   if (predicate.kind === 'currentValueCompare') {
-    return `現在値nが${predicate.value.value}${opText}かを判定します`
+    return `現在値nが${literal}${opText}かを判定します`
   }
-  return `${predicate.field}が${predicate.value.value}${opText}かを判定します`
+  return `${predicate.field}が${literal}${opText}かを判定します`
 }
 
-/** 例: 「35 >= 30」「6 < 5」（比較の実値表示、ASCII構文） */
+/** 例: 「35 >= 30」「5_500_000L >= 5_000_000L」（比較の実値表示、ASCII構文） */
 export function comparisonExpr(predicate: DslPredicate, fieldValue: number): string {
-  if (predicate.value.type !== 'int') {
-    throw new Error(`unsupported literal type: ${predicate.value.type}`)
-  }
-  return `${fieldValue} ${operatorToJava(predicate.operator)} ${predicate.value.value}`
+  return `${predicateValueText(predicate, fieldValue)} ${operatorToJava(predicate.operator)} ${predicateLiteralToJava(predicate)}`
 }
 
 /** 例: 「佐藤.age() → 35」（値遷移はUnicode矢印、§17.4） */
@@ -42,11 +43,12 @@ export function fieldValueFlow(
   elementName: string,
   fieldValue: number,
 ): string {
+  const valueText = predicateValueText(predicate, fieldValue)
   if (predicate.kind === 'currentValueCompare') {
-    return `n → ${fieldValue}`
+    return `n → ${valueText}`
   }
   const accessor = EMPLOYEE_FIELDS[predicate.field]?.accessor ?? `${predicate.field}()`
-  return `${elementName}.${accessor} → ${fieldValue}`
+  return `${elementName}.${accessor} → ${valueText}`
 }
 
 const DIRECTION_TEXT = { ASC: '昇順', DESC: '降順' } as const
