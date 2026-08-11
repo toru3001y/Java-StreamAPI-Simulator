@@ -636,7 +636,7 @@ Draft v0.8・`docs/phase-5-decisions.md` §1〜§12・Phase 5実装指示書の�
 - レスポンシブ最終調整、総合試験
 - parallelStream実行シミュレーション（combinerの実実行）は初版対象外のまま
 
-## 19. 最終 `git diff --stat` / `git status --short` と、commit・push・PRを行っていないことの確認
+## 19. 最終 `git diff --stat` / `git status --short` と、commit・push・PRの実施状況
 
 ### 19.1 変更規模
 
@@ -677,12 +677,16 @@ Draft v0.8・`docs/phase-5-decisions.md` §1〜§12・Phase 5実装指示書の�
 | 9 | E2Eキャプチャの書込み対象Phaseが5のみで`artifacts/phase-1`〜`phase-4`が変更されない | OK（`CAPTURE_TARGET_PHASE = 5`の1か所のみ変更） |
 | 10 | `git diff --check` / `git diff --stat` / `git status --short`で変更範囲を確認 | OK（§19.1） |
 
-### 19.3 commit / push / PR / merge を行っていないことの確認
+### 19.3 報告書作成時点でcommit / push / PR / merge を行っていないことの確認
 
-指示§18に従い、**commit・push・Pull Request作成・`main`へのmergeはいずれも行っていない**。
-すべての変更は`phase-5`ブランチの作業ツリー上の未コミット変更として残している
+指示§18に従い、**本報告書の作成時点ではcommit・push・Pull Request作成・`main`へのmergeを
+いずれも行っていない**。すべての変更は`phase-5`ブランチの作業ツリー上の未コミット変更として残している
 （`git log`のHEADは開始時と同じ`639efb900c3e49911146f71cfbde9b78867396ec`）。
 ユーザーの既存変更を削除・stash・reset・checkoutで破棄していない。
+
+第3回レビュー（§22）で「承認可」判定を得たのち、ユーザーから別途
+**commit・push・Pull Request作成の指示**を受けて実施した。実施内容とcommit SHAは§23に記載する。
+`main`へのmergeは指示に含まれないため**行っていない**。
 
 ## 20. 第1回codexレビュー対応（2026-08-12）
 
@@ -834,5 +838,26 @@ codexから「`memory/phase-status.md`はリポジトリ内に存在しないた
 | 第2回 | **承認可** | Nit 3件 |
 | 第3回 | **承認可** | Nit 1件 |
 
-累計10件すべて是正済み。commit・push・PR・mergeは引き続き未実施
+累計10件すべて是正済み。第3回レビュー時点ではcommit・push・PR・mergeをいずれも未実施
 （HEADは`639efb900c3e49911146f71cfbde9b78867396ec`）。
+その後のcommit・push・PR作成については§23を参照。
+
+## 23. commit / push / Pull Request
+
+第3回レビューで「Phase 5完了として承認可」判定を得たのち、ユーザーから
+**commit → push → Pull Request作成まで（mergeは行わない）**の指示を受けて実施した。
+Phase 4と同じ2段構成で、本体commitのSHAを本報告書へ追記してから報告書commitを作成している。
+
+| # | 内容 | commit SHA |
+|---|---|---|
+| 1 | Phase 5本体実装（追跡変更50ファイル + 新規45ファイル。本報告書を含む） | `4eb7a51bbd4fddc3b209d4a18955e42951b7e282` |
+| 2 | 本報告書へ§19.3の実施状況と本節（commit SHA）を追記 | 本commit自身（SHAは最終回答で報告） |
+
+- commit 1 の内訳: `git status --short`で確認した追跡変更50件と未追跡24エントリ
+  （うち`artifacts/phase-5/`＝19ファイル、`e2e/__screenshots__/phase5.spec.ts/`＝4ファイルを展開して計45ファイル）
+  の合計95ファイル。`.gitignore`対象（`dist/` / `node_modules/` / `test-results/`）は含まない。
+- push先: `origin/phase-5`（`phase-5`ブランチのみ。`main`へは書き込まない）
+- Pull Request: base `main` / head `phase-5`。**mergeは実施しない**（指示範囲外）
+- 本報告書は commit 1 の時点でリポジトリへ追加済みであるため、§19.1の
+  `git diff --stat`（50 files changed, 2651 insertions(+), 180 deletions(-)）は
+  **commit前の未追跡状態での実測値**である。commit後は本報告書も追跡ファイルとなる。
