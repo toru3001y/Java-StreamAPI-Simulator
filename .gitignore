@@ -16,6 +16,10 @@ dist-ssr
 test-results
 playwright-report
 
+# Python (tools/)
+__pycache__/
+*.py[cod]
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
