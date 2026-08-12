@@ -24,7 +24,8 @@
 
 - 基準コミット: `ad7f37c0b9403bf29633ec9348a17a64c1033a22`（`main`。Phase 5完了 + v0.9 / v0.10仕様書 + 統合docx）
 - 作業ブランチ: `phase-6`（開始時HEAD `d5c63da`。基準コミットの子孫であることを `git merge-base --is-ancestor` で確認）
-- **commit / push / Pull Request / mainへのmergeは行っていない**（§18）
+- 実装中はcommit / push / PR / mergeを行っていない（§18）。レビュー完了後にユーザーの明示指示を受けて
+  commit・push・PR作成を実施した（**`main`へのmergeは未実施**）。詳細は§18
 
 ### 変更前の基準結果（§3.3）
 
@@ -544,9 +545,13 @@ Phase 6実装指示 §18により、実装中はcommit / push / PR / mergeを行
 |---|---|
 | `d5c63da` | （Phase 6着手前）Phase 6実装指示書の追加 |
 | `8ea82c5` | Phase 6本体（82ファイル、+10544 / -216）。src / tests / e2e / oracle / artifacts/phase-6 / 視覚回帰基準画像 / README / vite.config.ts |
-| `<docs-commit>` | Phase 6完了報告と判断記録（`docs/phase-6-completion-report.md` / `docs/phase-6-decisions.md`） |
+| `8558136` | Phase 6完了報告と判断記録（`docs/phase-6-completion-report.md` / `docs/phase-6-decisions.md`） |
+| （本commit） | 本節へcommit SHAとPR URLを確定記載（commit自身のSHAは記載できないため `git log` で確認できる） |
 
-Pull Request: `<pr-url>`（base `main` / head `phase-6`。**未merge**）
+Pull Request: **#7** https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/7
+（base `main` / head `phase-6`。**未merge**）
+
+push先: `origin/phase-6`（`ad7f37c..8558136`）
 
 ### commitに含めなかったファイル（意図的）
 
