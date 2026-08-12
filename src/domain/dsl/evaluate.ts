@@ -1,6 +1,7 @@
 import type { DslPredicate } from './ast'
 import type { EmployeeValue } from '../model/employee'
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 
 /**
  * 検証済みDSLの安全な評価（§9.1）。
@@ -35,6 +36,7 @@ export function evaluatePredicate(predicate: DslPredicate, employee: EmployeeVal
 
 /** currentValueCompareで比較可能な数値SimValueを取り出す（Phase 3指示 §6.2） */
 export function numericValueOf(value: SimValue): number {
+  assertNotCompositeList(value, 'currentValueCompare')
   switch (value.kind) {
     case 'int':
     case 'long':
@@ -55,6 +57,7 @@ export function numericValueOf(value: SimValue): number {
  * 評価・fieldValueFlow・comparisonExpr・処理中表示はすべてこの同じ値を参照する。
  */
 export function predicateComparisonValue(predicate: DslPredicate, value: SimValue): number {
+  assertNotCompositeList(value, 'Predicate評価')
   if (predicate.kind === 'fieldCompare') {
     if (value.kind !== 'employee') {
       throw new Error('fieldCompareはEmployee要素が必要です')
@@ -69,6 +72,7 @@ export function predicateComparisonValue(predicate: DslPredicate, value: SimValu
  * fieldCompareはEmployee要素、currentValueCompareはprimitive / wrapper要素へ適用する。
  */
 export function evaluateValuePredicate(predicate: DslPredicate, value: SimValue): boolean {
+  assertNotCompositeList(value, 'Predicate評価')
   return compareByOperator(
     predicate.operator,
     predicateComparisonValue(predicate, value),

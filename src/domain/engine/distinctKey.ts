@@ -1,4 +1,5 @@
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 
 /**
  * distinctの等価判定キー（Phase 3指示 §7.2）。
@@ -32,5 +33,9 @@ export function distinctKeyOf(value: SimValue, elementId?: string): string {
     case 'doubleArray':
       // Javaの配列equalsは参照比較。要素（インスタンス）ごとに別キーとして扱う
       return `arr:${value.kind}:${elementId ?? JSON.stringify(value.value)}`
+    case 'list':
+      // Phase 7範囲ではgatherの下流はtoList / findFirstのみで、合成List値はdistinctへ到達しない
+      // （v0.9 §8.4のPipeline合成の限定）。到達した場合はエンジン内部の不整合（§5.2、P7-D07）
+      return assertNotCompositeList(value, 'distinct') as never
   }
 }

@@ -87,6 +87,15 @@ export type ParameterSlot =
       readonly kind: 'collectTriple'
       readonly required: boolean
     }
+  /** gather(Gatherer)の組み込みGatherer DSL（Phase 7指示 §7.5。12種目） */
+  | {
+      readonly slotId: SlotId
+      readonly targetNodeId: NodeId
+      readonly kind: 'gatherer'
+      readonly required: boolean
+      /** このslotで許可するGatherer kind（windowFixed / windowSliding / scan / fold） */
+      readonly allowedGathererKinds: readonly string[]
+    }
 
 export interface PipelineTemplateNode {
   readonly nodeId: NodeId

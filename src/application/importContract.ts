@@ -1396,8 +1396,31 @@ function slotSpecOf(slot: ParameterSlot, template: PipelineTemplate): SpecNode {
       return { node: 'collector', allowedKinds: slot.allowedCollectorKinds }
     case 'collectTriple':
       return COLLECT_TRIPLE_SPEC
+    case 'gatherer':
+      // Phase 7指示 §7.8-2: gather DSLは取込対象へ開放しない（v0.9 §10-6のユーザー決定）。
+      // 許可値0件の列挙spec = いかなる値も受理しない全拒否spec。専用variantは追加しない。
+      // gather templateは importable: false のため実際には取込へ到達しないが、
+      // 取込UIは選択中templateのContractを毎render構築するため、caseがないと
+      // specがundefinedのままContractへ入るruntime穴になる。防御として必須とする。
+      return GATHERER_REJECT_ALL_SPEC
   }
 }
+
+/** gatherer slotの全拒否spec（§7.8-2。許可値を持つspecを追加してはならない） */
+export const GATHERER_REJECT_ALL_SPEC: SpecNode = {
+  node: 'enum',
+  values: [],
+  label: 'gatherer（取込対象外）',
+}
+
+/** gatherノードを含むtemplateか（取込対象外の導出。ノード構成由来で新規属性を追加しない） */
+export function hasGatherNode(template: PipelineTemplate): boolean {
+  return template.nodes.some((node) => node.operationId === 'gather')
+}
+
+/** gather templateを取込対象外とする理由（§7.8-1） */
+export const GATHER_NOT_IMPORTABLE_REASON =
+  'gatherを含むtemplateは手動連携の取込対象外です。固定サンプル（fixture）で実行してください。'
 
 /** templateがEmployee dataset（collection source）を使うか */
 export function usesEmployeeDataset(template: PipelineTemplate): boolean {
@@ -1431,12 +1454,19 @@ export function buildTemplateContract(template: PipelineTemplate): TemplateContr
     })
   }
   const datasetPolicy = usesEmployeeDataset(template) ? 'required' : 'forbidden'
+  // Phase 7指示 §7.8-1: 実行可能であってもgatherノードを含むtemplateは取込対象外とする
+  const gatherExcluded = hasGatherNode(template)
   return {
     templateId: template.templateId,
     templateVersion: template.version,
     supportedModes: template.supportedModes,
-    importable: template.executable !== false,
-    disabledReason: template.executable === false ? (template.disabledReason ?? null) : null,
+    importable: template.executable !== false && !gatherExcluded,
+    disabledReason:
+      template.executable === false
+        ? (template.disabledReason ?? null)
+        : gatherExcluded
+          ? GATHER_NOT_IMPORTABLE_REASON
+          : null,
     datasetPolicy,
     topLevelKeys: TOP_LEVEL_KEYS.filter((key) => key !== 'dataset' || datasetPolicy === 'required'),
     topLevelTypes: TOP_LEVEL_TYPES,

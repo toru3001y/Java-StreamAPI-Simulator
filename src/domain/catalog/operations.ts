@@ -64,6 +64,15 @@ export const OP_FOR_EACH_ORDERED = 'forEachOrdered'
 export const OP_COLLECT = 'collect'
 export const OP_COLLECT_TRIPLE = 'collectTriple'
 
+// ---- Phase 7 Gatherer（v0.9 §2.1、Phase 7指示 §7.5） ----
+/**
+ * `Stream.gather(Gatherer)`（46操作目）。
+ * 組み込み4種（windowFixed / windowSliding / scan / fold）は**操作として登録せず**、
+ * Gatherer DSLのkindとtemplateで表現する（Phase 5がCollectors各種を登録せず
+ * collect / collectTripleの2操作へ集約した前例）。
+ */
+export const OP_GATHER = 'gather'
+
 /**
  * Phase 5 Collector系操作（指示§7.2）。
  * categoryは`collector`（UIのCollector optgroup）、traitsはTERMINALのみ。
@@ -574,6 +583,32 @@ export function createDefaultCatalog(): OperationCatalog {
       ['JDK25-STREAM'],
     ),
   )
+
+  // ---- Phase 7 Gatherer（指示§7.5、v0.9 §2.1・§9）。出力要素型はGatherer DSLから導出する ----
+  catalog.register({
+    operationId: OP_GATHER,
+    category: 'intermediate',
+    // v0.9 §3.1: Stream.gatherは公式に "stateful intermediate operation"
+    traits: ['INTERMEDIATE', 'STATEFUL'],
+    // Stream.gatherはStream<T>にのみ存在し、型引数T / Rは参照型（v0.9 §2.2・§8.3）
+    inputTypeRule: { kind: 'anyStream' },
+    outputTypeRule: { kind: 'fromGatherer' },
+    handlerId: 'handler.gather',
+    // 窓束ね型 / 累積放出型 / 累積確定型（v0.9 §1.1の7）を代表する値
+    visualizationKind: '窓束ね・累積放出型',
+    legendStates: ['UNEVALUATED', 'PROCESSING', 'PASSED', 'BUFFERED'],
+    jdkNotes: [
+      'Stream.gather(Gatherer)はstateful intermediate operationであり、Gathererという収集戦略を差し替えられる拡張ポイントである（終端の収集戦略であるCollectorとの対比）。',
+      'Gatherer<T, A, R>はinitializer（中間状態の生成）/ integrator（必須。要素処理と状態更新、Downstream.pushによる出力）/ combiner（2状態の結合）/ finisher（stream終端時の処理）の4構成要素からなる。',
+      'integratorがfalseを返すと「もう要素を渡さない」のと同じ扱いになり短絡する。この教材では実行対象にせず説明のみとし、limit / takeWhileの短絡（実装済み）と対比する。',
+      'combinerがdefaultCombiner()のGathererはsequentialでのみ評価され得る。本教材は逐次実行のためcombinerの呼出しは0回である。',
+      'Gatherers.mapConcurrent(int, Function)は仮想スレッドによる並行実行・タスクキャンセル・例外のRuntimeException再送出という並行実行の意味論を含むため、決定的な逐次Step Engineの対象外とする（存在と意味は補助説明で扱う）。',
+      'windowFixed / windowSlidingが産出する窓はunmodifiable Listであり、mutatorメソッドは常にUnsupportedOperationExceptionを送出する。',
+      'gatherはStream<T>にのみ存在し、primitive特化Stream版はJDKに存在しない。IntStream等からはboxed()経由で使用する。',
+    ],
+    sourceRefs: ['JDK25-STREAM', 'JDK25-GATHERER', 'JDK25-GATHERERS'],
+    displayName: 'gather',
+  })
 
   return catalog
 }

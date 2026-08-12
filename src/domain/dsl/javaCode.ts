@@ -4,6 +4,7 @@ import { TEEING_MERGER_RECORDS } from './collectorAst'
 import type { ComparatorDsl, ComparatorKey } from './comparatorAst'
 import { COMPARATOR_FIELD_JAVA_KIND } from './comparatorAst'
 import type { ConsumerDsl } from './consumerAst'
+import type { GatherAccumulationRule, GathererDsl } from './gatherAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
 import type { ArrayGeneratorDsl, ReductionDsl, ReductionIdentity } from './terminalAst'
@@ -43,6 +44,8 @@ export interface JavaCodeNodeSource {
   readonly collector: CollectorDsl | null
   /** 3引数collectの定義済みID組合せ（Phase 5） */
   readonly collectTriple: CollectTripleDsl | null
+  /** gather(Gatherer)の検証済みGatherer DSL（Phase 7） */
+  readonly gatherer: GathererDsl | null
 }
 
 export interface JavaCodeInput {
@@ -152,6 +155,37 @@ export function consumerToJavaExpr(consumer: ConsumerDsl): string {
   if (consumer.kind === 'printValue') return 'System.out::println'
   const accessor = EMPLOYEE_FIELDS[consumer.field]?.accessor ?? `${consumer.field}()`
   return `e -> System.out.println(e.${accessor})`
+}
+
+/**
+ * Gatherer DSLのJava式（Phase 7指示 §7.4-6）。
+ * `Gatherers.windowFixed(3)` / `Gatherers.scan(() -> 0, (acc, n) -> acc + n)` の形で
+ * 検証済みDSLから決定的に生成する。lambda引数は既存reduce（`reductionToJavaExpr`）と
+ * 同じ予約識別子（acc / e / n / s）の範囲から選ぶ。
+ */
+export function gathererToJavaExpr(gatherer: GathererDsl): string {
+  switch (gatherer.kind) {
+    case 'windowFixed':
+      return `Gatherers.windowFixed(${gatherer.size})`
+    case 'windowSliding':
+      return `Gatherers.windowSliding(${gatherer.size})`
+    case 'scan':
+      return `Gatherers.scan(() -> ${identityToJavaLiteral(gatherer.initial)}, ${gatherAccumulationToJavaExpr(gatherer.accumulation)})`
+    case 'fold':
+      return `Gatherers.fold(() -> ${identityToJavaLiteral(gatherer.initial)}, ${gatherAccumulationToJavaExpr(gatherer.accumulation)})`
+  }
+}
+
+/** Gatherer専用AccumulationRuleのBiFunction式（既存reduceのlambda表記規約と同形） */
+export function gatherAccumulationToJavaExpr(rule: GatherAccumulationRule): string {
+  switch (rule.kind) {
+    case 'numericSum':
+      return '(acc, n) -> acc + n'
+    case 'stringConcat':
+      return '(acc, s) -> acc + s'
+    case 'employeeFieldSum':
+      return `(acc, e) -> acc + e.${rule.field}()`
+  }
 }
 
 /** Reduction DSLのaccumulator式（Phase 4指示 §8） */
@@ -603,6 +637,9 @@ function nodeLineText(node: JavaCodeNodeSource): string {
       return `        .${node.operationId}(${mapperToJavaExpr(node.mapper)})`
     case 'distinct':
       return '        .distinct()'
+    case 'gather':
+      if (!node.gatherer) throw new Error(`gather node ${node.nodeId} has no gatherer`)
+      return `        .gather(${gathererToJavaExpr(node.gatherer)})`
     case 'sorted':
       return node.comparator && node.comparator.kind !== 'natural'
         ? `        .sorted(${comparatorToJavaExpr(node.comparator)})`

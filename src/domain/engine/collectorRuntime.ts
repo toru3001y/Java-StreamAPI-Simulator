@@ -24,6 +24,7 @@ import { resolveMapperOutputType } from '../dsl/validateMapper'
 import type { EmployeeValue } from '../model/employee'
 import type { SimValue } from '../model/value'
 import { formatDoubleLiteral, formatLongLiteral, formatSimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 import type { TypeRef } from '../types/typeRef'
 import { formatTypeRef } from '../types/typeRef'
 import type { ElementId, NodeId } from '../types/ids'
@@ -318,10 +319,12 @@ export function createCollectorRuntime(
 // ---- 値ユーティリティ ----
 
 function shortLabel(value: SimValue): string {
+  assertNotCompositeList(value, 'Collectorの要素表示')
   return value.kind === 'employee' ? value.value.name : formatSimValue(value)
 }
 
 function employeeOf(value: SimValue): EmployeeValue {
+  assertNotCompositeList(value, 'CollectorのEmployee取得')
   if (value.kind !== 'employee') throw new Error('Employee要素が必要です')
   return value.value
 }
@@ -341,6 +344,7 @@ function numericFieldValue(value: SimValue, field: string): number {
 }
 
 function stringOf(value: SimValue): string {
+  assertNotCompositeList(value, 'CollectorのString取得')
   if (value.kind !== 'string') throw new Error('String要素が必要です')
   return value.value
 }
@@ -870,6 +874,7 @@ function accumulateNode(
 }
 
 function classifierKey(classifier: ClassifierDsl, value: SimValue): { ref: string; label: string } {
+  assertNotCompositeList(value, 'Collectorのclassifier評価')
   const employee = employeeOf(value)
   switch (classifier.kind) {
     case 'employeeField': {

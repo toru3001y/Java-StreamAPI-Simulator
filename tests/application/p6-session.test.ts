@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../../src/ui/appInstance'
 import { FakeScheduler } from '../helpers'
-import { EXECUTABLE_TEMPLATES, templateById } from '../p6-helpers'
+import { IMPORTABLE_TEMPLATES, templateById } from '../p6-helpers'
 import { DSL_VERSION } from '../../src/domain/dsl/ast'
 import {
   buildTemplateContract,
@@ -194,9 +194,12 @@ describe('P6-A03 プロンプト生成', () => {
     }
   })
 
+  // 走査対象は「取込対象の実行可能template」（Phase 7指示 §12冒頭で許可された最小更新）。
+  // gather templateは実行可能だが取込対象外（importable: false）のためプロンプト生成へ到達しない。
+  // 実行不能template（tmpl-src-generate / tmpl-src-iterate2）の検証は不変（後続のitが担う）。
   it('P6-A03: プロンプトの出力例は全実行可能template × modeでそのまま取込できる', () => {
     const failures: string[] = []
-    for (const template of EXECUTABLE_TEMPLATES) {
+    for (const template of IMPORTABLE_TEMPLATES) {
       for (const mode of template.supportedModes) {
         const { app } = newApp()
         const prompt = app.generatePrompt(template.templateId, mode)

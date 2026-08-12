@@ -28,6 +28,12 @@ export type ValidationCode =
   | 'IMPORT_SCHEMA'
   /** 取込候補のtemplateId / templateVersion / mode / dslVersionが選択中と一致しない（v0.10 §6.1） */
   | 'IMPORT_CONTEXT_MISMATCH'
+  /**
+   * Gathererのwindow sizeが教材上限（16）を超える（v0.9 §8.2、Phase 7指示 §7.4-3）。
+   * 1未満はJDK実仕様（IllegalArgumentException）に対応する`STRUCTURE_INVALID`で拒否し、
+   * 教材上限超過だけをこのcodeへ分離する（`COLLECTOR_DEPTH`の前例）。
+   */
+  | 'GATHER_SIZE_LIMIT'
 
 export interface ValidationIssue {
   readonly code: ValidationCode

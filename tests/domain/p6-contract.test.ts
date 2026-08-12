@@ -8,6 +8,7 @@ import {
   RESERVED_TOP_LEVEL_KEYS,
   TOP_LEVEL_KEYS,
   buildTemplateContract,
+  hasGatherNode,
   usesEmployeeDataset,
   validateBySpec,
   type SpecNode,
@@ -37,7 +38,17 @@ import type { Result } from '../../src/domain/types/result'
  * P6-D01〜P6-D03: Import Contractの定義・互換性・整合（Phase 6指示 §12.1、v0.10 §5.2）。
  */
 
-const EXECUTABLE_TEMPLATES = ALL_TEMPLATES.filter((t) => t.executable !== false)
+/**
+ * 走査対象は「取込対象の実行可能template」（Phase 7指示 §12冒頭で許可された最小更新）。
+ *
+ * Phase 7で追加したgather templateは実行可能だが手動連携の取込対象外（`importable: false`。
+ * Phase 7指示 §7.8-1）のため、Contract受理を前提とするP6-D01〜D03の走査対象から外す。
+ * **既存の非gather実行可能template全件**に対する検証意味（importable・fixture受理・Contract整合）は
+ * 保存している。gather templateの拒否検証はP7-D21が担う。
+ */
+const EXECUTABLE_TEMPLATES = ALL_TEMPLATES.filter(
+  (t) => t.executable !== false && !hasGatherNode(t),
+)
 
 function contractOf(template: PipelineTemplate): TemplateContract {
   return buildTemplateContract(template)

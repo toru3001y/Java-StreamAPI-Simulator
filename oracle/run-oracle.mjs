@@ -1,14 +1,14 @@
 /**
  * JDK 25 Oracle照合ランナー。
- * Docker上のJDK 25でOracleP1〜P6.javaを実行し、
+ * Docker上のJDK 25でOracleP1〜P7.javaを実行し、
  * Simulation Core由来の期待値（expected-*.json）と照合する。
  * 期待値ファイルとSimulation Coreの一致は tests/domain/*oracleSync* テストで保証する。
  *
- * 過去Phase suite（P1〜P5）は照合だけを行い、証跡ファイル（artifacts/phase-1〜phase-5）へは
- * 書き込まない。証跡を書き込むのは`writeReportPath`を持つsuite（現行Phase = P6のみ）である
+ * 過去Phase suite（P1〜P6）は照合だけを行い、証跡ファイル（artifacts/phase-1〜phase-6）へは
+ * 書き込まない。証跡を書き込むのは`writeReportPath`を持つsuite（現行Phase = P7のみ）である
  * （oracle-lib.mjs参照）。P4-O02のLong境界値照合ロジックはP4 suiteへ適用し続ける（ID再定義はしない）。
  * 過去Phase証跡の不変性は、全suite実行前後のSHA-256実測比較で確認し、
- * その実結果をP6-O02としてoracle-result.mdへ記録する（P6-O01・P6-O02の結果欄は
+ * その実結果をP7-O02としてoracle-result.mdへ記録する（P7-O01・P7-O02の結果欄は
  * すべて実測から生成し、いずれかがFAILならコマンド全体を失敗させる）。
  *
  * 再実行手順: npm run test:oracle
@@ -38,7 +38,7 @@ const projectRoot = path.dirname(oracleDir)
 const IMAGE = 'gradle:9.6.1-jdk25'
 const MARKER = '---RESULT---'
 
-/** artifacts/phase-1〜phase-5全ファイルのSHA-256一覧（パス昇順の安定形式） */
+/** artifacts/phase-1〜phase-6全ファイルのSHA-256一覧（パス昇順の安定形式） */
 function hashPastArtifacts() {
   const lines = []
   for (const dir of PAST_ARTIFACT_DIRS) {
@@ -121,7 +121,7 @@ for (const suite of SUITES) {
   }
 
   if (suite.id === CURRENT_PHASE_SUITE_ID) {
-    // 現行Phaseのレポートは過去証跡不変の実測（P5-O02）確定後に生成するため、ここでは記録だけ行う
+    // 現行Phaseのレポートは過去証跡不変の実測（P7-O02）確定後に生成するため、ここでは記録だけ行う
     currentPhaseContext = {
       suite,
       versionText: (versionPart ?? '').trim(),
@@ -148,12 +148,12 @@ for (const suite of SUITES) {
   results.push({ id: suite.id, passed })
 }
 
-// 全suite実行後に過去Phase証跡のSHA-256を再取得し、不変であることを実測する（P6-O02）
+// 全suite実行後に過去Phase証跡のSHA-256を再取得し、不変であることを実測する（P7-O02）
 const pastArtifactsAfter = hashPastArtifacts()
 const pastArtifactsUnchanged = pastArtifactsBefore === pastArtifactsAfter
 if (!pastArtifactsUnchanged) {
   console.error(
-    `P6-O02 FAILED: Oracle実行前後で${PAST_ARTIFACT_DIRS.join(' / ')}のSHA-256が変化しました。`,
+    `P7-O02 FAILED: Oracle実行前後で${PAST_ARTIFACT_DIRS.join(' / ')}のSHA-256が変化しました。`,
   )
 }
 
@@ -200,21 +200,22 @@ const report = buildReport({
     }),
     '',
     '## 関連する機械検証',
-    '- P6-O01（期待値とSimulation Coreの一致）: `tests/domain/p6-oracleSync.test.ts`',
-    '- P6-O02（必須6 suite・現行Phase単独書込み・過去artifacts不変の構成検証）: `tests/domain/p6-review.test.ts`',
+    '- P7-O01（期待値とSimulation Coreの一致）: `tests/domain/p7-oracleSync.test.ts`',
+    '- P7-O02（必須7 suite・現行Phase単独書込み・過去artifacts不変の構成検証）: `tests/domain/p7-review.test.ts`',
+    '- P6-O02（Phase 6時点のsuite構成契約をfixtureで固定して検証）: `tests/domain/p6-review.test.ts`',
     '- P5-O02（Phase 5時点のsuite構成契約をfixtureで固定して検証）: `tests/domain/p5-review.test.ts`',
     '- P4-O02 / P4-O03（Phase 4時点のsuite構成契約をfixtureで固定して検証）: `tests/domain/p4-review.test.ts`',
-    '- 過去Phase期待値とSimulation Coreの一致: `tests/domain/p5-oracleSync.test.ts` 他',
+    '- 過去Phase期待値とSimulation Coreの一致: `tests/domain/p6-oracleSync.test.ts` 他',
   ],
 })
 
-// 証跡ファイルはwriteReportPathを持つsuite（現行Phase = P5）だけが更新する
+// 証跡ファイルはwriteReportPathを持つsuite（現行Phase = P7）だけが更新する
 const reportFile = path.join(projectRoot, ...currentPhaseContext.suite.writeReportPath)
 mkdirSync(path.dirname(reportFile), { recursive: true })
 writeFileSync(reportFile, report, 'utf8')
 console.log(report)
-console.log(evaluation.o01Passed ? 'P6-O01 PASSED' : 'P6-O01 FAILED')
-console.log(evaluation.o02Passed ? 'P6-O02 PASSED' : 'P6-O02 FAILED')
+console.log(evaluation.o01Passed ? 'P7-O01 PASSED' : 'P7-O01 FAILED')
+console.log(evaluation.o02Passed ? 'P7-O02 PASSED' : 'P7-O02 FAILED')
 console.log(p4Passed && boundaryOk ? 'P4-O01/P4-O02 REGRESSION PASSED' : 'P4-O01/P4-O02 REGRESSION FAILED')
 
 if (!allSuitesPassed(results) || !evaluation.overallPassed || !boundaryOk) {

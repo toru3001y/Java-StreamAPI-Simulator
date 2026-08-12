@@ -18,6 +18,12 @@ export type SimValue =
   | { readonly kind: 'boxedLong'; readonly value: number }
   | { readonly kind: 'boxedDouble'; readonly value: number }
   | { readonly kind: 'stringList'; readonly value: readonly string[] }
+  /**
+   * 合成List値（Phase 7指示 §7.2、v0.9 §6.3-1）。gatherのwindow系が生成する窓を表す。
+   * 要素0件でも型が確定するよう`elementType`を自己保持する（復元契約の頑健性）。
+   * 既存`stringList`は**不変のまま並存**させる（既存経路の表示・型・テストを変えないため）。
+   */
+  | { readonly kind: 'list'; readonly elementType: TypeRef; readonly value: readonly SimValue[] }
   | { readonly kind: 'intArray'; readonly value: readonly number[] }
   | { readonly kind: 'longArray'; readonly value: readonly number[] }
   | { readonly kind: 'doubleArray'; readonly value: readonly number[] }
@@ -62,6 +68,9 @@ export function formatSimValue(v: SimValue): string {
       return formatDoubleLiteral(v.value)
     case 'stringList':
       return `[${v.value.join(', ')}]`
+    case 'list':
+      // 要素を再帰整形する（Employeeは`佐藤（age=35）`、Stringは`"Java"`等の既存ラベル）
+      return `[${v.value.map(formatSimValue).join(', ')}]`
     case 'intArray':
       return `int[]{${v.value.join(', ')}}`
     case 'longArray':
@@ -100,6 +109,9 @@ export function typeOfSimValue(v: SimValue): TypeRef {
         container: 'List',
         elementType: { kind: 'object', name: 'String' },
       }
+    case 'list':
+      // 要素0件でも型が確定するよう、値が自己保持するelementTypeを使う（§7.2）
+      return { kind: 'collection', container: 'List', elementType: v.elementType }
     case 'intArray':
       return { kind: 'array', elementType: { kind: 'primitive', name: 'int' } }
     case 'longArray':

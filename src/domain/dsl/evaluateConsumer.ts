@@ -1,5 +1,6 @@
 import type { ConsumerDsl } from './consumerAst'
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 import { formatDoubleLiteral, formatSimValue } from '../model/value'
 
 /**
@@ -8,6 +9,7 @@ import { formatDoubleLiteral, formatSimValue } from '../model/value'
  * 実ブラウザconsoleへの出力をSource of Truthにしない。
  */
 export function evaluateConsumerMessage(consumer: ConsumerDsl, value: SimValue): string {
+  assertNotCompositeList(value, 'Consumer評価')
   if (consumer.kind === 'printValue') {
     return formatSimValue(value)
   }
