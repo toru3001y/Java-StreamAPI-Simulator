@@ -239,8 +239,8 @@ String要素は `"Java"`）を正としている。
 > （teardown 84ms、実行後の4173 LISTENなし）であることをcodex側が実測し、
 > 「通常のWindows実行を対象とする限りリポジトリ側の修正は不要」と判定された。
 >
-> したがって `playwright.config.ts` は変更していない。判断の詳細と没にした対案は
-> 判断記録 §12.6、経緯は `docs/codex_review_request_P7_Implementation.md` に記載。
+> したがって `playwright.config.ts` は変更していない。判断の詳細・原因の機構（Playwrightの
+> ソース位置つき）・没にした対案は、判断記録 §12.6 に記載。
 
 ## 9. P7必須39 IDの対応表
 
@@ -551,17 +551,18 @@ PC幅・狭幅の両方で満たしている。
 ?? docs/codex_review_request_P7_Implementation.md … 運用ファイル（レビュー中に作成。コミット対象外）
 ```
 
-作業開始時に存在した未追跡4件（Phase 6 / Phase 7の運用ファイル）は、stash・削除・上書きを
-一切行わずそのまま保持している。**ユーザーの既存変更は破棄していない。**
-`docs/codex_review_request_P7_Implementation.md` はレビュー中に作成した運用ファイルであり、
-Phase 1〜6と同じくコミット対象外とする（`codex_review_request_*` / `*_start_request.md` は
-いずれのPhaseでも追跡していない）。
+作業開始時に存在した未追跡4件（Phase 6 / Phase 7の運用ファイル）は、Phase 7の作業中は
+stash・削除・上書きを一切行わずそのまま保持した。**ユーザーの既存変更は破棄していない。**
+
+> **その後の扱い**: これら運用ファイル5件（上記4件＋レビュー中に作成した
+> `docs/codex_review_request_P7_Implementation.md`）は、**Phase 7完了後にユーザーの指示で削除した**。
+> 詳細は §19。上記の一覧はcommit直前の実測記録であり、そのまま残している。
 
 ### 17.3 commit / push / PR / merge の状況
 
 実装中は **commit、push、Pull Request作成、mainへのmergeを一切行わなかった**（指示§18・§3.2）。
-codexレビュー完了（第4回で承認可）後、**ユーザーの明示指示を受けて**commit・push・PR作成を実施した。
-`main`へのmergeは実施していない（指示に含まれていないため）。詳細は §19。
+codexレビュー完了（第4回で承認可）後、**ユーザーの明示指示を受けて**commit・push・PR作成を実施し、
+PR #8 は `771e47e` で `main` へmergeされた。詳細は §19。
 
 なお §17.1・§17.2 の `git diff --stat` / `git status --short` は、**commit直前**の状態である。
 
@@ -591,20 +592,38 @@ Phase 7実装指示 §18により、実装中はcommit / push / PR / mergeを行
 | `5c4d41f` | （Phase 7着手前）Phase 7実装指示書の追加 |
 | `a0c50ca` | Phase 7本体（83ファイル）。`src` / `tests` / `e2e` / `oracle` / `artifacts/phase-7` / P7視覚回帰基準画像8枚 / `README.md` |
 | `3395212` | Phase 7完了報告と判断記録（`docs/phase-7-completion-report.md` / `docs/phase-7-decisions.md`） |
-| （本commit） | 本節へcommit SHAとPR URLを確定記載し、§17.3を実施済みへ更新（commit自身のSHAは記載できないため `git log` で確認できる） |
+| `d65034e` | 本節へcommit SHAとPR URLを確定記載し、§17.3を実施済みへ更新 |
+| `771e47e` | PR #8 のmerge commit（`main`） |
+| （本commit） | 運用ファイル5件の削除、本節と§17.2の記述更新、`.gitignore` への追加 |
 
 Pull Request: **#8** https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/8
-（base `main` / head `phase-7`。**未merge**）
+（base `main` / head `phase-7`。merge commit `771e47e`）
 
-push先: `origin/phase-7`（新規ブランチ。`5c4d41f..3395212`）
+push先: `origin/phase-7`（新規ブランチ。`5c4d41f..d65034e`）
 
-### commitに含めなかったファイル（意図的）
+### 運用ファイル5件の扱い（PR #8後に削除）
 
-Phase 1〜6と同じく、`codex_review_request_*` / `*_start_request.md` はいずれのPhaseでも
-追跡していない。次の5件は未追跡のまま保持している。
+`codex_review_request_*` / `*_start_request.md` は、**git履歴上一度も追跡されたことがない**
+作業用の運用ファイルである（Phase 1〜5には同名のファイル自体が存在せず、Phase 6から
+作られ始めたもの）。PR #8 では未追跡のまま残していたが、**ユーザーの判断で不要と決まり、
+PR #8 のmerge後に削除した**。
+
+削除した5件:
 
 - `docs/phase7_start_request.md`（実装開始依頼文）
 - `docs/codex_review_request_P7_Implementation_Instructions.md`（指示書のレビュー依頼文）
-- `docs/codex_review_request_P7_Implementation.md`（実装のレビュー依頼文・レビュー記録）
+- `docs/codex_review_request_P7_Implementation.md`（実装のレビュー依頼文・4回分のレビュー記録）
 - `docs/phase6_start_request.md`（Phase 6運用ファイルの残置分）
 - `docs/codex_review_request_P6_Implementation_Instructions.md`（同上）
+
+**内容は失われていない**: codexレビュー4回分の指摘・対応・没案・E2E終了問題の原因特定は、
+本報告 §4・§8の注記と判断記録 §3・§12.6 へすべて転記済みである。
+削除前に `~/claude-backup/` へSHA-256一致を確認したうえで退避した。
+
+以降のPhaseで同じ判断を繰り返さないよう、`.gitignore` へ
+`docs/*_start_request.md` と `docs/codex_review_request_*.md` を追加した。
+
+> **前版の記述の訂正**: 本節にはPR #8時点で「Phase 1〜6と同じく、いずれのPhaseでも追跡していない」
+> と書いていたが、これは不正確だった。`git log --all` で確認したところ**これらのパスは一度も
+> 追跡されておらず、かつPhase 1〜5には同種ファイルが存在しない**。Phase 6の1件を根拠に
+> 「6 Phase分の前例」と一般化したのは誤りであり、上記のとおり改めた。
