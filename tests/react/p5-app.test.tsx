@@ -62,7 +62,7 @@ async function openCollector(
 afterEach(() => cleanup())
 
 describe('P5-R01 操作 / template UI', () => {
-  it('P5-R01: Collector optgroupが表示され、未実装リストが0件で空optgroupを描画せず、AI理由はPhase 6のまま維持される', async () => {
+  it('P5-R01: Collector optgroupが表示され、未実装リストが0件で空optgroupを描画しない', async () => {
     const user = userEvent.setup()
     renderApp()
     const select = screen.getByTestId('operation-select') as HTMLSelectElement
@@ -81,9 +81,7 @@ describe('P5-R01 操作 / template UI', () => {
       expect(option, operationId).toBeDefined()
       expect(option?.disabled, operationId).toBe(false)
     }
-    // AI capabilityのdisabled理由はPhase 6のまま維持
-    expect((screen.getByTestId('ai-button') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByTestId('ai-reason').textContent).toContain('Phase 6')
+    // 取込UIの検証はP6-R系のみで行う（Phase 5 IDの検証対象はPhase 5機能のみ。v0.10 §1.3）
     // Collector教材を選ぶとJavaコードにcollectが現れる
     await openCollector(user, 'tmpl-collect-groupingby-counting')
     expect(screen.getByTestId('java-code-panel').textContent).toContain(

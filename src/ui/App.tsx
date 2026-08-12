@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 import type { AppInstance } from './appInstance'
 import { createApp } from './appInstance'
 import { ScenarioControls } from './components/ScenarioControls'
+import { ImportPanel } from './components/ImportPanel'
 import { PipelineViewport } from './components/PipelineViewport'
 import { MainSimulation } from './components/MainSimulation'
 import { SideEffectPanel } from './components/SideEffectPanel'
@@ -27,10 +28,11 @@ export function App({ app: injectedApp }: { app?: AppInstance }) {
     <div className="app-root">
       <header className="app-header">
         <h1>Java Stream API 可視化シミュレーター</h1>
-        <p className="app-subtitle">Phase 5: Collectorと可変リダクション（Java SE 25基準）</p>
+        <p className="app-subtitle">Phase 6: 手動連携による候補の取込（Java SE 25基準）</p>
       </header>
       <main className="app-main">
         <ScenarioControls app={app} state={state} />
+        <ImportPanel app={app} state={state} />
         <PipelineViewport state={state} />
         <MainSimulation state={state} />
         <SideEffectPanel state={state} />

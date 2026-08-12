@@ -12,7 +12,7 @@ import type { ScenarioRevision } from '../domain/types/ids'
 
 /**
  * FixtureScenarioProvider（§10.4）。
- * 決定的なfixture候補を返す。「固定サンプル」であり、AI生成とは表示しない。
+ * 決定的なfixture候補を返す。「固定サンプル」であり、取込サンプルとは表示しない（v0.10 §4.1）。
  * provenance.generatedAtは決定性維持のため固定値。
  *
  * scenario revisionはgenerate呼び出しごとに新しい値を発行し、

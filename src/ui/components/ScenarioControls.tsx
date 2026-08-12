@@ -2,7 +2,7 @@ import type { AppInstance } from '../appInstance'
 import { UNIMPLEMENTED_OPERATIONS } from '../appInstance'
 import type { SessionState } from '../../application/session'
 import type { ScenarioMode } from '../../domain/scenario/scenario'
-import { SCENARIO_MODE_LABELS } from '../../domain/scenario/scenario'
+import { PROVIDER_KIND_LABELS, SCENARIO_MODE_LABELS } from '../../domain/scenario/scenario'
 
 const ALL_MODES: readonly ScenarioMode[] = ['standard', 'midEmpty', 'emptySource']
 
@@ -14,8 +14,8 @@ const CATEGORY_LABELS: Readonly<Record<string, string>> = {
 }
 
 /**
- * 操作選択・シナリオ領域（§17.1、Phase 2指示 §10.1）。
- * fixtureは「固定サンプル」と表示し、AI生成とは表示しない。
+ * 操作選択・シナリオ領域（§17.1、Phase 2指示 §10.1、v0.10 §8）。
+ * fixtureは「固定サンプル」、取込候補は「取込サンプル」と表示し、互いに混同しない。
  * 実行不能source（generate / 2引数iterate）と未実装操作は選択不能とし、理由を表示する。
  */
 export function ScenarioControls({ app, state }: { app: AppInstance; state: SessionState }) {
@@ -158,24 +158,13 @@ export function ScenarioControls({ app, state }: { app: AppInstance; state: Sess
             })}
           </select>
         </label>
-        <span className="provenance-badge" data-testid="provenance">
-          {scenario.provenance.providerKind === 'FIXTURE' ? '固定サンプル' : 'AI生成'}
+        <span
+          className="provenance-badge"
+          data-testid="provenance"
+          data-provider-kind={scenario.provenance.providerKind}
+        >
+          {PROVIDER_KIND_LABELS[scenario.provenance.providerKind]}
         </span>
-        <div className="ai-control">
-          <button
-            type="button"
-            disabled={!app.aiCapability.available}
-            aria-describedby="ai-unavailable-reason"
-            data-testid="ai-button"
-          >
-            AIで別サンプル
-          </button>
-          {!app.aiCapability.available && (
-            <p id="ai-unavailable-reason" className="ai-reason" data-testid="ai-reason">
-              {app.aiCapability.reason}
-            </p>
-          )}
-        </div>
       </div>
       {disabledOperations.length > 0 && (
         <ul className="disabled-operation-notes" data-testid="disabled-operation-notes">

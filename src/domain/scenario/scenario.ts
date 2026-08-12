@@ -10,12 +10,21 @@ export const SCENARIO_MODE_LABELS: Readonly<Record<ScenarioMode, string>> = {
   emptySource: '空ソース',
 }
 
-/** provenance（§11.1）。fixtureをAI生成として表示しないための根拠情報。 */
+/**
+ * provenance（§11.1、v0.10 §4.1で種別を変更）。
+ * fixtureを取込サンプルと表示せず、取込サンプルを固定サンプルと表示しないための根拠情報。
+ */
 export interface ScenarioProvenance {
-  readonly providerKind: 'FIXTURE' | 'AI'
-  /** 決定性維持のためfixtureでは固定値を使用する */
+  readonly providerKind: 'FIXTURE' | 'IMPORTED'
+  /** 決定性維持のためfixtureでは固定値を使用する。取込候補は取込時刻（UTC ISO 8601） */
   readonly generatedAt: string
   readonly dslVersion: string
+}
+
+/** provider種別の表示名（v0.10 §4.1）。「AI生成」という表示は使用しない。 */
+export const PROVIDER_KIND_LABELS: Readonly<Record<ScenarioProvenance['providerKind'], string>> = {
+  FIXTURE: '固定サンプル',
+  IMPORTED: '取込サンプル',
 }
 
 export interface ScenarioSourceInfo {

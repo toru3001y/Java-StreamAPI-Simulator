@@ -97,7 +97,7 @@ export interface PipelineTemplateNode {
 
 /**
  * SourceDefinition（Phase 2指示 §4）。
- * slotIdが指定されている場合はfixture / AIがsource DSLを設定する。
+ * slotIdが指定されている場合はfixture / 取込候補がsource DSLを設定する（v0.10 §1.2の§8.1読み替え）。
  * defaultDslはslot未指定時の既定source。
  */
 export interface SourceDefinition {
