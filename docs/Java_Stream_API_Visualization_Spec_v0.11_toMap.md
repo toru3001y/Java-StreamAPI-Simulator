@@ -2,14 +2,14 @@
 
 ## 1. 版管理（Draft v0.8 §1.2の変更管理に基づく）
 
-- 版番号: **v0.11**（第7版ドラフト。初稿。codexレビュー未実施）
+- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕を反映）
 - 本書の構成: **v0.11 = Draft v0.8（`docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`、無編集のまま保持）+ v0.9差分（`docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`、無編集のまま保持）+ v0.10差分（`docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`、無編集のまま保持）+ 本差分文書**。全文転記は行わない。
 - 変更理由: Draft v0.8 付録A.4の対象外として未実装だった`Collectors.toMap`を教材対象へ追加するため（Phase 8）。toMapは「groupingBy = 1キー多値」に対する「toMap = 1キー1値。衝突はmergeか例外」という対比を担う、Collector教材の欠落部分である。
 - 作成日: 2026-08-13
 
 ### 1.1 優先順位
 
-**本書の明示的なtoMap固有規定だけがv0.8〜v0.10に優先する。**本書が明示的に変更していない一般原則・不変条件・検証順序・UI原則はすべて先行版を適用する。v0.8〜v0.10を上書き・追加する主要な追加箇所は次のとおり。これに加え、toMap追加に伴う横断的な追加（OperationCatalog登録・template / fixture・UI・テスト・Oracle等）も、本書の明示規定が先行版該当章への追加として優先する。
+**本書の明示的なtoMap固有規定だけがv0.8〜v0.10に優先する。**本書が明示的に変更していない一般原則・不変条件・検証順序・UI原則はすべて先行版を適用する。v0.8〜v0.10を上書き・追加する主要な追加箇所は次のとおり。これに加え、toMap追加に伴う横断的な追加（既存`collect` operationへのCollector slot許可kind追加・template / fixture・UI・テスト・Oracle等）も、本書の明示規定が先行版該当章への追加として優先する。
 
 1. 付録A.4（Collector / Collectors実装対象）への追加: §2.1
 2. §3.2（初版に含めないもの）への追加: §2.2
@@ -24,6 +24,7 @@
 - **Phase 8（新設）のみ。**
 - **完了済みのPhase 1〜7**: 意味論・受入条件・必須テストID・判断記録・完了報告は一切変更しない。ただし、共通UI（操作選択等）・視覚回帰基準画像・Oracle suite構成は、Phase 8実装時の意図的更新対象になり得る（前例: Phase 5・Phase 7。意図的更新は理由つきでPhase 8完了報告へ記録する）。
 - **実行失敗契約（§6.2）はsnapshot契約への追加**であり、既存操作の正常完了列は変更しない。`completion`・再生状態への新値追加が既存P1〜P7テストへ回帰影響しないことをPhase 8で機械検証する。
+- **既存テストの走査母集団**: 既存テストには、全実行可能templateを動的に走査して末尾が`STREAM_CONSUMED`であることを要求するもの（P6-D22）や、template総数を固定値で検証するもの（P7-D20: 総数118 / 実行可能116 / mode組合せ222）がある。Phase 8のtemplate追加（特に実行失敗template）はこれらと衝突するため、**走査母集団・固定件数の対象をPhase 7完了時点のtemplate集合へ固定する形の意図的更新**を許容する（既存templateに対する期待値・意味論は変更しない。理由つきでPhase 8完了報告へ記録する）。templateへ`expectedCompletion`（`'STREAM_CONSUMED' | 'EXECUTION_FAILED'`）相当の区分を導入し、P8成功templateは`STREAM_CONSUMED`、P8失敗templateは`EXECUTION_FAILED`を、P8テストIDで検証する。
 - 既存テストID（P1〜P7）は変更しない。Phase 8の必須テストID（`P8-*`）はPhase 8実装指示書で確定する。
 
 ## 2. 追加する実装対象メソッド（v0.8 付録A.4への追加）
@@ -77,11 +78,11 @@ V newValue = (oldValue == null) ? value :
 
 ## 4. 教材目標（Phase 8で学習者が押さえる最低限のポイント）
 
-1. **groupingByとの対比**: groupingByは1キーに値のList（多値）、toMapは1キーに値1件。この違いが「衝突をどう扱うか」という問題を生む。
+1. **groupingByとの対比**: groupingByは1キーに値のList（多値）、toMapは1キーに値1件。この違いが「衝突をどう扱うか」という問題を生む。既存の`groupingBy(region)`系教材と**同一fixture・同一keyMapper**で直接比較できる導線を設ける（§8.6）。
 2. **2引数版の重複キー例外**: toMap最大の落とし穴。重複キーで`IllegalStateException`になることを、validationで隠さず**実行で体験**する（§6.2）。
 3. **mergeFunctionの選択肢**: なし（例外）/ 既存値を保持（先勝ち）/ 新しい値で置換（後勝ち）/ 両方を合成（連結）、の4択で衝突対処を整理する。引数順は（既存値, 新しい値）。
 4. **同一キーへの3件以上の衝突**: mergeFunctionは「現在Mapにある値」へ順次適用される（first→A、last→C、concat→"A, B, C"）。
-5. **`Function.identity()`**: キーか値のどちらかを要素そのものにする典型形（公式API Note）。
+5. **`Function.identity()`**: キーか値のどちらかを要素そのものにする典型形（公式API Note）。本教材の初回範囲では**value側のidentity**（値=Employee要素そのもの）を実行対象とし、基準templateで必須とする（§8.6の1）。key側identity（Employeeキーのequals・TreeMap不可の論点を伴う）は補助説明に留め、将来拡張とする。
 6. **返却Mapの型は無保証**: 型・可変性が必要なら4引数版でmapFactory（教材ではTreeMap）を指定する。
 7. **断定回避**: Mapのentry反復順序の一般保証は説明しない。挿入がencounter orderであること（§3.1のImplementation Noteの範囲）と、表示上の蓄積順を混同させない。first / lastの「先勝ち / 後勝ち」は**現在の決定的な逐次実行における入力順**を指すとUIで明示する。
 
@@ -102,20 +103,21 @@ V newValue = (oldValue == null) ? value :
 
 ### 6.1 SnapshotKind（候補名。最終確定はPhase 8実装指示書。既存全kindとの衝突なきこと）
 
-**再利用**（partitioningByがPREDICATE_EVALUATEDを再利用した前例に従う）:
+**再利用**:
 
 | 既存kind | toMapでの用途 |
 |---|---|
-| `CONTAINER_CREATED` | Mapコンテナ生成の確定（4引数版はTreeMap生成を表示） |
-| `CLASSIFIER_EVALUATED` | keyMapper評価の確定（ClassifierDsl流用に伴うkind再利用） |
-| `CONTAINER_UPDATED` | Mapへの蓄積更新の確定（新規put / merge結果による置換の両方。新規か置換かはcontextで区別） |
+| `CONTAINER_CREATED` | Mapコンテナ生成の確定。**root配置のtoMapに限り**`INITIAL`直後に1回発行する（Phase 5の「発行はroot levelのコンテナに限る」契約〔`docs/phase-5-decisions.md` §14.3〕を維持。downstream配置時は§6.3） |
+| `CONTAINER_UPDATED` | Mapへの蓄積更新の確定（新規put / merge結果による置換の両方。新規か置換かはcontextで区別。元から汎用のコンテナ更新kindであり意味拡張にならない） |
 
-valueMapper評価のkindは、既存mapping系kindの再利用可否をPhase 8実装指示書で確定する（候補: `MAPPING_APPLIED`再利用、または新設）。
+`CLASSIFIER_EVALUATED`は**再利用しない**。Phase 5判断記録が「`CLASSIFIER_EVALUATED`はgroupingBy専用」と確定しており（`docs/phase-5-decisions.md` §14.2。partitioningByが同理由で`PREDICATE_EVALUATED`を再利用した）、toMapの引数はclassifierではなくkeyMapperであるため、既存kindの意味を拡張しない。同じ理由でvalueMapper評価にもmapping系専用の`MAPPING_APPLIED`を再利用せず、いずれも新設する。
 
-**新設候補**:
+**新設候補**（既存の「対象_事象（過去形）」命名規約に従う）:
 
 | SnapshotKind候補 | 内容 |
 |---|---|
+| `TO_MAP_KEY_EVALUATED` | keyMapper評価の確定（キーの確定） |
+| `TO_MAP_VALUE_EVALUATED` | valueMapper評価の確定（値の確定） |
 | `DUPLICATE_KEY_DETECTED` | 重複キー検出の確定。キー・既存値・新しい値をcontextで表示する。2引数版（この後失敗）・3引数版（この後merge）で共通 |
 | `MERGE_FUNCTION_APPLIED` | mergeFunction適用結果の**計算**確定（Map更新は含まない。更新は後続の`CONTAINER_UPDATED`。既存のMAPPING_APPLIED / MAPPED_EMITTED分離と同じ原則） |
 | `COLLECT_FAILED` | 教材上想定された実行失敗の確定。**timelineの最終snapshot**となる（§6.2） |
@@ -127,21 +129,44 @@ toMap 2引数版の重複キーは、本シミュレーターで初めて「正�
 1. **失敗は正規のsnapshot列である**: 2引数版で重複キーを検出した場合、`DUPLICATE_KEY_DETECTED` → `COLLECT_FAILED`で列が終わる。`RESULT_CONFIRMED` / `STREAM_CONSUMED`は発行しない。
 2. **TypeScript例外は投げない**: Step Engineは失敗を通常のsnapshot生成として扱う。`EngineInvariantError`（エンジン内部不整合のフェイルセーフ。`session.ts`のcatch経路）とは完全に分離し、失敗snapshotの生成が内部不整合経路へ乗らないことをテストで保証する。
 3. **状態モデル**: `Snapshot.completion`へ新値候補`'EXECUTION_FAILED'`を追加する（現行`'NONE' | 'STREAM_CONSUMED'`）。再生状態へ新状態候補`'FAILED'`を追加する（`ERROR`=内部不整合フェイルセーフ、`FAILED`=教材上想定された実行失敗、と区分する）。最終名はPhase 8実装指示書で確定する。
-4. **停止と復元**: `COLLECT_FAILED`から先へは進めない（LIMIT_REACHEDと同様に停止・履歴保持）。戻る→進むの完全復元は失敗列にも適用する。
+4. **状態遷移**: `FAILED`の遷移は次の表を契約とする（文章規定だけにせず、操作別に閉じる）。
+
+   | 事象 | 遷移 |
+   |---|---|
+   | `COLLECT_FAILED` snapshotへ到達（手動・自動再生とも） | `FAILED`へ遷移し、自動再生タイマーを停止する |
+   | `FAILED`で進む / 自動再生開始 | no-op（進めない。LIMIT_REACHEDと同様の停止） |
+   | `FAILED`で戻る | 1件前のsnapshotへ移動し`PAUSED` |
+   | 戻った位置から保存済み`COLLECT_FAILED`へ再度進む | 再計算せず履歴から復元し`FAILED`へ戻る |
+   | restart / シナリオ切替 | `READY` |
+
+   戻る→進むの完全復元は失敗列にも適用する。`FAILED`は`ERROR`用のstopReason・catch経路（`EngineInvariantError`）を使用しない。
 5. **例外契約は型のみ**: 契約・表示・Oracle照合のいずれも`IllegalStateException`という**例外型だけ**に依存する。JDKの例外メッセージ全文（キー・値の文字列表現を含む）はJDK実装詳細として契約に含めない（Oracleでは`assertThrows(IllegalStateException.class, …)`相当の型照合のみ行い、実測メッセージは観測記録として保存してよい）。
-6. **途中Mapの扱い**: 失敗時点までの蓄積Mapは内部蓄積状態としてのみ表示し、終端結果（TerminalResultView相当）には**しない**。
-7. **downstream内での失敗**: groupingBy等のdownstreamに置かれたtoMapで重複キーが発生した場合、当該bucketだけでなく**collect全体が失敗**する。失敗snapshotのcontextに**Collector path（rootからの経路）とbucketキー**を保持し、どのbucketのどのキーで失敗したかを表示する。
+6. **途中Mapの扱いと出力契約**: 失敗時点までの蓄積Mapは内部蓄積状態としてのみ表示し、終端結果には**しない**。現行`SnapshotOutput.result`は`TerminalResultView`必須であるため、`result`を**null許容へ変更**する（`TerminalResultView | null`。nullになるのは`COLLECT_FAILED`のみで、既存snapshotでは常に非null＝既存契約に対し加算的）。`COLLECT_FAILED`では`output.confirmed = false`・`output.result = null`とする。
+7. **downstream内での失敗**: groupingBy等のdownstreamに置かれたtoMapで重複キーが発生した場合、当該bucketだけでなく**collect全体が失敗**する。どのbucketのどのキーで失敗したかは、次項の構造化view（`collectorPath` / `bucketKey`）で保持・表示する。
 8. **表示順の教材規約**: 1要素の処理は「キー評価 → 値評価 → 重複検出（→ merge or 失敗）」の順で表示する。これは教材規約であり、JDK内部でのkeyMapper / valueMapper評価と例外送出の実際の順序・タイミングを断定する説明にはしない。
+9. **失敗内容の構造化view**: 失敗情報を表示文言（`ProcessingView`等の文字列）だけに埋め込まず、次の識別可能Unionを`Snapshot`へ追加する（`COLLECT_FAILED`で必須、その他のsnapshotでは`null`）。UI表示・戻る→進む復元・Oracle / unitテストはこのviewを参照し、表示文言へ依存しない。値参照の具体型（SimValue直接保持かElementId参照か）はPhase 8実装指示書で確定する。
+
+   ```
+   ExecutionFailureView = {
+     kind: 'DUPLICATE_TO_MAP_KEY'
+     exceptionType: 'IllegalStateException'
+     collectorPath: readonly string[]   // rootからの経路
+     bucketKey: <値参照> | null          // downstream配置時のみ非null
+     duplicateKey: <値参照>
+     existingValue: <値参照>
+     incomingValue: <値参照>
+   }
+   ```
 
 ### 6.3 操作別の確定snapshot列（toMapノード視点。全列の厳密な合成はPhase 8実装指示書で確定）
 
-- **2引数版（全キー一意・成功）**: `CONTAINER_CREATED` → 要素ごとに 到着 → `CLASSIFIER_EVALUATED`（キー確定）→ valueMapper評価 → `CONTAINER_UPDATED`（新規put）。全要素処理後 `RESULT_CONFIRMED` → `STREAM_CONSUMED`。
-- **2引数版（重複キー・失敗）**: 重複が発生する要素まで上記と同一 → `CLASSIFIER_EVALUATED` → valueMapper評価 → `DUPLICATE_KEY_DETECTED` → `COLLECT_FAILED`（終端。以降のsnapshotなし）。
+- **2引数版（全キー一意・成功。root配置）**: `CONTAINER_CREATED`（`INITIAL`直後に1回）→ 要素ごとに 到着 → `TO_MAP_KEY_EVALUATED` → `TO_MAP_VALUE_EVALUATED` → `CONTAINER_UPDATED`（新規put）。全要素処理後 `RESULT_CONFIRMED` → `STREAM_CONSUMED`。
+- **2引数版（重複キー・失敗）**: 重複が発生する要素まで上記と同一 → `TO_MAP_KEY_EVALUATED` → `TO_MAP_VALUE_EVALUATED` → `DUPLICATE_KEY_DETECTED` → `COLLECT_FAILED`（終端。以降のsnapshotなし）。
 - **3引数版（重複あり）**: 重複時は `DUPLICATE_KEY_DETECTED` → `MERGE_FUNCTION_APPLIED`（結果値の計算確定）→ `CONTAINER_UPDATED`（置換）。非重複時は2引数版と同じ。
 - **同一キーへ3件以上の衝突**: 2件目以降の各要素で`DUPLICATE_KEY_DETECTED` → `MERGE_FUNCTION_APPLIED` → `CONTAINER_UPDATED`を繰り返す。`MERGE_FUNCTION_APPLIED`のcontextは「現在Mapにある値」（前回merge結果）を第1引数として表示し、mergeが順次適用であることを可視化する。
-- **4引数版**: 列は3引数版と同一。`CONTAINER_CREATED`でTreeMap生成（既存mapFactory表示の流用）を表示する。
-- **空ソース**: `CONTAINER_CREATED` → `RESULT_CONFIRMED`（空Map）→ `STREAM_CONSUMED`。
-- **downstream配置（groupingBy配下等）**: 親のbucket決定（既存列）後、bucketごとのtoMap蓄積へ上記の要素単位列を適用する。既存downstream Collectorの列規則との厳密な合成はPhase 8実装指示書で確定する。
+- **4引数版**: 列は3引数版と同一。root配置では`CONTAINER_CREATED`でTreeMap生成（既存mapFactory表示の流用）を表示する。
+- **空ソース（root配置）**: `CONTAINER_CREATED` → `RESULT_CONFIRMED`（空Map）→ `STREAM_CONSUMED`。
+- **downstream配置（groupingBy配下等）**: `CONTAINER_CREATED`は**発行しない**（Phase 5の「bucket内のコンテナ生成には発行せず、`BUCKET_SELECTED`が新規生成を表す」契約〔`docs/phase-5-decisions.md` §14.3〕を維持）。親の新規`BUCKET_SELECTED`のcontextへ「downstream Mapの生成（`TreeMap::new`指定時はTreeMap）」を表示し、既存bucket選択時は生成済みMapを再利用して新たな生成表示をしない。bucketごとのtoMap蓄積へ上記の要素単位列（`TO_MAP_KEY_EVALUATED`以降）を適用する。既存downstream Collectorの列規則との厳密な合成はPhase 8実装指示書で確定する。
 
 ### 6.4 実行値とIDの契約
 
@@ -188,13 +213,13 @@ closed schema検証（kind → 許可キー集合 → ホワイトリスト → 
 
 ```
 ToMapValueDsl =
-  | { kind: 'identity' }        // Function.identity()。U = 入力要素型
-  | 既存MapperDslのうちflattening系を除くkind
+  | { kind: 'identity' }                 // Function.identity()。U = 入力要素型（Employee）
+  | { kind: 'fieldAccess', field: … }    // 既存MapperDslのfieldAccessと同形
 ```
 
+- 許可は`identity` / `fieldAccess`の**2形のみ**とする。toMapを配置できるslotはEmployee入力に限る（§8.6）ため、String入力用の`toUpper` / `prefix`とflattening系の`listStream` / `arrayStream`は元々型不適合である。`fieldToPrimitive`は出力TypeRefがprimitive（例: `int`）となり`Map<K, int>`という**Javaとして不正な型表示**を生むため許可しない（toMapのUはジェネリック型引数であり、値はwrapper型へboxingされる）。
 - `identity`は**toMap専用のvalue DSLとして新設**し、共有`MapperDsl`は変更しない。理由: 完了済みPhaseの共有DSL許可範囲を変えない（v0.9 §8.2がTerminal DSLを変えずGatherer専用`AccumulationRule`を新設したのと同じ判断）。
-- flattening系（`FLATTENING_MAPPER_KINDS`: `listStream` / `arrayStream`）は値mapperとして不適のため禁止する（1要素→1値の変換のみ許可）。
-- 値型Uは既存`resolveMapperOutputType`で導出する（`identity`はU=入力要素型）。
+- 値型Uの導出: `identity`はU=Employee。`fieldAccess`は既存`resolveMapperOutputType`を流用する（primitive fieldはwrapper型へboxing済み。例: `salary` → `Long`、`age` → `Integer`）。
 
 ### 8.4 mergeFunction（`ToMapMergeId`新設。IDホワイトリスト）
 
@@ -221,19 +246,20 @@ ToMapValueDsl =
 - keyMapper（`ClassifierDsl`）はEmployee入力を要求するため、toMapを配置できるのは**入力要素型がEmployeeであるslotに限る**（`mapping`配下など入力型が変わる位置は`TYPE_MISMATCH`で拒否）。
 - 結果TypeRefは既存`resolveCollectorType`の再帰で導出する（downstream配置時は`Map<K1, Map<K2, U>>`）。
 - **基準template（最低限。fixture値・template IDはPhase 8実装指示書で確定）**:
-  1. 2引数版・全キー一意（成功形。例: `toMap(name系キー, salary系値)`）
+  1. 2引数版・全キー一意・**value側identity**（成功形。例: `toMap(Employee::name, Function.identity())` → `Map<String, Employee>`。§4の5の必須教材）
   2. 2引数版・重複キー（実行失敗形。例: keyMapper=`region`）
   3. 3引数版・first / last対比（同一データで結果の違いを見せる）
   4. 3引数版・concat・**同一キーへ3件以上が衝突するデータ**（mergeの順次適用の可視化。first→最初の値、last→最後の値、concat→全値の連結、を同一データで照合する）
   5. 4引数版・TreeMap（キーの昇順整列を表示）
   6. **downstream形 `groupingBy(…, toMap(…))` を最低1件**（nested Map TypeRef・bucketごとの重複判定の機械検証）
+- 基準template 2〜4は、既存の`groupingBy(region)`系教材と**同一fixture・同一keyMapper**を用い、template説明で相互参照する（「groupingByは同じキーの値をListへ蓄積する / toMapは衝突してmergeまたは例外になる」の直接比較。§4の1）。
 - 手動連携取込候補（v0.10）へのtoMap開放可否はPhase 8中の判断事項とする（§10）。開放する場合も本節の制約を候補検証の契約とする。
 
 ## 9. Phase 8実装契約の概要
 
 - 位置づけ: Phase 7完了後に実施する追加Phase（v0.8 §20のPhase表へPhase 8行を追加）。
-- 実装範囲: §2.1の3 overloadを、OperationCatalog・Collector AST / validate・Collector Runtime・Step Engine（§6.2実行失敗契約）・セッション状態（FAILED区分）・template / fixture・UI・テスト・Oracleまで縦断実装する。
-- 完了条件（概要）: §5の構造表示（4行）、§6のsnapshot列・実行失敗契約・決定性、§7の特殊ケース、§8のDSL検証が、JDK 25実測との回帰照合（例外は**型のみ**照合。§6.2の5）を含めて成立し、既存P1〜P7テストが全件成功すること。mergeFunctionの適用順（既存値が第1引数）はOracleで実測照合する（§3.2）。
+- 実装範囲: §2.1の3 overloadを、Collector AST / validate・Collector Runtime・Step Engine（§6.2実行失敗契約）・セッション状態（FAILED区分）・template / fixture・UI・テスト・Oracleまで縦断実装する。**新しいoperationIdは追加しない**——Phase 5と同様、toMapは既存`collect` operationのCollector AST kindとして扱い、OperationCatalogへの変更はCollector slot許可kind・表示metadataへの追加に限る。
+- 完了条件（概要）: §5の構造表示（4行）、§6のsnapshot列・実行失敗契約・決定性、§7の特殊ケース、§8のDSL検証が、JDK 25実測との回帰照合（例外は**型のみ**照合。§6.2の5）を含めて成立し、既存P1〜P7テストが全件成功すること（§1.2の走査母集団の意図的更新を含む）。mergeFunctionの適用順（既存値が第1引数）はOracleで実測照合する（§3.2）。
 - 統合版docx（`tools/build_spec_docx.py`）へのv0.11差分の取込みを完了条件へ含める。
 - テストIDは`P8-*`（P8-D / A / R / E / O）。必須ID表・件数・fixture値はPhase 8実装指示書で確定する。
 
@@ -241,7 +267,7 @@ ToMapValueDsl =
 
 1. SnapshotKind候補名（§6.1）の最終確定と、Phase 7完了時点の全kindとの衝突再確認
 2. `completion`新値・再生状態新値（§6.2の3。`EXECUTION_FAILED` / `FAILED`候補）の最終名と、ERROR区分と混同しないUI表示
-3. valueMapper評価のsnapshot kind（`MAPPING_APPLIED`再利用か新設か）
+3. `ExecutionFailureView`（§6.2の9）の値参照の具体型（SimValue直接保持かElementId参照か）と、`SnapshotOutput.result`のnull許容化（§6.2の6）が既存view消費コードへ与える影響範囲
 4. 重複キー・3件以上衝突を自然に含むfixture（基準Employee 4件で足りるか、補助データを追加するか。500 snapshot予算との両立を含む）
 5. Map entry view・merge結果値ID（§6.4）の具体型（既存`CollectorMapEntryView`の流用可否）
 6. 手動連携取込候補へのtoMap開放可否（v0.10の候補検証と整合させる）
