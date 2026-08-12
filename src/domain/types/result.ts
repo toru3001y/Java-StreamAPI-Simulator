@@ -20,6 +20,14 @@ export type ValidationCode =
   | 'UNORDERED_WHILE'
   /** Collector ASTの入れ子が教材制約の上限を超える（Phase 5指示 §7.1） */
   | 'COLLECTOR_DEPTH'
+  /** 貼付テキストがサイズ上限を超える（parse前に拒否。v0.10 §6.4、Phase 6指示 §7.1） */
+  | 'IMPORT_SIZE_LIMIT'
+  /** 貼付テキストをJSONとして解釈できない（v0.10 §7.2手順3） */
+  | 'IMPORT_PARSE'
+  /** 取込候補がImport Contract（closed schema・値域・文字列規則）に違反する（v0.10 §6） */
+  | 'IMPORT_SCHEMA'
+  /** 取込候補のtemplateId / templateVersion / mode / dslVersionが選択中と一致しない（v0.10 §6.1） */
+  | 'IMPORT_CONTEXT_MISMATCH'
 
 export interface ValidationIssue {
   readonly code: ValidationCode

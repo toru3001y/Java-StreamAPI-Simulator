@@ -7,7 +7,7 @@ import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
 import type { SourceDsl } from './sourceAst'
 import type { ArrayGeneratorDsl, ReductionDsl, ReductionIdentity } from './terminalAst'
-import type { DatasetElement, EmployeeValue } from '../model/employee'
+import type { DatasetElement, DepartmentValue, EmployeeValue } from '../model/employee'
 import { EMPLOYEE_FIELDS } from '../model/employee'
 import { formatDoubleLiteral, formatLongLiteral } from '../model/value'
 import type { LineId, NodeId } from '../types/ids'
@@ -183,8 +183,11 @@ export function combinerToJavaExpr(identity: ReductionIdentity): string {
  * Java文字列リテラルの生成（レビュー対応）。
  * 元の文字列値を変更せず、同じ値を表す正当なJava 25文字列リテラルへエスケープする。
  * 生の改行・未エスケープ引用符をJavaコード表示へ混入させない。
- * 適用範囲: string identity、およびPhase 5のjoining delimiter / prefix / suffix
- * （どちらも型付きString定数。生の埋め込みはしない）。
+ *
+ * Phase 6（v0.10 §7.3-1）で**外部入力由来の文字列をJava文字列リテラルへ埋め込む全箇所**へ適用する:
+ * string identity、joining delimiter / prefix / suffix、Employeeのname / region、
+ * Department宣言のname / division、skills等のString List、`Stream.of` / `String[]`のvalues、
+ * mapper prefix。fixture値は安全な文字だけを含むため、適用後も出力は不変である。
  */
 export function javaStringLiteral(value: string): string {
   let escaped = ''
@@ -346,7 +349,7 @@ export function mapperToJavaExpr(mapper: MapperDsl): string {
     case 'toUpper':
       return 'String::toUpperCase'
     case 'prefix':
-      return `n -> "${mapper.prefix}" + n`
+      return `n -> ${javaStringLiteral(mapper.prefix)} + n`
     case 'fieldToPrimitive':
       return `Employee::${mapper.field}`
     case 'listStream':
@@ -366,7 +369,7 @@ export function sourceToJavaExpr(source: SourceDsl): string {
     case 'arrayPrimitive':
       return `Arrays.stream(${source.arrayId})`
     case 'streamOf':
-      return `Stream.of(${source.values.map((s) => `"${s}"`).join(', ')})`
+      return `Stream.of(${source.values.map(javaStringLiteral).join(', ')})`
     case 'streamOfPrimitiveArrays':
       return `Stream.of(${source.arrays
         .map((a) => `new ${source.primitive}[]{${a.map((n) => formatPrimitiveLiteral(source.primitive, n)).join(', ')}}`)
@@ -409,18 +412,59 @@ function formatLocalDate(iso: string): string {
 }
 
 function formatStringList(items: readonly string[]): string {
-  return `List.of(${items.map((s) => `"${s}"`).join(', ')})`
+  return `List.of(${items.map(javaStringLiteral).join(', ')})`
 }
 
-function departmentVarName(deptName: string): string {
-  if (deptName === '開発部') return 'development'
-  if (deptName === '営業部') return 'sales'
-  return ''
+/**
+ * 部署の同一性は`name`+`division`の組で判定する（v0.10 §7.3-2、Phase 6指示 §7.7-2）。
+ * 既存fixtureの組は固定名（開発部 = development / 営業部 = sales）を維持し、
+ * 固定表にない組にはdatasetの出現順（組の初出順）で`dept1`, `dept2`…を割り当てる。
+ * 採番は未対応組のみを数える。`deptN`は固定名・Java予約語と衝突しない。
+ */
+const FIXED_DEPARTMENT_VAR_NAMES: readonly {
+  readonly name: string
+  readonly division: string
+  readonly varName: string
+}[] = [
+  { name: '開発部', division: '技術本部', varName: 'development' },
+  { name: '営業部', division: '営業本部', varName: 'sales' },
+]
+
+function departmentKey(department: DepartmentValue): string {
+  return JSON.stringify([department.name, department.division])
 }
 
-function employeeConstructorLines(value: EmployeeValue, isLast: boolean): string[] {
-  const deptVar = departmentVarName(value.department.name) || 'null'
-  const line1 = `        new Employee("${value.name}", ${value.age}, ${formatLongLiteral(value.salary)}, ${formatDoubleLiteral(value.evaluation)}, "${value.region}",`
+/** dataset内の部署（name + divisionの組）へJava変数名を出現順に割り当てる */
+export function assignDepartmentVarNames(
+  employeeDataset: readonly DatasetElement[],
+): ReadonlyMap<string, string> {
+  const assigned = new Map<string, string>()
+  let generatedCount = 0
+  for (const element of employeeDataset) {
+    const department = element.value.department
+    const key = departmentKey(department)
+    if (assigned.has(key)) continue
+    const fixed = FIXED_DEPARTMENT_VAR_NAMES.find(
+      (entry) => entry.name === department.name && entry.division === department.division,
+    )
+    if (fixed) {
+      assigned.set(key, fixed.varName)
+      continue
+    }
+    generatedCount += 1
+    assigned.set(key, `dept${generatedCount}`)
+  }
+  return assigned
+}
+
+function employeeConstructorLines(
+  value: EmployeeValue,
+  isLast: boolean,
+  departmentVars: ReadonlyMap<string, string>,
+): string[] {
+  // 一般化後、Department引数にnullが現れることはない（datasetの全部署へ変数名を割り当てる）
+  const deptVar = departmentVars.get(departmentKey(value.department)) ?? 'null'
+  const line1 = `        new Employee(${javaStringLiteral(value.name)}, ${value.age}, ${formatLongLiteral(value.salary)}, ${formatDoubleLiteral(value.evaluation)}, ${javaStringLiteral(value.region)},`
   const line2 = `                ${formatLocalDate(value.hireDate)}, ${deptVar}, ${formatStringList(value.skills)})${isLast ? ');' : ','}`
   return [line1, line2]
 }
@@ -489,23 +533,33 @@ function sourceDeclLines(source: SourceDsl, employeeDataset: readonly DatasetEle
         lines.push('List<Employee> employees = List.of();')
         return lines
       }
-      const deptNames = [...new Set(employeeDataset.map((d) => d.value.department.name))]
-      for (const deptName of deptNames) {
-        const varName = departmentVarName(deptName)
-        const division = employeeDataset.find((d) => d.value.department.name === deptName)?.value
-          .department.division
-        if (varName && division !== undefined) {
-          lines.push(`Department ${varName} = new Department("${deptName}", "${division}");`)
-        }
+      const departmentVars = assignDepartmentVarNames(employeeDataset)
+      const declared = new Set<string>()
+      for (const element of employeeDataset) {
+        const department = element.value.department
+        const key = departmentKey(department)
+        if (declared.has(key)) continue
+        declared.add(key)
+        const varName = departmentVars.get(key)
+        if (!varName) continue
+        lines.push(
+          `Department ${varName} = new Department(${javaStringLiteral(department.name)}, ${javaStringLiteral(department.division)});`,
+        )
       }
       lines.push('List<Employee> employees = List.of(')
       employeeDataset.forEach((element, i) => {
-        lines.push(...employeeConstructorLines(element.value, i === employeeDataset.length - 1))
+        lines.push(
+          ...employeeConstructorLines(
+            element.value,
+            i === employeeDataset.length - 1,
+            departmentVars,
+          ),
+        )
       })
       return lines
     }
     case 'arrayObject':
-      return [`String[] ${source.arrayId} = { ${source.values.map((s) => `"${s}"`).join(', ')} };`]
+      return [`String[] ${source.arrayId} = { ${source.values.map(javaStringLiteral).join(', ')} };`]
     case 'arrayPrimitive':
       return [
         `${source.primitive}[] ${source.arrayId} = { ${source.values

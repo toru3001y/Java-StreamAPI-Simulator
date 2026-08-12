@@ -1,0 +1,30 @@
+{
+  "intBoundarySum": -1,
+  "intBoundaryAverage": "-0.5",
+  "intStatsCount": 2,
+  "intStatsSum": "-1L",
+  "intStatsMin": -2147483648,
+  "intStatsMax": 2147483647,
+  "intStatsAverage": "-0.5",
+  "longBoundarySum": "0L",
+  "longStatsCount": 2,
+  "longStatsSum": "0L",
+  "longStatsMin": "-9_007_199_254_740_991L",
+  "longStatsMax": "9_007_199_254_740_991L",
+  "longStatsAverage": "0.0",
+  "doubleBoxedValues": [
+    "0.0",
+    "0.000001",
+    "1000000000000000.0"
+  ],
+  "doubleStatsCount": 3,
+  "doubleStatsMin": "0.0",
+  "doubleStatsMax": "1000000000000000.0",
+  "employeeCount": 2,
+  "summingIntAge": 95,
+  "averagingIntAge": "47.5",
+  "summingLongSalary": 99999999,
+  "averagingLongSalary": "49999999.5",
+  "summingDoubleEvaluation": "5.0",
+  "averagingDoubleEvaluation": "2.5"
+}

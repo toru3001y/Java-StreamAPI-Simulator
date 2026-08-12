@@ -47,7 +47,7 @@ describe('P2 Application', () => {
     expect(session.getState().cursor).toBe(0)
   })
 
-  it('P2-A02: 同一操作内の別template（固定sample）へ切替え、fixture/AI表示を混同しない', () => {
+  it('P2-A02: 同一操作内の別template（固定sample）へ切替え、fixture/取込サンプル表示を混同しない', () => {
     const scheduler = new FakeScheduler()
     const app = createApp({ scheduler })
     // Arrays.stream操作は2つのtemplateを持つ
@@ -59,10 +59,9 @@ describe('P2 Application', () => {
     expect(second.pipeline.templateId).toBe('tmpl-src-arrays-int')
     expect(second.targetOperationId).toBe(first.targetOperationId)
     expect(second.revision).not.toBe(first.revision)
-    // どちらも固定サンプル（FIXTURE）でありAI生成とは表示しない
+    // どちらも固定サンプル（FIXTURE）であり取込サンプルとは表示しない
     expect(first.provenance.providerKind).toBe('FIXTURE')
     expect(second.provenance.providerKind).toBe('FIXTURE')
-    expect(app.aiCapability.available).toBe(false)
   })
 
   it('P2-A03: supportedModesだけを選択でき、同じmodeへ戻ってもrevisionを再利用しない', () => {

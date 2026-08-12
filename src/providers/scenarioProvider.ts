@@ -23,9 +23,12 @@ export interface GenerateRequest {
   readonly currentScenarioRevision: ScenarioRevision | null
 }
 
-/** ScenarioCandidate（§10.3） */
+/** provider種別（v0.10 §4.1）。FIXTURE = 固定サンプル、IMPORTED = 取込サンプル。 */
+export type ProviderKind = 'FIXTURE' | 'IMPORTED'
+
+/** ScenarioCandidate（§10.3、v0.10 §4.1で種別を変更） */
 export interface ScenarioCandidate {
-  readonly providerKind: 'FIXTURE' | 'AI'
+  readonly providerKind: ProviderKind
   readonly templateId: TemplateId
   readonly templateVersion: number
   readonly mode: ScenarioMode
@@ -37,16 +40,11 @@ export interface ScenarioCandidate {
   readonly revision: ScenarioRevision
 }
 
+/**
+ * ScenarioProvider境界はfixture用契約として存続する（v0.10 §3.2）。
+ * 取込経路（Candidate Import）はpush型のためこのinterfaceを実装しない。
+ */
 export interface ScenarioProvider {
   capability(): ProviderCapability
   generate(request: GenerateRequest): ScenarioCandidate
-}
-
-/**
- * AI providerはPhase 6まで利用不能（§21.4）。
- * ボタンのdisabled状態とこの理由を一致させ、fixtureへ自動フォールバックしない（§10.5）。
- */
-export const AI_CAPABILITY: ProviderCapability = {
-  available: false,
-  reason: 'AI生成はPhase 6で提供予定のため、現在は利用できません。固定サンプルをご利用ください。',
 }

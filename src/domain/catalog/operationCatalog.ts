@@ -4,7 +4,8 @@ import { listOf } from '../types/typeRef'
 
 /**
  * OperationCatalog（Draft v0.8 §7）。
- * 各操作の意味論と表示メタデータを一元管理する。TemplateやAI候補はtraitsを上書きできない。
+ * 各操作の意味論と表示メタデータを一元管理する。Templateや取込候補はtraitsを上書きできない
+ * （v0.10 §1.2の§7読み替え）。
  */
 export type OperationCategory = 'source' | 'intermediate' | 'terminal' | 'collector'
 

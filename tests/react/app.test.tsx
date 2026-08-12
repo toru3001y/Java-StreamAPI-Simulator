@@ -4,7 +4,6 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { App } from '../../src/ui/App'
 import { createApp } from '../../src/ui/appInstance'
-import { AI_CAPABILITY } from '../../src/providers/scenarioProvider'
 import { FakeScheduler } from '../helpers'
 
 /** React統合テスト（§23.3）。UIは確定snapshotからの描画だけを検証する。 */
@@ -146,20 +145,10 @@ describe('React統合', () => {
     expect(btn.back()).toBeEnabled()
   })
 
-  it('P1-R07: AIボタンはdisabledで理由が読め、fixtureへ自動切替しない', () => {
-    const { app } = renderApp()
-    const aiButton = screen.getByTestId('ai-button')
-    expect(aiButton).toBeDisabled()
-    expect(aiButton).toHaveAttribute('aria-describedby', 'ai-unavailable-reason')
-    const reason = screen.getByTestId('ai-reason')
-    expect(reason.textContent).toBe(AI_CAPABILITY.reason)
-    // fixtureはAI生成ではなく「固定サンプル」と表示される
-    expect(screen.getByTestId('provenance').textContent).toBe('固定サンプル')
-    // disabledボタンなのでシナリオは変化しない
-    const revision = app.session.getState().scenario.revision
-    aiButton.click()
-    expect(app.session.getState().scenario.revision).toBe(revision)
-  })
+  // P1-R07（AIボタンのdisabled理由表示）はPhase 6で廃止した。
+  // 「取込失敗時に現行シナリオを維持し理由を表示する」はP6-R03が、
+  // 「ユーザー操作なしにシナリオが切り替わらない」「fixtureは固定サンプルと表示する」は
+  // P6-R系とP2-A02が継承する（v0.10 §1.3、Phase 6指示 §12冒頭）。
 
   it('P1-R08: prefers-reduced-motion時は移動アニメーションを抑制する', async () => {
     const makeMatchMedia = (matches: boolean) =>

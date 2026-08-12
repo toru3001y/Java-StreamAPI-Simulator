@@ -108,16 +108,6 @@ body {
   font-size: 0.85rem;
 }
 
-.ai-control {
-  max-width: 320px;
-}
-
-.ai-reason {
-  margin: 4px 0 0;
-  font-size: 0.8rem;
-  color: var(--color-muted);
-}
-
 .scenario-description {
   margin: 8px 0 0;
   font-size: 0.9rem;
@@ -899,4 +889,103 @@ summary:focus-visible {
 .record-name {
   font-size: 0.8rem;
   margin: 2px 0;
+}
+
+/* ---- Phase 6: 取込UI（v0.10 §8、指示§9） ---- */
+.import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-lead {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  color: var(--color-muted);
+}
+
+.import-disabled-reason {
+  margin: 8px 0;
+  font-size: 0.9rem;
+  color: var(--color-rejected);
+}
+
+.import-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.import-actions button {
+  font-size: 0.95rem;
+  padding: 6px 12px;
+}
+
+.import-textarea-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.85rem;
+  max-width: 100%;
+}
+
+.import-textarea-label textarea,
+.import-fallback-text {
+  width: 100%;
+  max-width: 100%;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-code-bg);
+  color: var(--color-text);
+  resize: vertical;
+}
+
+.import-feedback {
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.import-ok {
+  margin: 4px 0;
+  color: var(--color-passed);
+}
+
+.import-warn {
+  margin: 4px 0;
+  color: var(--color-active);
+}
+
+.import-error {
+  margin: 4px 0;
+  color: var(--color-rejected);
+  font-weight: 600;
+}
+
+.import-issue-list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.import-issue-list li {
+  overflow-wrap: anywhere;
+}
+
+.import-issue-list code {
+  background: var(--color-code-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 6px;
+  font-size: 0.8rem;
+}
+
+.import-issue-path {
+  color: var(--color-accent);
 }

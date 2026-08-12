@@ -5,7 +5,6 @@ import {
   INTERVAL_MS,
   SimulationSession,
 } from '../../src/application/session'
-import { AI_CAPABILITY } from '../../src/providers/scenarioProvider'
 import { FixtureScenarioProvider } from '../../src/providers/fixtureScenarioProvider'
 import { buildScenario } from '../../src/application/scenarioFactory'
 import { createDefaultCatalog, OP_FILTER } from '../../src/domain/catalog/operations'
@@ -194,14 +193,9 @@ describe('履歴・再生制御', () => {
     expect(session.getState().playbackState).toBe('READY')
   })
 
-  it('P1-A08: AI利用不能理由がcapabilityとして取得できUI状態と一致させられる', () => {
-    expect(AI_CAPABILITY.available).toBe(false)
-    expect(AI_CAPABILITY.reason).toBeTruthy()
-    expect(AI_CAPABILITY.reason).toContain('Phase 6')
-    // fixture provider自体は利用可能
-    const provider = new FixtureScenarioProvider()
-    expect(provider.capability().available).toBe(true)
-  })
+  // P1-A08（AI利用不能理由とUI状態の一致）はPhase 6で廃止した。
+  // 「利用者へ示す理由とUI状態の一致」という目的はP6-A02が継承する
+  // （v0.10 §1.3、Phase 6指示 §12冒頭）。
 
   it('J-3: エンジン不整合検知時はERRORへ遷移しタイマー解除・history保持', () => {
     const scenario = makeScenario('tmpl-filter-basic', 'standard')

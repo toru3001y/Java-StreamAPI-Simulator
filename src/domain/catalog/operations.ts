@@ -4,7 +4,7 @@ import type { OperationDefinition } from './operationCatalog'
 /**
  * Operation Catalog（Draft v0.8 §7）。
  * Phase 1〜3の生成・中間操作、Phase 4の終端操作、Phase 5のCollector系（collect / 3引数collect）
- * を登録する。Phase 6のAI関連操作は登録しない。
+ * を登録する。手動連携（Phase 6）はStream操作ではないため、ここへは登録しない。
  */
 
 // ---- source（§5.1） ----

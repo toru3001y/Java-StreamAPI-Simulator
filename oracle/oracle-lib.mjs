@@ -38,20 +38,31 @@ export const SUITES = [
     id: 'P5-O01',
     javaFile: 'OracleP5.java',
     expectedFile: 'expected-p5-from-core.json',
-    // 現行Phase（P5）だけが証跡を生成・更新する
-    writeReportPath: ['artifacts', 'phase-5', 'oracle-result.md'],
+    // Phase 6着手に伴い証跡書込みを停止した（artifacts/phase-5/oracle-result.mdは過去証跡として保持）。
+    // 照合自体は回帰として継続実行する
+    writeReportPath: null,
+  },
+  {
+    id: 'P6-O01',
+    javaFile: 'OracleP6.java',
+    expectedFile: 'expected-p6-from-core.json',
+    // 現行Phase（P6）だけが証跡を生成・更新する
+    writeReportPath: ['artifacts', 'phase-6', 'oracle-result.md'],
   },
 ]
 
 /** Phase 4時点の必須suite ID（P4-O03契約の検証で使用する。履歴として固定する） */
 export const P4_REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01']
 
+/** Phase 5時点の必須suite ID（P5-O02契約をfixtureで検証し続けるために固定する） */
+export const P5_REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01', 'P5-O01']
+
 /** Long境界値照合（P4-O02）を適用するsuite。ID再定義はしない */
 export const BOUNDARY_SUITE_ID = 'P4-O01'
 
 /** 現行Phaseのsuite（証跡を書き込む唯一のsuite） */
-export const CURRENT_PHASE_SUITE_ID = 'P5-O01'
-export const CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-5/oracle-result.md'
+export const CURRENT_PHASE_SUITE_ID = 'P6-O01'
+export const CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-6/oracle-result.md'
 
 /** 実行前後で不変であることを検証する過去Phase証跡（現行Phaseは含めない） */
 export const PAST_ARTIFACT_DIRS = [
@@ -59,6 +70,7 @@ export const PAST_ARTIFACT_DIRS = [
   'artifacts/phase-2',
   'artifacts/phase-3',
   'artifacts/phase-4',
+  'artifacts/phase-5',
 ]
 
 /** Long境界値の正確な10進文字列（1桁も失わない比較の基準） */
@@ -116,8 +128,15 @@ export function allSuitesPassed(results) {
  *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果、の3判定すべて
  */
 
-/** 現行Phaseの必須suite ID（欠落・重複はFAIL。P5-O02が検証する） */
-export const REQUIRED_SUITE_IDS = ['P1-O01', 'P2-O01', 'P3-O01', 'P4-O01', 'P5-O01']
+/** 現行Phaseの必須suite ID（欠落・重複はFAIL。P6-O02が検証する） */
+export const REQUIRED_SUITE_IDS = [
+  'P1-O01',
+  'P2-O01',
+  'P3-O01',
+  'P4-O01',
+  'P5-O01',
+  'P6-O01',
+]
 
 /**
  * Phase 4時点のOracle ID（P4-O01〜O03）契約の判定。
@@ -164,11 +183,13 @@ export function evaluateOracleIds({
 }
 
 /**
- * P5必須Oracle ID（P5-O01・P5-O02）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
- * - P5-O01: P5 suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
- * - P5-O02: 必須suite（P1-O01〜P5-O01）が各1件存在すること、証跡書込みが現行Phase（P5）のみで
- *           書込み先がartifacts/phase-5/oracle-result.mdだけであること、
- *           実行前後のartifacts/phase-1〜phase-4 SHA-256不変の実測結果、の3判定すべて
+ * 現行Phase必須Oracle ID（P6-O01・P6-O02）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
+ * - P6-O01: 現行Phase suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
+ * - P6-O02: 必須suite（P1-O01〜P6-O01）が各1件存在すること、証跡書込みが現行Phase（P6）のみで
+ *           書込み先がartifacts/phase-6/oracle-result.mdだけであること、
+ *           実行前後のartifacts/phase-1〜phase-5 SHA-256不変の実測結果、の3判定すべて
+ *
+ * Phase 5時点の同契約は`suites` / `requiredSuiteIds` / `currentPhase*`へfixtureを渡して検証し続ける。
  */
 export function evaluateCurrentPhaseOracleIds({
   suiteResults,
@@ -206,6 +227,21 @@ export function evaluateCurrentPhaseOracleIds({
 
 const verdictOf = (passed) => (passed ? 'PASS' : 'FAIL')
 
+/** Phase 5時点の照合方式の注記（fixture検証で使用する。当時の記載を保持する） */
+export const P5_MATCH_NOTES = [
+  'unordered結果の比較正規化: 順序意味論を持たないSet / Mapはキー・要素の表示文字列の辞書順へ正規化してから照合（正規化は比較のためだけであり、JDKのiteration order保証を意味しない）',
+  'TreeMap（順序意味論あり）は正規化せず実順序のまま照合（順序自体が検証対象）',
+  '数値は正規化後もJSON文字列表現で厳密照合（64bit境界値・±Infinityは10進文字列のまま比較）',
+]
+
+/** Phase 6（取込境界値）の照合方式の注記 */
+export const P6_MATCH_NOTES = [
+  '対象は取込相当candidate（Import Contractの前段検証を通した貼付JSON）の実行結果',
+  'doubleはSimulation Coreのformat（formatDoubleLiteral）表記へ両側で揃えて厳密照合（JavaのDouble.toStringは1e-3未満・1e7以上で指数表記へ切り替わるため、1e-6 / 1e15をそのまま比較すると偽装不一致になる）',
+  'longは3桁区切り + L表記（formatLongLiteral）へ両側で揃えて厳密照合し、numberへ変換しない',
+  'DoubleStreamのsum / averageは照合対象外（JDKは補償付き加算、Simulation Coreのprimitive Stream集計は素朴加算のため）。double集計はCollectors側で照合する',
+]
+
 /**
  * oracle-result.mdへ出力するP4-O01〜O03の結果セクション。
  * evaluateOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
@@ -234,8 +270,11 @@ export function buildOracleIdSection({
 }
 
 /**
- * artifacts/phase-5/oracle-result.mdへ出力するP5-O01・P5-O02の結果セクション。
+ * 現行Phaseのoracle-result.mdへ出力する「照合ID・運用検証ID」の結果セクション。
  * evaluateCurrentPhaseOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
+ *
+ * PhaseラベルとID名は引数で受け取る（既定は現行Phase = P6）。
+ * Phase 5時点の契約はfixture構成を渡して同じ関数で検証し続ける（Phase 6指示 §12冒頭）。
  */
 export function buildCurrentPhaseOracleIdSection({
   evaluation,
@@ -243,22 +282,26 @@ export function buildCurrentPhaseOracleIdSection({
   regression,
   requiredSuiteIds = REQUIRED_SUITE_IDS,
   currentPhaseReportPath = CURRENT_PHASE_REPORT_PATH,
+  phaseLabel = 'P6',
+  matchIdLabel = 'P6-O01',
+  operationsIdLabel = 'P6-O02',
+  pastArtifactsLabel = 'artifacts/phase-1〜phase-5',
+  pastPhasesLabel = 'P1〜P5',
+  matchNotes = P6_MATCH_NOTES,
 }) {
   return [
-    '## P5必須Oracle IDの結果（P5-O01・P5-O02）',
-    `- P5-O01: ${verdictOf(evaluation.o01Passed)}（JDK 25実測値とSimulation Core期待値のJSON完全一致）`,
-    '  - unordered結果の比較正規化: 順序意味論を持たないSet / Mapはキー・要素の表示文字列の辞書順へ正規化してから照合（正規化は比較のためだけであり、JDKのiteration order保証を意味しない）',
-    '  - TreeMap（順序意味論あり）は正規化せず実順序のまま照合（順序自体が検証対象）',
-    '  - 数値は正規化後もJSON文字列表現で厳密照合（64bit境界値・±Infinityは10進文字列のまま比較）',
-    `- P5-O02: ${verdictOf(evaluation.o02Passed)}（Oracle運用検証）`,
+    `## ${phaseLabel}必須Oracle IDの結果（${matchIdLabel}・${operationsIdLabel}）`,
+    `- ${matchIdLabel}: ${verdictOf(evaluation.o01Passed)}（JDK 25実測値とSimulation Core期待値のJSON完全一致）`,
+    ...matchNotes.map((note) => `  - ${note}`),
+    `- ${operationsIdLabel}: ${verdictOf(evaluation.o02Passed)}（Oracle運用検証）`,
     `  - 必須${requiredSuiteIds.length} suite（${requiredSuiteIds.join(' / ')}）が各1件存在（欠落・重複なし）: ${verdictOf(evaluation.requiredSuitesPresent)}`,
-    `  - 証跡書込みは現行Phase（P5）のみ（書込み先は${currentPhaseReportPath}だけ。P1〜P4はwriteReportPath: nullの照合のみ）: ${verdictOf(evaluation.configOnlyCurrentPhaseWrites)}`,
-    `  - 実行前後でartifacts/phase-1〜phase-4のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
+    `  - 証跡書込みは現行Phase（${phaseLabel}）のみ（書込み先は${currentPhaseReportPath}だけ。${pastPhasesLabel}はwriteReportPath: nullの照合のみ）: ${verdictOf(evaluation.configOnlyCurrentPhaseWrites)}`,
+    `  - 実行前後で${pastArtifactsLabel}のSHA-256が不変: ${verdictOf(pastArtifactsUnchanged === true)}`,
     '',
     '## 過去Phase suiteの回帰結果（照合のみ・証跡書込みなし）',
     ...regression.map((line) => `- ${line}`),
     '',
-    `- 総合判定: ${verdictOf(evaluation.overallPassed)}（P5-O01・P5-O02のいずれかがFAILなら総合もFAIL）`,
+    `- 総合判定: ${verdictOf(evaluation.overallPassed)}（${matchIdLabel}・${operationsIdLabel}のいずれかがFAILなら総合もFAIL）`,
   ]
 }
 
