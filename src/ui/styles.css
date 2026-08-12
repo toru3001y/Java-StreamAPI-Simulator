@@ -989,3 +989,73 @@ summary:focus-visible {
 .import-issue-path {
   color: var(--color-accent);
 }
+
+/* ---- Phase 7: Gatherer構造（指示§9。Collector構造ツリーのCSSパターンを流用） ---- */
+.gatherer-structure {
+  overflow-x: auto;
+}
+
+.gatherer-elements {
+  width: 100%;
+  table-layout: auto;
+}
+
+.gatherer-elements th[scope='row'] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.gatherer-elements td {
+  vertical-align: top;
+}
+
+.gatherer-notes {
+  margin-top: 8px;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.gatherer-notes summary {
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.gatherer-notes p {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+
+/* 狭幅では構成要素表を縦積みにして横スクロールを避ける（§17.5） */
+@media (max-width: 800px) {
+  .gatherer-elements,
+  .gatherer-elements tbody,
+  .gatherer-elements tr,
+  .gatherer-elements th,
+  .gatherer-elements td {
+    display: block;
+    width: auto;
+  }
+
+  .gatherer-elements thead {
+    display: none;
+  }
+
+  .gatherer-elements tr {
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    margin: 6px 0;
+    padding: 4px;
+  }
+
+  .gatherer-elements th,
+  .gatherer-elements td {
+    border: none;
+    padding: 2px 6px;
+  }
+
+  .gatherer-elements th[scope='row'] {
+    white-space: normal;
+  }
+}

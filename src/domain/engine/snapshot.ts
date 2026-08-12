@@ -60,6 +60,30 @@ export type SnapshotKind =
   | 'TEE_BRANCH_FINISHED'
   /** teeing mergerの適用確定（R1・R2から最終結果Rを生成） */
   | 'TEE_MERGER_APPLIED'
+  // ---- Phase 7（Gatherer。v0.9 §6.1、Phase 7指示 §7.1） ----
+  /**
+   * initializerによる初期状態（空バッファ / 初期値）の生成確定。
+   * 各gatherノードにつき正確に1件、最初の要素処理前（空ソースでは終端処理前）に発行する。
+   */
+  | 'GATHER_INITIALIZED'
+  /**
+   * 窓バッファの状態更新確定。windowFixedは追加。
+   * windowSlidingの「最古を除き次を追加」（evict + append）は1回の状態更新とし、
+   * 除かれた要素はcontextで表示する。
+   */
+  | 'WINDOW_BUFFER_UPDATED'
+  /** scan累積値の更新確定（放出は含まない） */
+  | 'SCAN_ACCUMULATED'
+  /** fold累積値の更新確定（放出しない） */
+  | 'FOLD_ACCUMULATED'
+  /**
+   * finisher相当の終端処理の確定（最終出力の内容確定。放出は含まない）。
+   * 終端産出があり得る操作（windowFixed / windowSliding / fold）は実際の放出・残余の
+   * 有無にかかわらず終端で正確に1件発行する。scanは発行しない（v0.9 §6.1の統一規則）。
+   */
+  | 'GATHER_FINISHED'
+  /** gather出力要素1件の後段送出確定（窓・scan累積値・fold最終値に共通） */
+  | 'GATHER_EMITTED'
 
 /** 処理中パネルの表示内容（§12.3 処理中）。UIはこの確定値を描画するだけで独自計算しない。 */
 export interface ProcessingView {
@@ -238,6 +262,37 @@ export interface CollectorNodeView {
   readonly teeing: CollectorTeeingView | null
 }
 
+/**
+ * Gatherer 4構成要素の常設1行（Phase 7指示 §7.7、v0.9 §5）。
+ * 表示文言は**教材モデル上の割当て**であり、JDK内部実装の構成を断定しない。
+ */
+export interface GathererElementView {
+  /** 表示名（initializer / integrator / combiner / finisher） */
+  readonly name: 'initializer' | 'integrator' | 'combiner' | 'finisher'
+  /** 現在状態の表示（initializer / finisher。呼出し回数表示の行ではnull） */
+  readonly stateLabel: string | null
+  /** 呼出し回数（integrator / combiner。状態表示の行ではnull。combinerは常に0） */
+  readonly callCount: number | null
+  /** その構成要素の役割・意味論の説明 */
+  readonly note: string
+}
+
+/** gatherノードのバッファ・放出要素の1項目 */
+export interface GathererItemView {
+  readonly id: ElementId
+  readonly label: string
+  /** 窓の場合、その窓を構成した入力要素のElementId列（v0.9 §6.3-2のメンバー参照） */
+  readonly memberIds: readonly ElementId[] | null
+}
+
+/** scan / foldの累積履歴1件（既存reduce contextのhistory様式） */
+export interface GathererHistoryEntry {
+  readonly seq: number
+  readonly inputLabel: string
+  readonly beforeLabel: string | null
+  readonly afterLabel: string
+}
+
 export type OperationContextView =
   | {
       readonly kind: 'distinct'
@@ -402,6 +457,39 @@ export type OperationContextView =
         readonly combinerCallCount: number
         readonly combinerNote: string
       } | null
+    }
+  // ---- Phase 7: Gatherer固有状態（指示§7.7、v0.9 §5・§6.3） ----
+  | {
+      readonly kind: 'gather'
+      readonly nodeId: NodeId
+      readonly gathererKind: 'windowFixed' | 'windowSliding' | 'scan' | 'fold'
+      /** Javaコード式（例: Gatherers.windowFixed(3)） */
+      readonly gathererLabel: string
+      readonly inputTypeLabel: string
+      readonly outputTypeLabel: string
+      /** 型遷移の表示（例: Stream<Employee> → Stream<List<Employee>>） */
+      readonly typeTransitionLabel: string
+      /** 4構成要素の常設4行（initializer / integrator / combiner / finisher の順） */
+      readonly elements: readonly GathererElementView[]
+      /** window系の窓サイズ（scan / foldではnull） */
+      readonly windowSize: number | null
+      /** window系の現在バッファ（scan / foldでは空配列） */
+      readonly buffer: readonly GathererItemView[]
+      /** windowSlidingで直近にevictされた要素（なければnull） */
+      readonly evictedLast: GathererItemView | null
+      /** window系の窓がunmodifiable Listである旨の注記（scan / foldではnull） */
+      readonly unmodifiableNote: string | null
+      /** scan / foldの初期値表示（window系ではnull） */
+      readonly initialLabel: string | null
+      /** scan / foldの現在累積値（window系ではnull） */
+      readonly accumulatorLabel: string | null
+      /** scan / foldの累積履歴（window系では空配列） */
+      readonly history: readonly GathererHistoryEntry[]
+      /** 放出済み出力の列（窓・scan累積値・fold最終値に共通） */
+      readonly emitted: readonly GathererItemView[]
+      readonly emittedCount: number
+      /** 終端処理（GATHER_FINISHED）の確定内容。未確定・不発行はnull */
+      readonly finishedNote: string | null
     }
 
 /**

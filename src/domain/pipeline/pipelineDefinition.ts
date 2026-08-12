@@ -1,6 +1,7 @@
 import type { DslPredicate } from '../dsl/ast'
 import type { CollectTripleDsl, CollectorDsl } from '../dsl/collectorAst'
 import type { ComparatorDsl } from '../dsl/comparatorAst'
+import type { GathererDsl } from '../dsl/gatherAst'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
@@ -44,6 +45,8 @@ export interface PipelineNodeDef {
   readonly collector: CollectorDsl | null
   /** 3引数collectの定義済みID組合せ（Phase 5指示 §7.1） */
   readonly collectTriple: CollectTripleDsl | null
+  /** gather(Gatherer)の検証済みGatherer DSL（Phase 7指示 §7.4） */
+  readonly gatherer: GathererDsl | null
   readonly inputType: TypeRef | null
   readonly outputType: TypeRef
   readonly lineId: LineId

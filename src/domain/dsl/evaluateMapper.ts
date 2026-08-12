@@ -1,11 +1,13 @@
 import type { MapperDsl } from './mapperAst'
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 
 /**
  * 検証済みMapper DSLの安全な評価（Phase 2指示 §7.2）。
  * eval / new Function / 動的コード生成は使用しない。
  */
 export function evaluateMapper(mapper: MapperDsl, input: SimValue): SimValue {
+  assertNotCompositeList(input, 'mapper評価')
   switch (mapper.kind) {
     case 'fieldAccess': {
       if (input.kind !== 'employee') throw new Error('fieldAccessはEmployee要素が必要です')
@@ -63,6 +65,7 @@ export function evaluateMapper(mapper: MapperDsl, input: SimValue): SimValue {
 
 /** flatMap系mapper: 1要素からmapped Streamの子要素列を得る */
 export function evaluateFlatMapper(mapper: MapperDsl, input: SimValue): readonly SimValue[] {
+  assertNotCompositeList(input, 'flatMap系mapper評価')
   switch (mapper.kind) {
     case 'listStream':
       if (input.kind !== 'stringList') throw new Error('listStreamはList<String>要素が必要です')

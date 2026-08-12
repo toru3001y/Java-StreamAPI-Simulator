@@ -1,6 +1,6 @@
 import type { TemplateRegistry } from './templateRegistry'
 import type { ParameterSlot } from './pipelineTemplate'
-import type { OperationCatalog } from '../catalog/operationCatalog'
+import type { ElementStateKind, OperationCatalog } from '../catalog/operationCatalog'
 import { resolveTypeRule } from '../catalog/operationCatalog'
 import type { DslPredicate } from '../dsl/ast'
 import type { CollectTripleDsl, CollectorDsl } from '../dsl/collectorAst'
@@ -12,6 +12,12 @@ import {
   validateCollectorStructure,
 } from '../dsl/validateCollector'
 import type { ComparatorDsl } from '../dsl/comparatorAst'
+import type { GathererDsl } from '../dsl/gatherAst'
+import { isWindowGatherer } from '../dsl/gatherAst'
+import {
+  resolveGathererOutputElementType,
+  validateGathererStructure,
+} from '../dsl/validateGather'
 import type { ConsumerDsl } from '../dsl/consumerAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import type { SourceDsl } from '../dsl/sourceAst'
@@ -72,6 +78,20 @@ export const SNAPSHOT_LIMIT = 500
 
 const MAPPER_OPERATIONS = ['map', 'mapToInt', 'mapToLong', 'mapToDouble', 'mapToObj'] as const
 const FLAT_MAP_OPERATIONS = ['flatMap', 'flatMapToInt', 'flatMapToLong', 'flatMapToDouble'] as const
+
+/**
+ * gatherノードの凡例をGatherer kindに応じて絞り込む（Phase 7指示 §7.5）。
+ * `BUFFERED`はwindow系だけで発生し、scan / foldでは発生しないため凡例から除く。
+ * OperationCatalogの定義（4状態）は変更せず、node単位のlegendStatesで絞る
+ * （既存legend機構の範囲内。判断は docs/phase-7-decisions.md）。
+ */
+function gatherLegendStates(
+  catalogStates: readonly ElementStateKind[],
+  gatherer: GathererDsl,
+): readonly ElementStateKind[] {
+  if (isWindowGatherer(gatherer)) return catalogStates
+  return catalogStates.filter((state) => state !== 'BUFFERED')
+}
 
 function elementTypeOf(streamType: TypeRef): TypeRef {
   if (streamType.kind === 'stream') return streamType.elementType
@@ -359,6 +379,7 @@ export function instantiateTemplate(
   const arrayGenerators = new Map<SlotId, ArrayGeneratorDsl>()
   const collectors = new Map<SlotId, CollectorDsl>()
   const collectTriples = new Map<SlotId, CollectTripleDsl>()
+  const gatherers = new Map<SlotId, GathererDsl>()
   for (const slot of template.parameterSlots) {
     const raw = input.dslParameters[slot.slotId]
     if (raw === undefined) continue
@@ -401,6 +422,11 @@ export function instantiateTemplate(
     } else if (slot.kind === 'collectTriple') {
       const result = validateCollectTriple(raw, `dslParameters.${slot.slotId}`)
       if (result.ok) collectTriples.set(slot.slotId, result.value)
+      else structureIssues.push(...result.issues)
+    } else if (slot.kind === 'gatherer') {
+      // Phase 7: Gatherer DSLのclosed schema構造検証（指示§7.4）
+      const result = validateGathererStructure(raw, `dslParameters.${slot.slotId}`)
+      if (result.ok) gatherers.set(slot.slotId, result.value)
       else structureIssues.push(...result.issues)
     }
   }
@@ -535,6 +561,19 @@ export function instantiateTemplate(
           )
         }
       }
+    } else if (slot.kind === 'gatherer') {
+      // Phase 7: Gatherer DSLに再帰はないためkindは1件（指示§7.4）
+      const gatherer = gatherers.get(slot.slotId)
+      if (!gatherer) continue
+      if (!slot.allowedGathererKinds.includes(gatherer.kind)) {
+        whitelistIssues.push(
+          issue(
+            'WHITELIST_KIND',
+            `このslotで許可されていないgatherer kindです: ${gatherer.kind}`,
+            `dslParameters.${slot.slotId}`,
+          ),
+        )
+      }
     }
   }
   if (whitelistIssues.length > 0) return fail(whitelistIssues)
@@ -557,6 +596,7 @@ export function instantiateTemplate(
   const arrayGeneratorsByNode = new Map<string, ArrayGeneratorDsl>()
   const collectorsByNode = new Map<string, CollectorDsl>()
   const collectTriplesByNode = new Map<string, CollectTripleDsl>()
+  const gatherersByNode = new Map<string, GathererDsl>()
   for (const slot of template.parameterSlots) {
     if (slot.kind === 'predicate') {
       const p = predicates.get(slot.slotId)
@@ -588,6 +628,9 @@ export function instantiateTemplate(
     } else if (slot.kind === 'collectTriple') {
       const c = collectTriples.get(slot.slotId)
       if (c) collectTriplesByNode.set(slot.targetNodeId, c)
+    } else if (slot.kind === 'gatherer') {
+      const g = gatherers.get(slot.slotId)
+      if (g) gatherersByNode.set(slot.targetNodeId, g)
     }
   }
 
@@ -745,6 +788,28 @@ export function instantiateTemplate(
         outputType = resolved.value
         break
       }
+      case 'fromGatherer': {
+        // Gatherer DSLから出力要素型を解決する（Phase 7指示 §7.5、v0.9 §8.3）
+        if (!currentType) {
+          return fail([
+            issue('TYPE_MISMATCH', `node ${node.nodeId} に入力型がありません`, `nodes.${node.nodeId}`),
+          ])
+        }
+        const gatherer = gatherersByNode.get(node.nodeId)
+        if (!gatherer) {
+          return fail([
+            issue('SLOT_MISSING', `node ${node.nodeId} のGathererがありません`, `nodes.${node.nodeId}`),
+          ])
+        }
+        const resolved = resolveGathererOutputElementType(
+          gatherer,
+          currentType,
+          `nodes.${node.nodeId}.gatherer`,
+        )
+        if (!resolved.ok) return fail(resolved.issues)
+        outputType = streamOf(resolved.value)
+        break
+      }
       default:
         outputType = resolveTypeRule(op.outputTypeRule, currentType)
     }
@@ -871,6 +936,7 @@ export function instantiateTemplate(
       }
     }
     const reduction = reductionsByNode.get(node.nodeId) ?? null
+    const gatherer = gatherersByNode.get(node.nodeId) ?? null
     nodeDefs.push({
       nodeId: node.nodeId,
       operationId: node.operationId,
@@ -890,10 +956,12 @@ export function instantiateTemplate(
       arrayGenerator: arrayGeneratorsByNode.get(node.nodeId) ?? null,
       collector: collectorsByNode.get(node.nodeId) ?? null,
       collectTriple: collectTriplesByNode.get(node.nodeId) ?? null,
+      gatherer,
       inputType: currentType,
       outputType,
       lineId: lineIdForNode(node.nodeId),
-      legendStates: op.legendStates,
+      // gatherではGatherer kindごとに発生しない状態を凡例から除く（指示§7.5。既存legend機構の範囲）
+      legendStates: gatherer ? gatherLegendStates(op.legendStates, gatherer) : op.legendStates,
       visualizationKind: op.visualizationKind,
       handlerId: op.handlerId,
       jdkNotes: op.jdkNotes,
@@ -1129,6 +1197,7 @@ export function instantiateTemplate(
       arrayGenerator: n.arrayGenerator,
       collector: n.collector,
       collectTriple: n.collectTriple,
+      gatherer: n.gatherer,
     })),
     resultType: terminalNode.outputType,
   })

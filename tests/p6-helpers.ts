@@ -6,11 +6,30 @@ import { DSL_VERSION } from '../src/domain/dsl/ast'
 import type { Scenario } from '../src/domain/scenario/scenario'
 import type { PipelineTemplate } from '../src/domain/template/pipelineTemplate'
 import { CandidateImportService } from '../src/application/candidateImport'
+import { hasGatherNode } from '../src/application/importContract'
 
 /** Phase 6テスト共通helper */
 
 export const EXECUTABLE_TEMPLATES: readonly PipelineTemplate[] = ALL_TEMPLATES.filter(
   (t) => t.executable !== false,
+)
+
+/**
+ * 取込対象の実行可能template（Phase 7指示 §12冒頭の意図的更新）。
+ *
+ * Phase 7でgather templateを追加した。gatherノードを含むtemplateは実行可能だが
+ * 手動連携の取込対象外（`importable: false`。Phase 7指示 §7.8-1、v0.9 §10-6のユーザー決定）
+ * のため、Import Contractの走査対象からは外す。
+ * `EXECUTABLE_TEMPLATES`の意味・値は変更していない（P6-D22の実行総点検は従来どおり全件を通す）。
+ * gather templateの取込拒否検証はP7-D21が担う。
+ */
+export const IMPORTABLE_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter(
+  (t) => !hasGatherNode(t),
+)
+
+/** 取込対象外（gatherノードを含む）の実行可能template */
+export const GATHER_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter((t) =>
+  hasGatherNode(t),
 )
 
 export function templateById(templateId: string): PipelineTemplate {

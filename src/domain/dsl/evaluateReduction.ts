@@ -1,5 +1,6 @@
 import type { ReductionDsl, ReductionIdentity } from './terminalAst'
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 
 /**
  * 検証済みReduction DSLの安全な評価（Phase 4指示 §8）。
@@ -33,6 +34,8 @@ export function identityToSimValue(
 
 /** accumulator 1回分の適用（acc op value → 新しいacc） */
 export function applyReduction(reduction: ReductionDsl, acc: SimValue, value: SimValue): SimValue {
+  assertNotCompositeList(acc, 'reduceの累積値')
+  assertNotCompositeList(value, 'reduce評価')
   switch (reduction.kind) {
     case 'numericSum': {
       if (
@@ -64,6 +67,7 @@ export function applyReduction(reduction: ReductionDsl, acc: SimValue, value: Si
 
 /** 要素から取り出す値の表示（employeeFieldSumではfield値、それ以外は要素自身） */
 export function reductionInputLabel(reduction: ReductionDsl, value: SimValue): string {
+  assertNotCompositeList(value, 'reduce入力表示')
   if (reduction.kind === 'employeeFieldSum' && value.kind === 'employee') {
     const fieldValue = reduction.field === 'salary' ? value.value.salary : value.value.age
     return `${value.value.name}.${reduction.field}() → ${

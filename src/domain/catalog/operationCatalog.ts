@@ -46,6 +46,11 @@ export type TypeRule =
    * （Phase 5指示 §7.2・§7.3。instantiateで解決）
    */
   | { readonly kind: 'fromCollector' }
+  /**
+   * gatherの出力要素型はGatherer DSLから導出する（Phase 7指示 §7.5。instantiate手順4で解決）。
+   * window系は`Stream<List<T>>`、scan / foldは`Stream<boxed R>`（v0.9 §8.3）。
+   */
+  | { readonly kind: 'fromGatherer' }
   | {
       readonly kind: 'fixedPrimitiveStream'
       readonly name: 'IntStream' | 'LongStream' | 'DoubleStream'
@@ -121,6 +126,7 @@ export function resolveTypeRule(rule: TypeRule, inputType: TypeRef | null): Type
     case 'fromMapper':
     case 'fromTerminal':
     case 'fromCollector':
+    case 'fromGatherer':
     case 'boxedWrapper':
       throw new Error(`rule ${rule.kind} はこの関数では解決できません`)
   }

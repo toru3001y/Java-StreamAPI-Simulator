@@ -10,6 +10,13 @@ import { compareByComparator, comparatorKeyLabel, sortBuffer } from '../dsl/eval
 import { evaluateConsumerMessage } from '../dsl/evaluateConsumer'
 import { consumerActionLabel } from '../dsl/consumerAst'
 import { applyReduction, identityToSimValue } from '../dsl/evaluateReduction'
+import type { GathererDsl, GathererKind } from '../dsl/gatherAst'
+import { emitsGatherFinished, isWindowGatherer } from '../dsl/gatherAst'
+import {
+  applyGatherAccumulation,
+  gatherAccumulationInputLabel,
+  gatherInitialToSimValue,
+} from '../dsl/evaluateGather'
 import {
   comparisonExpr,
   describeComparator,
@@ -21,12 +28,14 @@ import {
 import {
   comparatorToJavaExpr,
   consumerToJavaExpr,
+  gathererToJavaExpr,
   identityToJavaLiteral,
   mapperToJavaExpr,
   predicateToJavaExpr,
   reductionToJavaExpr,
 } from '../dsl/javaCode'
 import { distinctKeyOf } from './distinctKey'
+import { EngineInvariantError } from '../types/invariantError'
 import type { CollectorRuntime } from './collectorRuntime'
 import {
   collectorAccumulate,
@@ -47,11 +56,15 @@ import {
   type SimValue,
 } from '../model/value'
 import { formatTypeRef } from '../types/typeRef'
+import type { TypeRef } from '../types/typeRef'
 import type { ElementId, NodeId } from '../types/ids'
 import { snapshotIdFor } from '../types/ids'
 import { deepFreeze } from '../util/deepFreeze'
 import type {
   FlatMapContextView,
+  GathererElementView,
+  GathererHistoryEntry,
+  GathererItemView,
   OperationContextView,
   ProcessingView,
   SideEffectEntry,
@@ -80,12 +93,9 @@ import type {
  * J-3: 検証はPipelineDefinition生成前に完了しているため、実行時のEngineInvariantErrorは
  * エンジン内部の不整合を検知した場合のフェイルセーフに限る（docs/phase-1-decisions.md）。
  */
-export class EngineInvariantError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'EngineInvariantError'
-  }
-}
+// 実体はsrc/domain/types/invariantError.ts（dsl / engine双方から参照する中立モジュール）へ置き、
+// 従来のimport経路を再エクスポートで維持する
+export { EngineInvariantError } from '../types/invariantError'
 
 /** 説明文用の短い要素名（Employeeは氏名、その他は表示ラベル） */
 function shortLabel(value: SimValue): string {
@@ -180,6 +190,38 @@ interface PeekRuntime {
   callCount: number
 }
 
+// ---- Phase 7 gather runtime（指示§7.7・§8.1、v0.9 §6） ----
+
+interface GatherBufferEntry {
+  readonly id: ElementId
+  readonly label: string
+  readonly value: SimValue
+}
+
+interface GatherRuntime {
+  readonly kind: 'gather'
+  readonly node: PipelineNodeDef
+  readonly gatherer: GathererDsl
+  /** gatherノードへの入力要素型（窓の合成List値のelementTypeに使う） */
+  readonly inputElementType: TypeRef
+  /** window系の現在バッファ（scan / foldでは常に空） */
+  readonly buffer: GatherBufferEntry[]
+  /** windowSlidingで直近にevictされた要素 */
+  evictedLast: GatherBufferEntry | null
+  /** 窓の生成順連番（1始まり。合成IDの採番に使う） */
+  windowSeq: number
+  /** scan / foldの累積値（initializerで初期化する） */
+  acc: SimValue | null
+  readonly history: GathererHistoryEntry[]
+  /** integrator呼出し回数（＝gatherノードへ到着した要素数） */
+  integratorCallCount: number
+  readonly emitted: GathererItemView[]
+  /** GATHER_FINISHEDの確定内容（未発行はnull） */
+  finishedNote: string | null
+  /** 既に「その要素を含む最初の窓」を放出済みの入力要素（§7.3-6） */
+  readonly passedMembers: Set<ElementId>
+}
+
 type NodeRuntime =
   | DistinctRuntime
   | SortedRuntime
@@ -188,6 +230,7 @@ type NodeRuntime =
   | TakeWhileRuntime
   | DropWhileRuntime
   | PeekRuntime
+  | GatherRuntime
 
 interface Draft {
   kind: SnapshotKind
@@ -406,6 +449,113 @@ function sortedContextView(rt: SortedRuntime, def: PipelineDefinition): Operatio
   }
 }
 
+// ---- Phase 7: Gatherer構造の常設4行（v0.9 §4・§5、指示§7.7・§9） ----
+// 文言は「教材モデル上の割当て」であり、JDK内部実装の構成を断定しない。
+
+const GATHER_COMBINER_NOTE =
+  '逐次実行のため呼出し0回。並列実行時に2つの中間状態を結合する役割を持ちます。'
+
+const GATHER_INTEGRATOR_NOTES: Readonly<Record<GathererKind, string>> = {
+  windowFixed: '要素を1件ずつ受け取り窓バッファを更新します。窓サイズに達した時点で窓を後段へpushします。',
+  windowSliding:
+    '要素を1件ずつ受け取り、バッファが満杯なら最古を除いて次を追加します（1回の状態更新）。窓が成立するたび後段へpushします。',
+  scan: '要素を1件ずつ受け取って累積値を更新し、更新後の累積値をそのつど後段へpushします（1入力→1出力）。',
+  fold: '要素を1件ずつ受け取って累積値を更新します。処理途中では後段へpushしません。',
+}
+
+const GATHER_FINISHER_NOTES: Readonly<Record<GathererKind, string>> = {
+  windowFixed: '終端で残った要素があれば、不完全な窓として1件だけ後段へpushします。',
+  windowSliding:
+    '終端で、入力件数が窓サイズ未満だった場合にかぎり全要素の1窓を後段へpushします。窓が成立済みなら追加のpushはありません。',
+  // 「finisherが無い」というJDK実装同一性の断定はしない（v0.9 §5）
+  scan: '終端での追加産出はありません（累積値は要素ごとに産出済みです）。',
+  fold: '終端で最終的な累積値を1件だけ後段へpushします。',
+}
+
+const GATHER_INITIALIZER_NOTES: Readonly<Record<GathererKind, string>> = {
+  windowFixed: '空の窓バッファ（中間状態A）を生成します。',
+  windowSliding: '空の窓バッファ（中間状態A）を生成します。',
+  scan: 'Supplierから初期値を取得し、累積値（中間状態A）にします。',
+  fold: 'Supplierからidentity（初期値）を取得し、累積値（中間状態A）にします。',
+}
+
+const GATHER_UNMODIFIABLE_NOTE =
+  '産出される窓はunmodifiable Listです。mutatorメソッドを呼ぶと常にUnsupportedOperationExceptionになります。'
+
+function gatherItemOf(entry: GatherBufferEntry): GathererItemView {
+  return { id: entry.id, label: entry.label, memberIds: null }
+}
+
+function gatherInitializerStateLabel(rt: GatherRuntime): string {
+  if (isWindowGatherer(rt.gatherer)) {
+    return rt.buffer.length === 0
+      ? '空バッファ（0件）'
+      : `バッファ ${rt.buffer.length}件: ${rt.buffer.map((e) => e.label).join(', ')}`
+  }
+  return rt.acc === null ? '未生成' : `累積値 = ${formatSimValue(rt.acc)}`
+}
+
+function gatherElementViews(rt: GatherRuntime): GathererElementView[] {
+  const kind = rt.gatherer.kind
+  return [
+    {
+      name: 'initializer',
+      stateLabel: gatherInitializerStateLabel(rt),
+      callCount: null,
+      note: GATHER_INITIALIZER_NOTES[kind],
+    },
+    {
+      name: 'integrator',
+      stateLabel: null,
+      callCount: rt.integratorCallCount,
+      note: GATHER_INTEGRATOR_NOTES[kind],
+    },
+    // 逐次実行では呼ばれない。呼出し0回を常設表示する（v0.9 §4-3）
+    { name: 'combiner', stateLabel: null, callCount: 0, note: GATHER_COMBINER_NOTE },
+    {
+      name: 'finisher',
+      stateLabel: rt.finishedNote ?? '未実行',
+      callCount: null,
+      note: GATHER_FINISHER_NOTES[kind],
+    },
+  ]
+}
+
+/** gather固有contextのview（指示§7.7の契約項目をすべて載せる） */
+function gatherContextView(rt: GatherRuntime): OperationContextView {
+  const windowed = isWindowGatherer(rt.gatherer)
+  const size = rt.gatherer.kind === 'windowFixed' || rt.gatherer.kind === 'windowSliding'
+    ? rt.gatherer.size
+    : null
+  const initialLabel =
+    rt.gatherer.kind === 'scan' || rt.gatherer.kind === 'fold'
+      ? identityToJavaLiteral(rt.gatherer.initial)
+      : null
+  return {
+    kind: 'gather',
+    nodeId: rt.node.nodeId,
+    gathererKind: rt.gatherer.kind,
+    gathererLabel: gathererToJavaExpr(rt.gatherer),
+    inputTypeLabel: rt.node.inputType ? formatTypeRef(rt.node.inputType) : '?',
+    outputTypeLabel: formatTypeRef(rt.node.outputType),
+    typeTransitionLabel: typeTransitionOf(rt.node),
+    elements: gatherElementViews(rt),
+    windowSize: size,
+    buffer: windowed ? rt.buffer.map(gatherItemOf) : [],
+    evictedLast: rt.evictedLast ? gatherItemOf(rt.evictedLast) : null,
+    unmodifiableNote: windowed ? GATHER_UNMODIFIABLE_NOTE : null,
+    initialLabel,
+    accumulatorLabel: rt.acc === null ? null : formatSimValue(rt.acc),
+    history: rt.history.map((entry) => ({ ...entry })),
+    emitted: rt.emitted.map((item) => ({
+      ...item,
+      memberIds: item.memberIds ? [...item.memberIds] : null,
+    })),
+    emittedCount: rt.emitted.length,
+    finishedNote: rt.finishedNote,
+  }
+}
+
 function contextViewOf(rt: NodeRuntime, def: PipelineDefinition): OperationContextView {
   switch (rt.kind) {
     case 'distinct':
@@ -460,6 +610,8 @@ function contextViewOf(rt: NodeRuntime, def: PipelineDefinition): OperationConte
         consumerText: rt.node.consumer ? consumerToJavaExpr(rt.node.consumer) : '',
         callCount: rt.callCount,
       }
+    case 'gather':
+      return gatherContextView(rt)
   }
 }
 
@@ -811,6 +963,28 @@ function createRuntime(node: PipelineNodeDef): NodeRuntime | null {
       return { kind: 'dropWhile', node, dropping: true, boundaryElementId: null, boundaryLabel: null }
     case 'peek':
       return { kind: 'peek', node, callCount: 0 }
+    case 'gather': {
+      // Phase 7: gather runtime（指示§8.1。accはGATHER_INITIALIZEDで生成する）
+      if (!node.gatherer) throw new EngineInvariantError(`node ${node.nodeId} にGathererがありません`)
+      if (!node.inputType || node.inputType.kind !== 'stream') {
+        throw new EngineInvariantError(`node ${node.nodeId} はobject Streamの入力が必要です`)
+      }
+      return {
+        kind: 'gather',
+        node,
+        gatherer: node.gatherer,
+        inputElementType: node.inputType.elementType,
+        buffer: [],
+        evictedLast: null,
+        windowSeq: 0,
+        acc: null,
+        history: [],
+        integratorCallCount: 0,
+        emitted: [],
+        finishedNote: null,
+        passedMembers: new Set(),
+      }
+    }
     default:
       return null
   }
@@ -1701,6 +1875,154 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
         return false
       }
 
+      // ---- Phase 7: gather（指示§8.1-2、v0.9 §6.2） ----
+      if (node.operationId === 'gather') {
+        const rt = runtimes.get(node.nodeId)
+        if (rt?.kind !== 'gather') throw new EngineInvariantError('gather runtimeがありません')
+        const gatherExpr = `.gather(${gathererToJavaExpr(rt.gatherer)})`
+        b.setState(elementId, node.nodeId, 'PROCESSING')
+        b.setLatest(elementId, 'PROCESSING')
+        // integratorが1件の要素を受け取る（v0.9 §3.1: integratorは必須の構成要素）
+        rt.integratorCallCount += 1
+        syncContext(rt)
+        b.push({
+          kind: 'NODE_ARRIVAL',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: 'gatherへの要素到着（integrator）',
+            inputLabel: label,
+            expression: gatherExpr,
+            evaluation: null,
+            outcome: null,
+          },
+          currentText: `${name}がgatherへ到着しました。integratorが中間状態を更新します（${rt.integratorCallCount}回目）。`,
+          jdkNote: 'gatherはstateful中間操作であり、Gathererのintegratorが要素ごとに状態を更新します。',
+        })
+
+        if (rt.gatherer.kind === 'windowFixed' || rt.gatherer.kind === 'windowSliding') {
+          const size = rt.gatherer.size
+          // windowSliding: バッファ満杯なら「最古を除き次を追加」を1回の状態更新にする（v0.9 §6.1）
+          const evicted =
+            rt.gatherer.kind === 'windowSliding' && rt.buffer.length === size
+              ? (rt.buffer.shift() ?? null)
+              : null
+          rt.evictedLast = evicted
+          rt.buffer.push({ id: elementId, label, value })
+          b.setState(elementId, node.nodeId, 'BUFFERED')
+          b.setLatest(elementId, 'BUFFERED')
+          syncContext(rt)
+          b.push({
+            kind: 'WINDOW_BUFFER_UPDATED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: evicted ? '窓バッファ更新確定（最古を除き次を追加）' : '窓バッファ更新確定（追加）',
+              inputLabel: evicted
+                ? `evict: ${evicted.label} / append: ${label}`
+                : `${label} → バッファ（${rt.buffer.length}/${size}件）`,
+              expression: gatherExpr,
+              evaluation: `バッファ: [${rt.buffer.map((e) => e.label).join(', ')}]`,
+              outcome:
+                rt.buffer.length === size
+                  ? '窓サイズに到達しました。窓を確定して後段へpushします'
+                  : `窓サイズまであと${size - rt.buffer.length}件です（後段への出力はまだありません）`,
+            },
+            currentText: evicted
+              ? `最古の${evicted.label}をバッファから除き、${name}を追加しました（1回の状態更新）。現在のバッファは${rt.buffer.length}/${size}件です。`
+              : `${name}をバッファへ追加しました（${rt.buffer.length}/${size}件）。`,
+          })
+          if (rt.buffer.length === size) {
+            emitGatherWindow(rt, i, null)
+          }
+          return false
+        }
+
+        if (rt.gatherer.kind === 'scan') {
+          const before = gatherAccOf(rt)
+          const after = applyGatherAccumulation(rt.gatherer.accumulation, before, value)
+          rt.acc = after
+          const inputLabel = gatherAccumulationInputLabel(rt.gatherer.accumulation, value) || label
+          rt.history.push({
+            seq: rt.history.length + 1,
+            inputLabel,
+            beforeLabel: formatSimValue(before),
+            afterLabel: formatSimValue(after),
+          })
+          syncContext(rt)
+          b.push({
+            kind: 'SCAN_ACCUMULATED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '累積値の更新確定（scan）',
+              inputLabel,
+              expression: gatherExpr,
+              evaluation: `${formatSimValue(before)} → ${formatSimValue(after)}`,
+              outcome: '累積値を更新しました（この時点ではまだ放出していません）',
+            },
+            currentText: `scanの累積値が${formatSimValue(before)}から${formatSimValue(after)}になりました。`,
+          })
+          // 1入力→1出力。出力IDは入力要素のIDを継承する（map系1→1変換と同一規則。§7.3-4）
+          rt.emitted.push({ id: elementId, label: formatSimValue(after), memberIds: null })
+          b.setState(elementId, node.nodeId, 'PASSED')
+          b.setLatest(elementId, 'PASSED')
+          syncContext(rt)
+          b.push({
+            kind: 'GATHER_EMITTED',
+            activeNode: node,
+            currentElementId: elementId,
+            parentElementId,
+            processing: {
+              title: '累積値の放出（Downstream.push）',
+              inputLabel: `${formatSimValue(after)} → 後段`,
+              expression: gatherExpr,
+              evaluation: null,
+              outcome: '更新後の累積値を1件、後段へpushします（1入力→1出力）',
+            },
+            typeTransition: typeTransitionOf(node),
+            currentText: `更新後の累積値${formatSimValue(after)}を後段へpushします。`,
+          })
+          value = after
+          continue
+        }
+
+        // fold: 累積するだけで放出しない（終端のfinisherで最終値1件をpushする）
+        const before = gatherAccOf(rt)
+        const after = applyGatherAccumulation(rt.gatherer.accumulation, before, value)
+        rt.acc = after
+        const inputLabel = gatherAccumulationInputLabel(rt.gatherer.accumulation, value) || label
+        rt.history.push({
+          seq: rt.history.length + 1,
+          inputLabel,
+          beforeLabel: formatSimValue(before),
+          afterLabel: formatSimValue(after),
+        })
+        b.setState(elementId, node.nodeId, 'PASSED')
+        b.setLatest(elementId, 'PASSED')
+        syncContext(rt)
+        b.push({
+          kind: 'FOLD_ACCUMULATED',
+          activeNode: node,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '累積値の更新確定（fold）',
+            inputLabel,
+            expression: gatherExpr,
+            evaluation: `${formatSimValue(before)} → ${formatSimValue(after)}`,
+            outcome: '累積値を更新しました（foldは処理途中では後段へpushしません）',
+          },
+          currentText: `foldの累積値が${formatSimValue(before)}から${formatSimValue(after)}になりました。放出は終端で1件だけです。`,
+          jdkNote:
+            'Gatherers.foldは "an ordered, reduction-like, transformation" であり、例外がなければ産出する要素は常に1件だけです。',
+        })
+        return false
+      }
+
       // ---- Phase 3: limit（§7.4） ----
       if (node.operationId === 'limit') {
         const rt = runtimes.get(node.nodeId)
@@ -2079,6 +2401,195 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     return handleTerminalElement(elementId, value, parentElementId)
   }
 
+  /** scan / foldの累積値。GATHER_INITIALIZEDで生成済みであることを前提とする */
+  const gatherAccOf = (rt: GatherRuntime): SimValue => {
+    if (rt.acc === null) {
+      throw new EngineInvariantError(`node ${rt.node.nodeId} の累積値が初期化されていません`)
+    }
+    return rt.acc
+  }
+
+  /**
+   * 窓を合成要素として確定・放出し、その場で下流へ流し切る（§8.1-2、§7.3-3）。
+   * 合成要素は`GATHER_EMITTED`発行前にregisterElementし、gatherノードでの要素状態を設定する
+   * （未登録IDへの状態設定は既存engineが例外にするため）。
+   */
+  const emitGatherWindow = (rt: GatherRuntime, chainIdx: number, finishNote: string | null): void => {
+    rt.windowSeq += 1
+    const windowId: ElementId = `${rt.node.nodeId}-win-${rt.windowSeq}`
+    const memberIds = rt.buffer.map((entry) => entry.id)
+    const windowValue: SimValue = {
+      kind: 'list',
+      elementType: rt.inputElementType,
+      value: rt.buffer.map((entry) => entry.value),
+    }
+    const windowLabel = formatSimValue(windowValue)
+    b.registerElement(windowId)
+    b.setState(windowId, rt.node.nodeId, 'PASSED')
+    b.setLatest(windowId, 'PROCESSING')
+    // 元入力要素は「その要素を含む最初の窓」の放出で通過済みへ遷移する（§7.3-6）。
+    // windowSlidingで放出後もバッファに残る要素のlatestはPASSEDのまま維持する
+    for (const member of rt.buffer) {
+      if (rt.passedMembers.has(member.id)) continue
+      rt.passedMembers.add(member.id)
+      b.setState(member.id, rt.node.nodeId, 'PASSED')
+      b.setLatest(member.id, 'PASSED')
+    }
+    rt.emitted.push({ id: windowId, label: windowLabel, memberIds })
+    syncContext(rt)
+    b.push({
+      kind: 'GATHER_EMITTED',
+      activeNode: rt.node,
+      currentElementId: windowId,
+      processing: {
+        title: '窓の放出（Downstream.push）',
+        inputLabel: `${windowLabel} → 後段`,
+        expression: `.gather(${gathererToJavaExpr(rt.gatherer)})`,
+        evaluation: `メンバー: ${memberIds.join(', ')}`,
+        outcome: finishNote ?? '窓が成立したため、合成要素として1件を後段へpushします',
+      },
+      typeTransition: typeTransitionOf(rt.node),
+      currentText: `窓${windowLabel}（${rt.windowSeq}件目）を合成要素として後段へpushします。`,
+      jdkNote: GATHER_UNMODIFIABLE_NOTE,
+    })
+    // 放出された窓は後段を流れ切ってから次へ進む（depth-first。flatMap子・sorted flushと同じ規則）
+    processThroughChain(windowId, windowValue, chainIdx + 1, null)
+    confirmPendingShortCircuits()
+    if (rt.gatherer.kind === 'windowFixed') {
+      // windowFixedは窓確定後にバッファを初期化する（windowSlidingは保持する）
+      rt.buffer.length = 0
+      rt.evictedLast = null
+      syncContext(rt)
+    }
+  }
+
+  /** foldの最終値を合成要素として確定・放出する（§8.1-3、§7.3-2） */
+  const emitGatherFoldResult = (rt: GatherRuntime, chainIdx: number): void => {
+    const resultId: ElementId = `${rt.node.nodeId}-result`
+    const acc = gatherAccOf(rt)
+    const resultLabel = formatSimValue(acc)
+    b.registerElement(resultId)
+    b.setState(resultId, rt.node.nodeId, 'PASSED')
+    b.setLatest(resultId, 'PROCESSING')
+    rt.emitted.push({ id: resultId, label: resultLabel, memberIds: null })
+    syncContext(rt)
+    b.push({
+      kind: 'GATHER_EMITTED',
+      activeNode: rt.node,
+      currentElementId: resultId,
+      processing: {
+        title: '最終値の放出（Downstream.push）',
+        inputLabel: `${resultLabel} → 後段`,
+        expression: `.gather(${gathererToJavaExpr(rt.gatherer)})`,
+        evaluation: null,
+        outcome: 'foldが産出する唯一の要素として1件を後段へpushします',
+      },
+      typeTransition: typeTransitionOf(rt.node),
+      currentText: `foldの最終値${resultLabel}を合成要素として後段へpushします。`,
+    })
+    processThroughChain(resultId, acc, chainIdx + 1, null)
+    confirmPendingShortCircuits()
+  }
+
+  /**
+   * gatherノードの終端処理（§8.1-3、v0.9 §6.2）。
+   * `GATHER_FINISHED`は終端産出があり得る操作（windowFixed / windowSliding / fold）で
+   * 実際の放出・残余の有無にかかわらず正確に1件発行する。scanは発行しない。
+   */
+  const finishGatherNode = (rt: GatherRuntime, chainIdx: number): void => {
+    if (!emitsGatherFinished(rt.gatherer)) return
+    const empty = rt.integratorCallCount === 0
+    if (rt.gatherer.kind === 'fold') {
+      // 空ソース含め常に最終値（累積値またはidentity）を確定して1件放出する
+      const label = formatSimValue(gatherAccOf(rt))
+      pushGatherFinished(
+        rt,
+        empty
+          ? `入力0件のため、identity ${label} をそのまま最終値として確定しました`
+          : `最終的な累積値 ${label} を確定しました`,
+        empty
+          ? `入力が0件だったため、identityの${label}が最終値として確定しました。foldは入力0件でも1件を産出します。`
+          : `全入力の処理が終わり、foldの最終値が${label}に確定しました。`,
+      )
+      if (b.cancelledBeyond(chainIdx)) return
+      emitGatherFoldResult(rt, chainIdx)
+      return
+    }
+    if (rt.gatherer.kind === 'windowFixed') {
+      if (empty) {
+        pushGatherFinished(
+          rt,
+          '入力0件のため、放出した窓は0件です',
+          '入力が0件だったため、窓は1つも生成されませんでした（JDKも空streamでは窓を生成しません）。',
+        )
+        return
+      }
+      if (rt.buffer.length === 0) {
+        pushGatherFinished(
+          rt,
+          '残余なし・追加放出なし（入力件数が窓サイズの倍数でした）',
+          '全入力が窓サイズの倍数だったため、残余はなく追加の放出もありません。',
+        )
+        return
+      }
+      const remaining = rt.buffer.map((e) => e.label).join(', ')
+      pushGatherFinished(
+        rt,
+        `残余${rt.buffer.length}件を不完全な窓として確定しました: [${remaining}]`,
+        `残った${rt.buffer.length}件を、窓サイズに満たない最後の窓として確定しました。`,
+      )
+      if (b.cancelledBeyond(chainIdx)) return
+      emitGatherWindow(rt, chainIdx, '窓サイズに満たない最後の窓を後段へpushします')
+      return
+    }
+    // windowSliding
+    if (empty) {
+      pushGatherFinished(
+        rt,
+        '入力0件のため、放出した窓は0件です',
+        '入力が0件だったため、窓は1つも生成されませんでした（JDKも空streamでは窓を生成しません）。',
+      )
+      return
+    }
+    if (rt.emitted.length > 0) {
+      pushGatherFinished(
+        rt,
+        '追加放出なし（窓は成立済みです）',
+        '窓はすでに成立して放出済みのため、終端での追加の放出はありません。',
+      )
+      return
+    }
+    const all = rt.buffer.map((e) => e.label).join(', ')
+    pushGatherFinished(
+      rt,
+      `入力件数が窓サイズ未満のため、全要素の1窓を確定しました: [${all}]`,
+      `入力件数が窓サイズ未満だったため、全要素を含む窓を1つだけ確定しました。`,
+    )
+    if (b.cancelledBeyond(chainIdx)) return
+    emitGatherWindow(rt, chainIdx, '入力件数が窓サイズ未満のため、全要素の1窓を後段へpushします')
+  }
+
+  /** GATHER_FINISHEDの発行（v0.9 §6.1の統一発行規則。放出は含まない） */
+  const pushGatherFinished = (rt: GatherRuntime, note: string, currentText: string): void => {
+    rt.finishedNote = note
+    syncContext(rt)
+    b.push({
+      kind: 'GATHER_FINISHED',
+      activeNode: rt.node,
+      currentElementId: null,
+      processing: {
+        title: '終端処理の確定（finisher）',
+        inputLabel: null,
+        expression: `.gather(${gathererToJavaExpr(rt.gatherer)})`,
+        evaluation: null,
+        outcome: note,
+      },
+      currentText,
+      jdkNote:
+        '終端でのfinisher表示は教材モデル上の割当てであり、JDK内部のfinisher実装の有無・呼出しを断定するものではありません。',
+    })
+  }
+
   const emitAndProcess = (
     element: { elementId: ElementId; index: number; value: SimValue },
     sourceContext: SourceContextView | null,
@@ -2105,6 +2616,36 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     b.setState(element.elementId, src.nodeId, 'PASSED')
     processThroughChain(element.elementId, element.value, 0, null)
     confirmPendingShortCircuits()
+  }
+
+  // ---- Phase 7 gather: initializerによる初期状態の生成（§8.1-1、v0.9 §6.1） ----
+  // 各gatherノードにつき正確に1件、source要素の送出前に発行する。空ソースでも無条件に発行する
+  for (const node of chain) {
+    const rt = runtimes.get(node.nodeId)
+    if (rt?.kind !== 'gather') continue
+    const gatherer = rt.gatherer
+    if (!isWindowGatherer(gatherer)) {
+      // Supplierから初期値を取得して累積値（中間状態A）にする
+      rt.acc = gatherInitialToSimValue(gatherer.initial)
+    }
+    syncContext(rt)
+    const stateLabel = gatherInitializerStateLabel(rt)
+    b.push({
+      kind: 'GATHER_INITIALIZED',
+      activeNode: node,
+      currentElementId: null,
+      processing: {
+        title: '中間状態の生成確定（initializer）',
+        inputLabel: null,
+        expression: `.gather(${gathererToJavaExpr(rt.gatherer)})`,
+        evaluation: `中間状態A = ${stateLabel}`,
+        outcome:
+          'Gathererのinitializerが中間状態を生成しました。まだ要素は1件も処理していません',
+      },
+      currentText: `gatherのinitializerが中間状態を生成しました（${stateLabel}）。ここから要素ごとにintegratorが状態を更新します。`,
+      jdkNote:
+        'Gatherer<T, A, R>のAは中間状態型です。initializer / integrator / combiner / finisherの4構成要素のうち、必須はintegratorだけです。',
+    })
   }
 
   // ---- Collector: supplier適用によるコンテナ生成（3引数collectは必須。§9.1規則6・§9.4） ----
@@ -2282,12 +2823,17 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     }
   }
 
-  // ---- finish cascade: upstream完了をchain順に伝播し、sortedのbufferをflushする（§10） ----
+  // ---- finish cascade: upstream完了をchain順に伝播し、確定順に下流へ流す（§10、Phase 7指示 §8.1-3） ----
+  // sortedのbuffer flushに加え、gatherのfinisher相当（GATHER_FINISHED / 残余窓 / 最終値）も扱う
   b.clearFlatMapCtx()
   for (let i = 0; i < chain.length; i++) {
     const node = chain[i]
     if (!node) continue
     const rt = runtimes.get(node.nodeId)
+    if (rt?.kind === 'gather') {
+      finishGatherNode(rt, i)
+      continue
+    }
     if (rt?.kind !== 'sorted' || rt.phase !== 'BUFFERING') continue
     // 並べ替え確定（SORT_ORDER_CONFIRMED）: 1シナリオにつき1件。空bufferでも生成する。
     // currentElementIdはnull、PROCESSINGは0件（J-2確定事項）

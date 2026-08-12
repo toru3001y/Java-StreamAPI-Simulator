@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test'
  * 証跡（artifacts/phase-N/）への書込みを許可するPhase。
  * 次Phase着手時はこの1か所だけを更新する（例: Phase 5開始時に 5 へ変更）。
  */
-export const CAPTURE_TARGET_PHASE = 6
+export const CAPTURE_TARGET_PHASE = 7
 
 /**
  * Phase証跡キャプチャの共通処理。

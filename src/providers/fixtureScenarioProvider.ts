@@ -795,6 +795,154 @@ const P5_FIXTURES: readonly FixtureDefinition[] = [
   ),
 ]
 
+/**
+ * Phase 7 Gatherer fixture（指示§7.6の確定値。standard 7 + emptySource 4 = 11件）。
+ * emptySourceは既存前例どおり同一source種の空値（collection=EMPTY_EMPLOYEES、
+ * streamOf / arrayPrimitiveは values: []）で構成する。
+ * midEmptyは全gather templateで非対応（判断は docs/phase-7-decisions.md）。
+ */
+const P7_FIXTURES: readonly FixtureDefinition[] = [
+  // ---- windowFixed（残余あり） ----
+  fx(
+    'tmpl-gather-window-fixed',
+    'standard',
+    'gather(windowFixed(3))標準',
+    'Employee 4件を3件ずつの窓に束ねます。窓[佐藤, 鈴木, 高橋]が成立して放出され、残った田中は終端のfinisherで不完全な窓として放出されます。期待結果はList<List<Employee>> 2件です。',
+    { 'slot-gatherer': { kind: 'windowFixed', size: 3 } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-gather-window-fixed',
+    'emptySource',
+    'gather(windowFixed(3))空ソース',
+    '入力0件のため窓は1つも生成されず、空Listが確定します。initializerとfinisherの実演だけが残ります。',
+    { 'slot-gatherer': { kind: 'windowFixed', size: 3 } },
+    EMPTY_EMPLOYEES,
+  ),
+  // ---- windowFixed（入力件数が窓サイズの正確な倍数） ----
+  fx(
+    'tmpl-gather-window-fixed-exact',
+    'standard',
+    'gather(windowFixed(2))倍数ケース',
+    'Employee 4件を2件ずつの窓に束ねます。4は2の倍数のため残余はなく、終端のfinisherでは「残余なし・追加放出なし」だけが確定します。期待結果はList<List<Employee>> 2件です。',
+    { 'slot-gatherer': { kind: 'windowFixed', size: 2 } },
+    STANDARD_EMPLOYEES,
+  ),
+  // ---- windowSliding（入力件数 >= 窓サイズ） ----
+  fx(
+    'tmpl-gather-window-sliding',
+    'standard',
+    'gather(windowSliding(2))標準',
+    '["Java", "SQL", "Git", "AWS"]から、最古を除いて次を加えるスライド窓を作ります。窓は[Java, SQL] / [SQL, Git] / [Git, AWS]の3件です。',
+    {
+      'slot-source': {
+        kind: 'streamOf',
+        elementTypeName: 'String',
+        values: ['Java', 'SQL', 'Git', 'AWS'],
+      },
+      'slot-gatherer': { kind: 'windowSliding', size: 2 },
+    },
+  ),
+  fx(
+    'tmpl-gather-window-sliding',
+    'emptySource',
+    'gather(windowSliding(2))空ソース',
+    '入力0件のため窓は1つも生成されず、空Listが確定します。',
+    {
+      'slot-source': { kind: 'streamOf', elementTypeName: 'String', values: [] },
+      'slot-gatherer': { kind: 'windowSliding', size: 2 },
+    },
+  ),
+  // ---- windowSliding（0 < 入力件数 < 窓サイズ） ----
+  fx(
+    'tmpl-gather-window-sliding-short',
+    'standard',
+    'gather(windowSliding(3))入力 < 窓サイズ',
+    '入力2件に対して窓サイズ3のため、処理中は窓が1つも成立しません。終端のfinisherで全要素を含む窓[Java, SQL]が1つだけ放出されます。',
+    {
+      'slot-source': { kind: 'streamOf', elementTypeName: 'String', values: ['Java', 'SQL'] },
+      'slot-gatherer': { kind: 'windowSliding', size: 3 },
+    },
+  ),
+  // ---- scan（numericSum） ----
+  fx(
+    'tmpl-gather-scan',
+    'standard',
+    'gather(scan)標準（累積和）',
+    'int[]{3, 1, 4}をboxed()でStream<Integer>にし、初期値0から累積和をとります。1入力→1出力で[3, 4, 8]が逐次放出されます。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [3, 1, 4] },
+      'slot-gatherer': {
+        kind: 'scan',
+        initial: { type: 'int', value: 0 },
+        accumulation: { kind: 'numericSum' },
+      },
+    },
+  ),
+  fx(
+    'tmpl-gather-scan',
+    'emptySource',
+    'gather(scan)空ソース',
+    '入力0件のため産出は0件で、空Listが確定します。initializerによる初期値の生成だけが実演されます（scanは終端で追加産出しません）。',
+    {
+      'slot-source': { kind: 'arrayPrimitive', arrayId: 'numbers', primitive: 'int', values: [] },
+      'slot-gatherer': {
+        kind: 'scan',
+        initial: { type: 'int', value: 0 },
+        accumulation: { kind: 'numericSum' },
+      },
+    },
+  ),
+  // ---- scan（stringConcat） ----
+  fx(
+    'tmpl-gather-scan-concat',
+    'standard',
+    'gather(scan)標準（文字列連結）',
+    '["Java", "SQL", "Git"]を空文字から連結していきます。期待結果は["Java", "JavaSQL", "JavaSQLGit"]です。',
+    {
+      'slot-source': {
+        kind: 'streamOf',
+        elementTypeName: 'String',
+        values: ['Java', 'SQL', 'Git'],
+      },
+      'slot-gatherer': {
+        kind: 'scan',
+        initial: { type: 'string', value: '' },
+        accumulation: { kind: 'stringConcat' },
+      },
+    },
+  ),
+  // ---- fold → findFirst ----
+  fx(
+    'tmpl-gather-fold',
+    'standard',
+    'gather(fold)標準（salary合計）',
+    'Employee 4件のsalaryを初期値0Lから累積します。処理途中では放出せず、終端のfinisherで最終値1件だけを放出し、findFirstがOptional[21_700_000L]を返します。Phase 4のreduce（終端操作）との対比教材です。',
+    {
+      'slot-gatherer': {
+        kind: 'fold',
+        initial: { type: 'long', value: 0 },
+        accumulation: { kind: 'employeeFieldSum', field: 'salary' },
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-gather-fold',
+    'emptySource',
+    'gather(fold)空ソース（identity）',
+    '入力0件でもfoldはidentityを最終値として1件産出するため、findFirstの結果はOptional[0L]になります（空Streamで空Optionalになるreduceとの違い）。',
+    {
+      'slot-gatherer': {
+        kind: 'fold',
+        initial: { type: 'long', value: 0 },
+        accumulation: { kind: 'employeeFieldSum', field: 'salary' },
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+]
+
 const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
   // ---- Phase 1: filter ----
   fx(
@@ -2043,6 +2191,8 @@ const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
   ),
   // ---- Phase 5: Collector（指示§8） ----
   ...P5_FIXTURES,
+  // ---- Phase 7: Gatherer（指示§7.6） ----
+  ...P7_FIXTURES,
 ])
 
 export class FixtureScenarioProvider implements ScenarioProvider {

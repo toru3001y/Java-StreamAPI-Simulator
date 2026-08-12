@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { collectFixtureJavaCode, importScenario } from '../p6-helpers'
+import { collectFixtureJavaCode, GATHER_TEMPLATES, importScenario } from '../p6-helpers'
 import { assignDepartmentVarNames, javaStringLiteral } from '../../src/domain/dsl/javaCode'
 import { formatDoubleLiteral, formatLongLiteral } from '../../src/domain/model/value'
 import { DSL_VERSION } from '../../src/domain/dsl/ast'
@@ -142,15 +142,35 @@ describe('P6-D18 文字列エスケープ契約', () => {
     )
   })
 
+  /**
+   * Phase 7指示 §12冒頭で許可された「一覧前提が壊れる既存assertion」の最小更新。
+   * goldenはPhase 6改修前の全fixture Javaコードのスナップショットであり、
+   * Phase 7でtemplateを7件追加するとキー集合の完全一致は必ず崩れる。
+   *
+   * 検証意味（**既存fixtureのJavaコード出力が改修前後で不変**）はそのまま保存し、
+   * 追加キーがPhase 7のgather template由来のものだけであることを明示的に検証する
+   * （新規キーが無検査で増えることを防ぐ。goldenファイル自体は書き換えない）。
+   */
   it('P6-D18: 全fixtureのJavaコード出力が改修前後で不変である', () => {
     const golden = JSON.parse(
       readFileSync(path.join(__dirname, '../fixtures/fixture-javacode-before-p6.json'), 'utf8'),
     ) as Record<string, string[]>
     const current = collectFixtureJavaCode()
-    expect(Object.keys(current).sort()).toEqual(Object.keys(golden).sort())
-    for (const key of Object.keys(golden)) {
+    // golden（改修前の既存fixture）は1件も欠落せず、出力も完全に不変であること
+    const currentKeys = Object.keys(current)
+    const goldenKeys = Object.keys(golden).sort()
+    expect(goldenKeys.filter((key) => !currentKeys.includes(key))).toEqual([])
+    for (const key of goldenKeys) {
       expect(current[key], key).toEqual(golden[key])
     }
+    // 追加キーはPhase 7のgather template × modeのものだけ
+    const gatherTemplateIds = GATHER_TEMPLATES.map((t) => t.templateId)
+    const addedKeys = currentKeys.filter((key) => !goldenKeys.includes(key)).sort()
+    const expectedAdded = GATHER_TEMPLATES.flatMap((t) =>
+      t.supportedModes.map((mode) => `${t.templateId}:${mode}`),
+    ).sort()
+    expect(addedKeys).toEqual(expectedAdded)
+    expect(gatherTemplateIds).toHaveLength(7)
   })
 
   it('P6-D18: javaStringLiteralは安全な文字列を変更しない（fixture出力不変の根拠）', () => {

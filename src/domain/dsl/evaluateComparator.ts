@@ -1,6 +1,7 @@
 import type { ComparatorDsl, ComparatorKey, EmployeeComparatorField } from './comparatorAst'
 import type { EmployeeValue } from '../model/employee'
 import type { SimValue } from '../model/value'
+import { assertNotCompositeList } from '../types/invariantError'
 import { formatDoubleLiteral, formatSimValue } from '../model/value'
 
 /**
@@ -23,6 +24,8 @@ function compareStrings(a: string, b: string): number {
 
 /** natural orderの比較（要素自身がComparableな型のみ） */
 export function compareNatural(a: SimValue, b: SimValue): number {
+  assertNotCompositeList(a, 'natural order比較')
+  assertNotCompositeList(b, 'natural order比較')
   if (a.kind !== b.kind) {
     throw new Error(`natural orderで異なる型は比較できません: ${a.kind} / ${b.kind}`)
   }
@@ -73,6 +76,8 @@ function compareByKey(key: ComparatorKey, a: EmployeeValue, b: EmployeeValue): n
 
 /** Comparator DSLによる2要素の比較 */
 export function compareByComparator(comparator: ComparatorDsl, a: SimValue, b: SimValue): number {
+  assertNotCompositeList(a, 'Comparator比較')
+  assertNotCompositeList(b, 'Comparator比較')
   if (comparator.kind === 'natural') return compareNatural(a, b)
   if (a.kind !== 'employee' || b.kind !== 'employee') {
     throw new Error('employeeKeys ComparatorはEmployee要素が必要です')
@@ -86,6 +91,7 @@ export function compareByComparator(comparator: ComparatorDsl, a: SimValue, b: S
 
 /** 要素の比較キー表示（sorted固有状態の「Comparatorキー / 比較対象」） */
 export function comparatorKeyLabel(comparator: ComparatorDsl | null, value: SimValue): string {
+  assertNotCompositeList(value, 'Comparatorキー表示')
   if (!comparator || comparator.kind === 'natural') return formatSimValue(value)
   if (value.kind !== 'employee') {
     throw new Error('employeeKeys ComparatorはEmployee要素が必要です')

@@ -6,20 +6,20 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   + `docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`（v0.10 / Phase 6手動連携差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`（v0.9 / Phase 7 Gatherers差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.10.docx`（上記3文書の統合ビルド。閲覧用。正は各原本）
-- 実装状況: **Phase 6 完了**（手動連携。Import Contract / Prompt Generator / Candidate Import / 取込UI。
-  詳細は `docs/phase-6-completion-report.md`）
+- 実装状況: **Phase 7 完了**（Gatherers。`Stream.gather` と組み込み4種の縦断実装。
+  詳細は `docs/phase-7-completion-report.md`）
 - J-2（`Collectors.teeing` の左右2系統と処理中要素数の関係）は Phase 5着手前に仕様確定し、本体へ実装済み
   （`docs/phase-5-decisions.md`。teeingでも「処理中要素は最大1件」の例外なし）
 - Phase 6でAI API接続（サーバーAPI・AI adapter・RemoteScenarioProvider）は**廃止**し、**手動連携方式**へ置換した
   （v0.10。アプリがプロンプトを生成 → ユーザーが任意のAIチャット等で候補JSONを作成 → 貼り戻して検証・取込）
-- **Phase 7（Gatherers、`docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`）は未着手**
 - 実装指示: `docs/Claude_Code_Phase1_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase2_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase5_Implementation_Instructions.md` /
-  `docs/Claude_Code_Phase6_Implementation_Instructions.md`
+  `docs/Claude_Code_Phase6_Implementation_Instructions.md` /
+  `docs/Claude_Code_Phase7_Implementation_Instructions.md`
   （Phase 3 / Phase 4の指示書は、指示書自身の複製禁止規定によりリポジトリへ含めていない）
 
-## 実装済み操作（Phase 6時点）
+## 実装済み操作（Phase 7時点）
 
 - **Stream生成**: `Collection.stream()` / `Arrays.stream()`（object・int[]・long[]・double[]）/ `Stream.of()` /
   `Stream.generate()` / `Stream.iterate(seed, operator)` / `Stream.iterate(seed, predicate, operator)` /
@@ -55,6 +55,18 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
     として構造化し、Set / Mapの表示順はUIの純粋なDisplayOrderProjectionで安定化する（JDKのiteration
     order保証とは区別して注記）
   - `Collectors.toMap()` は Draft v0.8 付録A.4の対象外のため未実装
+- **Gatherer（Phase 7）**: `gather(Gatherer)`（STATEFUL中間操作）
+  - 組み込みGatherer: `Gatherers.windowFixed` / `windowSliding` / `scan` / `fold`
+  - Gatherer<T, A, R>の4構成要素（initializer / integrator / combiner / finisher）を**常設4行**で表示し、
+    combinerは「逐次実行のため呼出し0回」、scanのfinisherは「終端での追加産出なし」の意味論のみを示す
+    （JDK内部実装の構成は断定せず、Oracle観測を反映する場合は観測環境を明示する）
+  - 窓は合成要素（`<nodeId>-win-N`）として安定IDを持ち、メンバーの入力ElementId列をcontextで追跡できる。
+    foldの最終値は `<nodeId>-result`。scan出力は入力要素のIDを継承する（map系1→1変換と同一規則）
+  - 実行値モデルへ合成List値（`SimValue` の `list` variant）を追加。既存 `stringList` は不変のまま並存
+  - `Gatherers.mapConcurrent` は並行実行の意味論のため**実行対象外**（存在と理由を補助説明で表示）。
+    カスタムGatherer・`Gatherer.andThen`・複数gatherノードの連結・gather下流の短絡合成も対象外
+    （`fold → findFirst` のみ例外）
+  - gatherを含むtemplateは**手動連携の取込対象外**（v0.9 §10-6のユーザー決定。将来拡張として持越し）
 
 ## 手動連携（Phase 6）
 
@@ -91,7 +103,7 @@ React UI (src/ui)
   → Application (src/application)   … SimulationSession・履歴cursor・1000ms自動再生・500上限
                                       Import Contract・Prompt Generator・Candidate Import（Phase 6）
     → Simulation Core (src/domain)  … TypeRef・OperationCatalog・DSL・Template・Step Engine・Snapshot
-      → ScenarioProvider (src/providers) … FixtureScenarioProvider（Phase 1〜5。Phase 6でも無変更）
+      → ScenarioProvider (src/providers) … FixtureScenarioProvider（Phase 6でも経路は無変更。Phase 7でfixtureを追加）
 ```
 
 - Candidate Importは `ScenarioProvider` を実装しない独立サービス（pull型のprovider契約に対し取込はpush型）。
@@ -105,6 +117,10 @@ React UI (src/ui)
 - Phase 5では、Phase 3のSTATEFUL共通バッファにもPhase 4の平坦な `TerminalRuntime` にも押し込めない
   Collectorの蓄積を、**Collector ASTに対応する再帰的な CollectorRuntime**（`src/domain/engine/collectorRuntime.ts`）
   として別建てし、container生成 / bucket決定 / 蓄積更新 / finisher適用 / merger適用をASTノード単位で表現
+- Phase 7では、Gathererが再帰構造を持たないため Collector のような別建てではなく、Phase 3のnode runtime
+  （`NodeRuntime` union）へ `GatherRuntime` を追加する形で実装。sorted専用だった finish cascade を
+  gather（残余窓のflush / 全要素1窓のflush / fold最終値の放出）へ一般化し、窓・fold最終値は
+  **合成要素**として `registerElement` してから下流へ depth-first で流す
 - 無限source（generate / iterate2）は有限性解析で必要source要求件数を事前導出し、必要な分だけ決定的に生成
   （`PipelineDefinition.boundedness` / `orderMeta`）
 - 「戻る」は再計算せず保存済みsnapshotを復元（seen・buffer・count・Side Effect履歴・Collectorのbucket /
@@ -120,24 +136,25 @@ npm run lint         # oxlint
 npm run test:unit    # Domain/Application/Reactテスト（Vitest）
 npm run build        # production build
 npm run test:e2e     # Playwright E2E + 視覚回帰（要: npx playwright install chromium）
-npm run test:oracle  # JDK 25照合 P1-O01〜P6-O01（要: Docker + gradle:9.6.1-jdk25イメージ）
-                     # 証跡を書き込むのは現行Phase（P6-O01 → artifacts/phase-6/oracle-result.md）のみ。
-                     # P1〜P5は照合のみで、実行前後に artifacts/phase-1〜phase-5 のSHA-256不変を検証する
+npm run test:oracle  # JDK 25照合 P1-O01〜P7-O01（要: Docker + gradle:9.6.1-jdk25イメージ）
+                     # 証跡を書き込むのは現行Phase（P7-O01 → artifacts/phase-7/oracle-result.md）のみ。
+                     # P1〜P6は照合のみで、実行前後に artifacts/phase-1〜phase-6 のSHA-256不変を検証する
 ```
 
-## テスト結果（Phase 6 最終）
+## テスト結果（Phase 7 最終）
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6） | 515（52ファイル） | 全成功 |
-| E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05） | 72 | 全成功 |
-| JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 + P4-O02 / P6-O02） | 6 suite | 完全一致 |
+| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7） | 651（59ファイル） | 全成功 |
+| E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05 + P7-E01〜05） | 81 | 全成功 |
+| JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 + P4-O02 / P7-O02） | 7 suite | 完全一致 |
 
-- P1必須41 ID + P1-O01、P2必須52 ID、P3必須60 ID、P4必須72 ID、P5必須59 ID、P6必須39 ID を
-  すべて実装・成功（対応表: 各completion-report）
-- 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-6/`
-- 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 6で取込UIを含む基準へ意図的更新。既存20枚＋新規7枚）
-- 全実行可能template（109件） × modeの211組合せで終端到達・snapshot予算内・Javaコード生成を機械検証（P6-D22）
+- P1必須41 ID + P1-O01、P2必須52 ID、P3必須60 ID、P4必須72 ID、P5必須59 ID、P6必須39 ID、
+  P7必須39 ID をすべて実装・成功（対応表: 各completion-report）
+- 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-7/`
+- 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 7では既存27枚を据え置き、Gathererパネルの
+  新規8枚を追加）
+- 全実行可能template（116件） × modeの222組合せで終端到達・snapshot予算内・Javaコード生成を機械検証（P6-D22）
 - production bundleはReact vendor chunkを分離し、各chunk 500 kB未満（`vite.config.ts`）
 
 ## ドキュメント
@@ -145,7 +162,10 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P6-O01（要: Docker + gradle:9.6.1
 | ファイル | 内容 |
 |---|---|
 | `docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md` | v0.10 仕様（Phase 6手動連携差分。AI API接続の廃止と取込方式） |
-| `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md` | v0.9 仕様（Phase 7 Gatherers差分。未着手） |
+| `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md` | v0.9 仕様（Phase 7 Gatherers差分） |
+| `docs/Claude_Code_Phase7_Implementation_Instructions.md` | Phase 7実装指示書（確定値・snapshot列・必須テストID） |
+| `docs/phase-7-completion-report.md` | Phase 7完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・差異記録） |
+| `docs/phase-7-decisions.md` | Phase 7判断記録（累積評価の独立実装・list / stringList並存・取込対象外方式・OBSERVATION反映） |
 | `docs/phase-6-completion-report.md` | Phase 6完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・差異記録） |
 | `docs/phase-6-decisions.md` | Phase 6判断記録（Import Contract配置・取込UI形式・プロンプト設計・Oracle境界値・bundle分割） |
 | `docs/phase-5-completion-report.md` | Phase 5完了報告（判定・証跡・必須59 ID対応表・24条件対応表・Oracle結果・差異記録） |
@@ -163,6 +183,7 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P6-O01（要: Docker + gradle:9.6.1
 
 工程別ブランチで作業し、Pull Request経由で `main` へマージする運用。
 Phase 1は積み上げ式の細分ブランチ（`phase1/00-spec` 〜 `phase1/12-reports`）で進め、
-Phase 2以降は各Phaseにつき1本のブランチ（`phase-2` / `phase-3` / `phase-4` / `phase-5` / `phase-6`）を
+Phase 2以降は各Phaseにつき1本のブランチ（`phase-2` / `phase-3` / `phase-4` / `phase-5` / `phase-6` /
+`phase-7`）を
 `main` から分岐させ、レビュー後にPull Requestでマージしている。
 各Phaseで作成したファイルは、対応するブランチのコミット（またはmainのマージコミット）の差分で確認できる。
