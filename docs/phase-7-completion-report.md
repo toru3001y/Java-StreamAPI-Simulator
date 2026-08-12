@@ -557,10 +557,13 @@ PC幅・狭幅の両方で満たしている。
 Phase 1〜6と同じくコミット対象外とする（`codex_review_request_*` / `*_start_request.md` は
 いずれのPhaseでも追跡していない）。
 
-### 17.3 commit / push / PR / merge の未実施
+### 17.3 commit / push / PR / merge の状況
 
-**commit、push、Pull Request作成、mainへのmergeは一切行っていない**（指示§18・§3.2）。
-作業ツリー上の変更・新規ファイルとして残してある。`git log` のHEADは作業開始時の `5c4d41f` のまま。
+実装中は **commit、push、Pull Request作成、mainへのmergeを一切行わなかった**（指示§18・§3.2）。
+codexレビュー完了（第4回で承認可）後、**ユーザーの明示指示を受けて**commit・push・PR作成を実施した。
+`main`へのmergeは実施していない（指示に含まれていないため）。詳細は §19。
+
+なお §17.1・§17.2 の `git diff --stat` / `git status --short` は、**commit直前**の状態である。
 
 ## 18. v0.9 §10の判断事項7件それぞれの結論
 
@@ -573,3 +576,35 @@ Phase 1〜6と同じくコミット対象外とする（`codex_review_request_*`
 | 5 | 合成値モデルの具体型と既存SimValueとの統合方法 | `SimValue` へ `list` variant（`elementType` 自己保持）を追加し、既存 `stringList` は不変のまま並存 | 指示§7.2で確定 | **差異なし**（判断記録 §2） |
 | 6 | AI生成候補へのgather DSL開放の可否 | **開放しない**（ユーザー決定）。Phase 6は手動連携方式（v0.10）へ置換済みであり、取込対象外化の2点のみ実装。将来拡張として持越し | 指示§7.8で確定 | **差異なし**（判断記録 §6・本報告 §16） |
 | 7 | 視覚回帰基準画像・共通UI・Oracle suite構成の意図的更新の範囲 | 視覚回帰: 既存27枚据え置き（更新0枚）・P7 8枚新設。共通UI: 操作選択の「中間」optgroupへ `gather` が1行増えるのみ（optgroup新設・`CATEGORY_LABELS` 変更なし）。Oracle suite: P7-O01追加・P6-O01の `writeReportPath` をnull化・`PAST_ARTIFACT_DIRS` へ `artifacts/phase-6` 追加（7 suite構成） | 指示§10・§12.5 | **差異なし**（本報告 §10・§13、判断記録 §11） |
+
+## 19. commit / push / PRの実施内容
+
+Phase 7実装指示 §18により、実装中はcommit / push / PR / mergeを行わなかった。
+**codexレビュー完了（第4回で承認可）後、ユーザーの明示指示を受けて**、
+次のとおりcommitとpush、PR作成を実施した。
+**`main`へのmergeは実施していない**（指示に含まれていないため）。
+
+### commit列
+
+| commit | 内容 |
+|---|---|
+| `5c4d41f` | （Phase 7着手前）Phase 7実装指示書の追加 |
+| `a0c50ca` | Phase 7本体（83ファイル）。`src` / `tests` / `e2e` / `oracle` / `artifacts/phase-7` / P7視覚回帰基準画像8枚 / `README.md` |
+| `3395212` | Phase 7完了報告と判断記録（`docs/phase-7-completion-report.md` / `docs/phase-7-decisions.md`） |
+| （本commit） | 本節へcommit SHAとPR URLを確定記載し、§17.3を実施済みへ更新（commit自身のSHAは記載できないため `git log` で確認できる） |
+
+Pull Request: **#8** https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/8
+（base `main` / head `phase-7`。**未merge**）
+
+push先: `origin/phase-7`（新規ブランチ。`5c4d41f..3395212`）
+
+### commitに含めなかったファイル（意図的）
+
+Phase 1〜6と同じく、`codex_review_request_*` / `*_start_request.md` はいずれのPhaseでも
+追跡していない。次の5件は未追跡のまま保持している。
+
+- `docs/phase7_start_request.md`（実装開始依頼文）
+- `docs/codex_review_request_P7_Implementation_Instructions.md`（指示書のレビュー依頼文）
+- `docs/codex_review_request_P7_Implementation.md`（実装のレビュー依頼文・レビュー記録）
+- `docs/phase6_start_request.md`（Phase 6運用ファイルの残置分）
+- `docs/codex_review_request_P6_Implementation_Instructions.md`（同上）
