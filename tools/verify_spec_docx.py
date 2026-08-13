@@ -48,7 +48,6 @@ EXPECTED_CHANGES = [
     '区分主な内容識別snapshot ID',                     # §12.3 Snapshot構造表
     '操作内部状態distinct既出値',                       # §12.5 操作固有状態表
     '対象可視化仕様filter値取得',                       # §14.1 中間操作表
-    'Phase実装内容完了条件1React + TS + Vite',        # §20 Phase表（Phase 7行）
     'メソッド優先度filter()高map()高mapToInt()',       # 付録A.2
     '操作0件時の表示Stream.toList()',                  # 付録B
     '可視化パターン対象生成元型Collection.stream',       # 付録C
@@ -125,6 +124,10 @@ def main():
     if args.v11 and not args.v10:
         raise SystemExit('--v11 には --v10 が必要です（省略すると第27章の転記検証が抜ける）')
 
+    if args.v10:
+        # §20 Phase表へのPhase 7行追加はapply_v10_pointers（--v10指定時）だけが行う。
+        # 無条件に期待するとv0.9単独版の検証が常に偽陽性で不合格になる
+        EXPECTED_CHANGES.append('Phase実装内容完了条件1React + TS + Vite')
     if args.v11:
         # v0.11は付録A.4（Collector / Collectors表）へも行を追加する
         EXPECTED_CHANGES.append('メソッド優先度Collectors.toList() / toSet()')
