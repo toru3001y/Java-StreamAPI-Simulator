@@ -280,6 +280,9 @@ merger IDを追加して到達可能にしても**未実装のまま残る**。�
 
 詳細はv0.12差分の§2〜§6と`docs/phase-8-completion-report.md` §17-1の追記。
 
+**確定記録**: codexレビュー第2回（2026-08-13）で指摘なし承認。実装コミットは`phase-9`ブランチの
+`89dd241`、Pull Requestは https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/12 。
+
 ## 10. FAILED状態のstopReason（指示§7.2、v0.11 §6.2の3・4）
 
 **判断**: `PlaybackState`へ`'FAILED'`を追加し、**`stopReason`は設定しない**（nullのまま）。
