@@ -477,3 +477,6 @@ v0.11 §2.2で将来拡張とされた数値加算merge（`Long::sum`等）を�
   不一致という指摘で、修正案どおり文言を反映しv0.13.docxを再生成・verify合格を確認した。
   数値意味論（v0.13 §3）はJavadoc / JLSの一次情報と一致、型制約・実行・Oracle照合方式も
   問題なしと確認された。
+
+**確定記録**: 実装コミットは`phase-10`ブランチの`77f39ce`、Pull Requestは
+https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/15 。
