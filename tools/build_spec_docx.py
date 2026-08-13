@@ -81,6 +81,7 @@ LIST_IND = {0: '<w:ind w:left="540" w:hanging="271"/>',
 
 NOTE_V09 = '【v0.9による追加】'
 NOTE_V10 = '【v0.10による変更】'
+NOTE_V11 = '【v0.11による追加】'
 
 
 # ---------------------------------------------------------------- 低レベルXMLユーティリティ
@@ -549,7 +550,7 @@ class RefResolver:
     規則（適用順）:
       1. 明示的例外リスト（原文の一意な文脈で指定）
       2. 「v0.8 §X」「Draft v0.8 §X」→「§X」（v0.8参照。番号は不変）
-      3. 「v0.9 §X」→「§26.X」
+      3. 「v0.10 §X」→「§27.X」、「v0.9 §X」→「§26.X」
       4. 「§X」で X の先頭番号が11以上 → v0.8参照（差分文書の節は10までのため）
       5. 残りの「§X」→ 自章の節（§<chapter>.X）
 
@@ -585,6 +586,8 @@ class RefResolver:
                       lambda m: prot(m.group(1)), text)
         text = re.sub(r'(?:Draft\s+)?v0\.8\s*(§\d+(?:\.\d+)*)',
                       lambda m: prot(m.group(1)), text)
+        text = re.sub(r'v0\.10\s*§(\d+(?:\.\d+)*)',
+                      lambda m: prot('§27.' + m.group(1)), text)
         text = re.sub(r'v0\.9\s*§(\d+(?:\.\d+)*)',
                       lambda m: prot('§26.' + m.group(1)), text)
         if policy == 'v08':
@@ -655,6 +658,14 @@ EXC_V10 = [
      '通す。' + _prot('§9.3') + '「不成立の候補はStep Engineへ渡さない」'),
     # v0.9への参照（§10-6 の特殊表記）
     ('v0.9 §8.4・§10-6「AI生成候補', _prot('§26.8.4') + '・' + _prot('§26.10') + 'の6「AI生成候補'),
+]
+
+EXC_V11 = [
+    # §1.1 優先順位リスト：左辺がv0.8、右辺が本章
+    ('§3.2（初版に含めないもの）への追加: §2.2',
+     _prot('§3.2') + '（初版に含めないもの）への追加: ' + _prot('§28.2.2')),
+    ('§9.1（Collector DSL許可構造）への追加: §8',
+     _prot('§9.1') + '（Collector DSL許可構造）への追加: ' + _prot('§28.8')),
 ]
 
 # v0.10 §1.2 対応表：第1列は v0.8 の箇所を無印で挙げている
@@ -1018,9 +1029,92 @@ def apply_v10_pointers(s):
     return n
 
 
+def apply_v11_pointers(s):
+    """v0.11（第28章）に対応するポインタを v0.8 本文へ差し込む。
+
+    v0.11 §1.1の優先順位リスト（付録A.4 / §3.2 / §12〜§13 / 付録B / §9.1 /
+    §14〜§15 / §20・§24）を網羅する。v0.9ポインタが挿入済みの段落をアンカーに
+    使う箇所があるため、apply_v09_pointers の後に呼ぶこと。
+    """
+    n = 0
+
+    # C1 §3.2 初版に含めないもの（v0.9 B1の直後）
+    s.insert_after('w:p', 'Gathererの対象外範囲', list_item(
+        NOTE_V11 + 'toMapの対象外範囲（`toConcurrentMap`系、`toUnmodifiableMap`系、'
+        '`Map.merge`のnull削除意味論、数値加算merge、keyMapper / valueMapper / '
+        'mergeFunctionの自由記述）は§28.2.2を参照。', 1003)); n += 1
+
+    # C2 §9.1 DSL許可構造表
+    s.append_rows('collectorKind、引数、downstream、left / right Collector', [
+        ['toMap', 'keyMapper（classifier流用）/ valueMapper（`identity` / `fieldAccess`）/ '
+                  'mergeFunctionId（`first` / `last` / `concat`）/ mapFactoryId（§28.8）']]); n += 1
+
+    # C3 §12.3 Snapshot構造表（実行失敗契約）
+    s.append_rows('short-circuit、通常完了、STREAM CONSUMED', [
+        ['実行失敗', '`ExecutionFailureView`（例外型、collectorPath、bucketPath、重複キー、'
+                     '既存値・新しい値）。completionへEXECUTION_FAILEDを追加（§28.6.2）']]); n += 1
+
+    # C4 §12.4 要素状態（実行失敗契約の所在）
+    s.insert_after('w:p', '後者はGatherer専用contextで表す', para(
+        NOTE_V11 + '正常完了しないPipeline（toMap 2引数版の重複キー）の実行失敗契約'
+        '（`COLLECT_FAILED`終端・completion `EXECUTION_FAILED`・再生状態`FAILED`・'
+        '戻る→進むの完全復元）は§28.6.2を参照。', 'BodyText')); n += 1
+
+    # C5 §12.5 操作固有状態表
+    s.append_rows('ノード別コンテナ、bucket、finisher状態', [
+        ['toMap', 'Map entry蓄積（キー→値1件）、重複検出・merge適用のcontext、'
+                  '実行失敗view（§28.6）']]); n += 1
+
+    # C6 §13.2 独立snapshotになる処理（v0.9 B10の直後）
+    s.insert_after('w:p', 'Gathererのinitializer確定、窓バッファ更新', list_item(
+        NOTE_V11 + 'toMapのキー評価確定、値評価確定、重複キー検出、mergeFunction適用、'
+        '実行失敗確定（§28.6.1〜§28.6.2）。', 1013)); n += 1
+
+    # C7 §15.2 Collector ASTと画面（v0.9 B12の直後）
+    s.insert_after('w:p', 'Gatherer専用のcontextと表示コンポーネントを', para(
+        NOTE_V11 + 'toMapノードはCollector構造ツリーへkeyMapper / valueMapper / '
+        'mergeFunction / mapFactoryの4行を常設表示する。蓄積entry・重複・merge・'
+        '実行失敗の表示は§28.5を参照。', 'BodyText')); n += 1
+
+    # C8 §20 Phase別実装計画表（Phase 8行）
+    s.append_rows('サーバーAPI、AI adapter、RemoteScenarioProvider、AI capability、候補検証', [
+        ['8',
+         '`Collectors.toMap`（2・3・4引数）をCollector AST・validate・Runtime・Step Engine・'
+         'セッション・template / fixture・UI・テスト・Oracleまで縦断実装（新operationIdなし）',
+         '構造4行表示、§28.6のsnapshot列と実行失敗契約、§28.7の特殊ケース、§28.8のDSL検証が'
+         'JDK 25実測回帰照合（例外は型のみ）を含めて成立し、既存P1〜P7テストが全件成功'
+         '（詳細は§28.9）']]); n += 1
+
+    # C9 §24.1 Domain（v0.10ポインタの直後）
+    s.insert_after('w:p', '取込候補のclosed schema検証、数値値域', list_item(
+        NOTE_V11 + 'toMapのDSL検証・実行失敗契約・`ExecutionFailureView`の6配置と'
+        '`P8-*`系列（§28.9）。', 1027)); n += 1
+
+    # C10 付録A.4 Collector / Collectors
+    s.append_rows('Collectors.summarizingInt/Long/Double()', [
+        ['Collectors.toMap(keyMapper, valueMapper)', '高（§28.2.1）'],
+        ['Collectors.toMap(keyMapper, valueMapper, mergeFunction)', '高（§28.2.1）'],
+        ['Collectors.toMap(keyMapper, valueMapper, mergeFunction, mapFactory)', '中（§28.2.1）'],
+    ]); n += 1
+
+    # C11 付録B 0件時の結果（v0.9 B17と同じ表）
+    s.append_rows('左右の空結果をmergerへ渡した結果', [
+        ['collect(toMap)（2・3・4引数）', '空stream → 空Map `{}`（公式定義から導出。§28.7）'],
+        ['partitioningBy配下のtoMap・要素0件のpartition',
+         '空Map（4引数版はTreeMap）が値になる（公式仕様で確定。§28.7）'],
+    ]); n += 1
+
+    # C12 付録E 根拠資料
+    s.append_rows('https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/StringJoiner.html', [
+        ['JDK25-MAP', 'Map.merge（mergeFunctionの適用順の根拠）',
+         'https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/Map.html'],
+    ]); n += 1
+    return n
+
+
 # ---------------------------------------------------------------- メタデータ更新
 
-def apply_meta(s, version_label, date_label, has_v10):
+def apply_meta(s, version_label, date_label, has_v10, has_v11=False):
     """本書自身の版を表す記述を更新し、読み方の凡例を冒頭へ置く。
 
     ここで書き換えるのは「この文書は何版か」を述べている箇所だけである。
@@ -1041,20 +1135,37 @@ def apply_meta(s, version_label, date_label, has_v10):
     s.replace_text('Draft v0.8 終了', '%s 終了' % version_label)
 
     # 冒頭の読み方（統合版を単独で読むための全体凡例）
+    if has_v11:
+        diff_names = '、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）'
+        vers = 'v0.9・v0.10・v0.11'
+        notes = '【v0.9による追加】【v0.10による変更】【v0.11による追加】'
+        chapters = '第26章・第27章・第28章'
+        chapter_map = '第26章（v0.9）・第27章（v0.10）・第28章（v0.11）'
+    elif has_v10:
+        diff_names = 'と v0.10（Phase 6手動連携差分）'
+        vers = 'v0.9・v0.10'
+        notes = '【v0.9による追加】【v0.10による変更】'
+        chapters = '第26章・第27章'
+        chapter_map = '第26章（v0.9）・第27章（v0.10）'
+    else:
+        diff_names = ''
+        vers = 'v0.9'
+        notes = '【v0.9による追加】'
+        chapters = '第26章'
+        chapter_map = '第26章（v0.9）'
     guide = [
         '本書の読み方：本書は Draft v0.8 の本文へ、v0.9（Gatherers差分）'
-        + ('と v0.10（Phase 6手動連携差分）' if has_v10 else '')
+        + diff_names
         + 'を統合したものである。第1〜25章および付録A〜Fは Draft v0.8 の記述をそのまま保持しており、'
           'v0.8時点の経緯・当時の契約を述べた記述も歴史的記録として残している。',
         'したがって、第1〜25章および付録A〜Fの記述のうち、'
-        + ('v0.9・v0.10' if has_v10 else 'v0.9')
+        + vers
         + 'によって追加・置換・読み替えとなった箇所には、その直後に'
-          '【v0.9による追加】'
-        + ('【v0.10による変更】' if has_v10 else '')
+        + notes
         + 'の注記と参照先を付している。注記のある記述については、注記が指す'
-        + ('第26章・第27章' if has_v10 else '第26章')
+        + chapters
         + 'の規定が現行仕様である。差分の本文は'
-        + ('第26章（v0.9）・第27章（v0.10）' if has_v10 else '第26章（v0.9）')
+        + chapter_map
         + 'にある。',
     ]
     frag = ''.join(para(g, 'BodyText') for g in guide)
@@ -1130,18 +1241,33 @@ PREFACE_27 = [
     '§26.x、v0.8本文の節を指す参照は§1〜§25および付録の記号で表記している。',
 ]
 
+PREFACE_28 = [
+    '本章は、v0.11差分文書（`docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md`）の'
+    '全文を章立てで収録したものである。第1〜25章および付録A〜Fの本文はDraft v0.8から変更しておらず、'
+    '本章への参照行のみを追加している。',
+    '本章の記述で「本書」とあるのは本章（v0.11差分）を、「v0.8」とあるのは本書の第1〜25章および'
+    '付録A〜F、「v0.9」とあるのは第26章、「v0.10」とあるのは第27章を指す。本章内の節を指す参照は'
+    '§28.x、v0.9・v0.10の節を指す参照は§26.x・§27.x、v0.8本文の節を指す参照は§1〜§25および付録の'
+    '記号で表記している。なお本章内の`docs/phase-5-decisions.md`等のリポジトリ文書への§参照は、'
+    '当該文書内の節番号であり本書の節ではない。',
+]
+
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--base', required=True)
     ap.add_argument('--v09', required=True)
     ap.add_argument('--v10')
+    ap.add_argument('--v11')
     ap.add_argument('--out', required=True)
     ap.add_argument('--version-label', default=None)
     ap.add_argument('--date-label', default='2026-08-12')
     args = ap.parse_args()
 
-    version_label = args.version_label or ('Draft v0.10' if args.v10 else 'Draft v0.9')
+    if args.v11 and not args.v10:
+        raise SystemExit('--v11 には --v10 が必要です（v0.11はv0.10までの統合を前提とする）')
+    version_label = args.version_label or (
+        'Draft v0.11' if args.v11 else 'Draft v0.10' if args.v10 else 'Draft v0.9')
 
     base_bytes = open(args.base, 'rb').read()
     base_sha = hashlib.sha256(base_bytes).hexdigest()
@@ -1157,12 +1283,13 @@ def main():
     report = {}
 
     # A: メタデータ（章追加より前に行う。章本文がv0.8の版表記を引用するため）
-    apply_meta(s, version_label, args.date_label, bool(args.v10))
+    apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11))
     report['A メタデータ'] = 7
 
     # 目次
     s.insert_rows_before('>A〜F</w:t>', [['26', 'v0.9差分：Stream.gather / Gatherers']]
-                         + ([['27', 'v0.10差分：Phase 6 手動連携']] if args.v10 else []))
+                         + ([['27', 'v0.10差分：Phase 6 手動連携']] if args.v10 else [])
+                         + ([['28', 'v0.11差分：Collectors.toMap']] if args.v11 else []))
     report['A 目次'] = 1
 
     # §1.1 改訂点
@@ -1172,6 +1299,10 @@ def main():
         rev_rows.append(['v0.10', 'Phase 6のAI API接続（サーバーAPI・AiScenarioAdapter・'
                                   'RemoteScenarioProvider）を廃止し、手動連携方式へ置換（第27章）。'
                                   'v0.8のAI関連記述の全対応表は§27.1.2'])
+    if args.v11:
+        rev_rows.append(['v0.11', '`Collectors.toMap`（2・3・4引数）を教材対象へ追加し、'
+                                  'Phase 8を新設（第28章）。実行失敗契約（正常完了しない'
+                                  'Pipelineの教材化）をsnapshot契約へ追加'])
     s.append_rows('教材Pipeline最大ノード数ガイドラインの運用方針', rev_rows)
     report['A §1.1改訂点'] = 1
 
@@ -1181,6 +1312,10 @@ def main():
     # V: v0.10 ポインタ
     if args.v10:
         report['V v0.10ポインタ'] = apply_v10_pointers(s)
+
+    # W: v0.11 ポインタ（v0.9ポインタ挿入済みの段落をアンカーに使うため、この順で呼ぶ）
+    if args.v11:
+        report['W v0.11ポインタ'] = apply_v11_pointers(s)
 
     # C: 差分章
     md09 = open(args.v09, encoding='utf-8').read()
@@ -1203,6 +1338,17 @@ def main():
         unused = [c for c, _ in EXC_V10 if c not in r10.used]
         if unused:
             raise AssertionError('v0.10の未適用例外: %r' % unused)
+
+    if args.v11:
+        md11 = open(args.v11, encoding='utf-8').read()
+        r11 = RefResolver(28, EXC_V11)
+        x28, bid = build_chapter(parse_markdown(md11), 28,
+                                 'v0.11差分：Collectors.toMap', r11, nums, bid, PREFACE_28)
+        s.insert_chapter_before('付録A. 実装対象メソッド一覧', x28)
+        report['C 第28章'] = 1
+        unused = [c for c, _ in EXC_V11 if c not in r11.used]
+        if unused:
+            raise AssertionError('v0.11の未適用例外: %r' % unused)
 
     numbering = extend_numbering(numbering, nums.created)
     core = re.sub(r'(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)',

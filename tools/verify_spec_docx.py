@@ -24,7 +24,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
-from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10,
+from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10, EXC_V11,
                              V10_MAPPING_HEADER, tokenize_inline)
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -114,9 +114,14 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--v09', required=True)
     ap.add_argument('--v10')
+    ap.add_argument('--v11')
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
+
+    if args.v11:
+        # v0.11は付録A.4（Collector / Collectors表）へも行を追加する
+        EXPECTED_CHANGES.append('メソッド優先度Collectors.toList() / toSet()')
 
     print('=== 1. v0.8 docx の不変性 ===')
     sha = hashlib.sha256(open(args.base, 'rb').read()).hexdigest()
@@ -199,20 +204,28 @@ def main():
     ch_start = {}
     for idx, rec in enumerate(texts):
         if rec[0] == 'p' and rec[2] == 'Heading1':
-            if re.match(r'^(26|27)\. ', rec[1]):
+            if re.match(r'^(26|27|28)\. ', rec[1]):
                 ch_start[rec[1][:2]] = idx
             elif rec[1].startswith('付録A'):
                 ch_start['付録'] = idx
-    for ch, mdpath in (('26', args.v09), ('27', args.v10)):
+    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11}
+    next_ch = {'26': '27', '27': '28', '28': None}
+    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11)):
         if not mdpath:
             continue
         start = ch_start[ch]
-        end = ch_start.get('27') if ch == '26' else ch_start.get('付録', len(texts))
+        end = None
+        nc = next_ch[ch]
+        while nc and end is None:
+            end = ch_start.get(nc)
+            nc = next_ch[nc]
+        if end is None:
+            end = ch_start.get('付録', len(texts))
         seg = texts[start:end]
         segtext = '\n'.join(t[1] if t[0] == 'p' else
                             '\n'.join('|'.join(r) for r in t[1]) for t in seg)
         blocks = parse_markdown(open(mdpath, encoding='utf-8').read())
-        res = RefResolver(int(ch), EXC_V09 if ch == '26' else EXC_V10)
+        res = RefResolver(int(ch), exc_map[ch])
         missing, n_items, n_rows, n_para, n_head = [], 0, 0, 0, 0
         for b in blocks:
             if b['k'] == 'h':
@@ -278,6 +291,10 @@ def main():
                         '\n'.join('|'.join(r) for r in t[1]) for t in texts)
     refs = {}
     for m in re.finditer(r'§(\d+(?:\.\d+)*)', alltext):
+        # リポジトリ文書（docs/phase-5-decisions.md等）への§参照は本書の節番号ではない
+        ctx = alltext[max(0, m.start() - 30):m.start()]
+        if 'decisions.md' in ctx or ctx.endswith('Phase 5 '):
+            continue
         refs.setdefault(m.group(1), 0)
         refs[m.group(1)] += 1
     bad = sorted(r for r in refs if r not in valid)
