@@ -2,7 +2,7 @@
 
 ## 1. 版管理（Draft v0.8 §1.2の変更管理に基づく）
 
-- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕を反映）
+- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕・第3回指摘2件〔中2〕を反映）
 - 本書の構成: **v0.11 = Draft v0.8（`docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`、無編集のまま保持）+ v0.9差分（`docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`、無編集のまま保持）+ v0.10差分（`docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`、無編集のまま保持）+ 本差分文書**。全文転記は行わない。
 - 変更理由: Draft v0.8 付録A.4の対象外として未実装だった`Collectors.toMap`を教材対象へ追加するため（Phase 8）。toMapは「groupingBy = 1キー多値」に対する「toMap = 1キー1値。衝突はmergeか例外」という対比を担う、Collector教材の欠落部分である。
 - 作成日: 2026-08-13
@@ -159,11 +159,14 @@ toMap 2引数版の重複キーは、本シミュレーターで初めて「正�
      exceptionType: 'IllegalStateException'
      collectorPath: readonly string[]
          // 失敗したtoMapノードまでのCollector node key列。既存CollectorRuntimeの
-         // node key規約（root='c0'、以降 '.down' / '.left' / '.right' 連結）・
-         // currentPathと同一規約とする
+         // currentPathと同一の値・同一規約とする。node key規約: root='c0'、
+         // 宣言上の子は '.down'、teeingは '.left' / '.right' 連結。加えて
+         // groupingBy / partitioningByのbucket内downstreamは、宣言共有ノード（'.down'）
+         // ではなくbucketごとの実ノードkey '.bucket#<生成順>' が経路に入る
+         // （既存addBucket / enterBucketの実装規約をそのまま契約化する）
      bucketPath: readonly { collectorNodeKey: string; key: <値参照> }[]
-         // 経路上の各bucket保持Collector（groupingBy / partitioningBy）のnode keyと
-         // bucketキーの列。多段groupingByは外側→内側の順に複数要素で表す。
+         // 経路上の各bucketについて「bucketを所有するgroupingBy / partitioningByノード」
+         // のnode keyとbucketキーの列。多段groupingByは外側→内側の順に複数要素で表す。
          // bucketを経由しない配置（root直下・adapter系のみ・teeing branch直下）では空配列
      duplicateKey: <値参照>
      existingValue: <値参照>
@@ -171,7 +174,12 @@ toMap 2引数版の重複キーは、本シミュレーターで初めて「正�
    }
    ```
 
-   `collectorPath`と`bucketPath`の組で、`COLLECTOR_MAX_DEPTH = 4`の範囲で許可されるすべての配置（root / 単段groupingBy / 多段groupingBy / partitioningBy / adapter系経由 / teeing branch）の失敗位置を一意に表せることを契約とする。**root・単段groupingBy・多段groupingBy・partitioningBy・teeing branchの各失敗ケースを、構造化viewの必須テスト（P8）に含める**。
+   例（`#n`は当該bucketの生成順による）:
+   - `groupingBy(region, toMap(…))`で「関東」bucket内の重複 → `collectorPath = ['c0', 'c0.bucket#1']`、`bucketPath = [{ collectorNodeKey: 'c0', key: 関東 }]`
+   - `groupingBy(division, groupingBy(region, toMap(…)))` → `collectorPath = ['c0', 'c0.bucket#1', 'c0.bucket#1.bucket#1']`のようにbucket node keyが連結され、`bucketPath`は外側・内側の2要素
+   - `filtering(…, toMap(…))`（root直下） → `collectorPath = ['c0', 'c0.down']`、`bucketPath = []`
+
+   `collectorPath`と`bucketPath`の組で、`COLLECTOR_MAX_DEPTH = 4`の範囲で許可されるすべての配置（root / 単段groupingBy / 多段groupingBy / partitioningBy / adapter系経由 / teeing branch）の失敗位置を一意に表せることを契約とする。**root・単段groupingBy・多段groupingBy・partitioningBy・adapter系経由（例: `filtering(…, toMap(…))`）・teeing branchの各失敗ケースを構造化viewの必須テスト（P8）に含め、`collectorPath` / `bucketPath`は配列の完全一致で検証する**。
 
 ### 6.3 操作別の確定snapshot列（toMapノード視点。全列の厳密な合成はPhase 8実装指示書で確定）
 
@@ -188,7 +196,13 @@ toMap 2引数版の重複キーは、本シミュレーターで初めて「正�
   | groupingBy | **新規**`BUCKET_SELECTED`のcontext。既存bucket選択時は生成済みMapを再利用し、新たな生成表示をしない |
   | partitioningBy | false / trueの2 bucketは実行開始時に事前生成される（既存実装。空ソースでも両キーを保持）。downstream Mapの生成もこの事前生成に含め、partitioningBy構造の初期表示contextで両partition分を表す。**要素が1件もないpartitionでも、downstream supplierの適用結果（空Map。4引数版はTreeMap）が当該partitionの値になる**（§3.3の公式仕様） |
   | mapping / flatMapping / filtering / collectingAndThen（adapter系） | adapter自身はコンテナ・bucketを持たず、downstreamと蓄積slotを共有する。生成規則は**adapterの外側の配置**へ委譲する（rootに達する場合はroot規則＝4引数版のみ`CONTAINER_CREATED`、bucket内ならその親bucketの規則） |
-  | teeing（left / right branch） | branchコンテナの生成に独立snapshotを設けない既存規則（`docs/phase-5-decisions.md` §14.4）に合わせ、当該branchの**初回**`TEE_BRANCH_ACCUMULATED`のcontextで生成を表す。branchへ1件も要素が来ない場合は`TEE_BRANCH_FINISHED`のcontextで表す |
+  | teeing（left / right branch） | 当該branchの**初回**`TEE_BRANCH_ACCUMULATED`のcontextで生成を表す。branchへ1件も要素が来ない場合は`TEE_BRANCH_FINISHED`のcontextで表す。これは本書の**加算的な新判断**である（Phase 5 §14.4は「入力要素の収集完了に独立snapshotを設けない」判断であり、branchコンテナ生成の規則ではないため、前例としては引かない） |
+
+  **teeing branchでの更新kindの排他**: 既存runtimeは、branch root（蓄積を持つ末端Collector）の蓄積更新を`TEE_BRANCH_ACCUMULATED`のみで発行し、同じ更新に`CONTAINER_UPDATED`を重ねない（branch rootが合成Collectorの場合は、内部更新を汎用kindで発行した後、branch確定の`TEE_BRANCH_ACCUMULATED`を別事象として1件発行する）。toMapもこの排他に従う:
+
+  - **branch直下（branch root）のtoMap**: 通常列の`CONTAINER_UPDATED`を`TEE_BRANCH_ACCUMULATED`へ**置換**する。成功時: `TO_MAP_KEY_EVALUATED` → `TO_MAP_VALUE_EVALUATED` → `TEE_BRANCH_ACCUMULATED`（Map更新を兼ねる）。merge時: … → `DUPLICATE_KEY_DETECTED` → `MERGE_FUNCTION_APPLIED` → `TEE_BRANCH_ACCUMULATED`（置換更新を兼ねる）。同一の更新に`CONTAINER_UPDATED`を重ねて発行しない
+  - **branch内部（adapter系経由等）のtoMap**: 内部更新は通常列（`CONTAINER_UPDATED`）どおり発行し、branch確定の`TEE_BRANCH_ACCUMULATED`は別事象として1件発行する（既存規則どおり）
+  - **重複キーで失敗した要素**: `DUPLICATE_KEY_DETECTED` → `COLLECT_FAILED`が終端となり、その要素の`TEE_BRANCH_ACCUMULATED`は発行しない
 
   bucketごと（teeingはbranchごと）のtoMap蓄積へ上記の要素単位列（`TO_MAP_KEY_EVALUATED`以降）を適用する。context具体項目名を含む既存downstream Collector列規則との厳密な合成はPhase 8実装指示書で確定する。
 
@@ -284,7 +298,7 @@ ToMapValueDsl =
 
 - 位置づけ: Phase 7完了後に実施する追加Phase（v0.8 §20のPhase表へPhase 8行を追加）。
 - 実装範囲: §2.1の3 overloadを、Collector AST / validate・Collector Runtime・Step Engine（§6.2実行失敗契約）・セッション状態（FAILED区分）・template / fixture・UI・テスト・Oracleまで縦断実装する。**新しいoperationIdは追加しない**——Phase 5と同様、toMapは既存`collect` operationのCollector AST kindとして扱い、OperationCatalogへの変更はCollector slot許可kind・表示metadataへの追加に限る。
-- 完了条件（概要）: §5の構造表示（4行）、§6のsnapshot列・実行失敗契約・決定性、§7の特殊ケース、§8のDSL検証が、JDK 25実測との回帰照合（例外は**型のみ**照合。§6.2の5）を含めて成立し、既存P1〜P7テストが全件成功すること（§1.2の走査母集団の意図的更新を含む）。`ExecutionFailureView`はroot / 単段groupingBy / 多段groupingBy / partitioningBy / teeing branchの各失敗ケースを必須テストで検証する（§6.2の9）。mergeFunctionの適用順（既存値が第1引数）はOracleで実測照合する（§3.2）。
+- 完了条件（概要）: §5の構造表示（4行）、§6のsnapshot列・実行失敗契約・決定性、§7の特殊ケース、§8のDSL検証が、JDK 25実測との回帰照合（例外は**型のみ**照合。§6.2の5）を含めて成立し、既存P1〜P7テストが全件成功すること（§1.2の走査母集団の意図的更新を含む）。`ExecutionFailureView`はroot / 単段groupingBy / 多段groupingBy / partitioningBy / adapter系経由 / teeing branchの各失敗ケースを必須テストで検証する（`collectorPath` / `bucketPath`は配列の完全一致。§6.2の9）。mergeFunctionの適用順（既存値が第1引数）はOracleで実測照合する（§3.2）。
 - 統合版docx（`tools/build_spec_docx.py`）へのv0.11差分の取込みを完了条件へ含める。
 - テストIDは`P8-*`（P8-D / A / R / E / O）。必須ID表・件数・fixture値はPhase 8実装指示書で確定する。
 
