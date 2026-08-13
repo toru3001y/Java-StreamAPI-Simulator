@@ -4,17 +4,23 @@ import {
   COLLECTOR_SUPPLIER_CONTAINER_NAMES,
   COLLECT_TRIPLE_ID_COMBINATIONS,
   TEEING_MERGER_RECORDS,
+  TO_MAP_MERGE_META,
+  TO_MAP_NO_MAP_FACTORY_LABEL,
+  TO_MAP_NO_MERGE_LABEL,
   joiningArity,
   numericKindPrimitive,
+  toMapArity,
 } from '../dsl/collectorAst'
-import type { ClassifierDsl } from '../dsl/collectorAst'
+import type { ClassifierDsl, ToMapMergeId, ToMapValueDsl } from '../dsl/collectorAst'
 import type { MapperDsl } from '../dsl/mapperAst'
 import {
   classifierToJavaExpr,
   collectorToJavaExpr,
   comparatorToJavaExpr,
   predicateToJavaExpr,
+  toMapValueToJavaExpr,
 } from '../dsl/javaCode'
+import { describeToMapMerge, describeToMapValue } from '../dsl/explanation'
 import { evaluateValuePredicate } from '../dsl/evaluate'
 import { compareByComparator } from '../dsl/evaluateComparator'
 import { evaluateMapper } from '../dsl/evaluateMapper'
@@ -36,11 +42,14 @@ import type {
   CollectorMapEntryView,
   CollectorNodeView,
   CollectorTeeingView,
+  CollectorToMapView,
+  ExecutionFailureView,
   OperationContextView,
   ProcessingView,
   SnapshotKind,
   SnapshotOutputItem,
   TerminalResultView,
+  ToMapEntryView,
 } from './snapshot'
 
 /**
@@ -91,6 +100,19 @@ interface ElementEntry {
   readonly key: string
 }
 
+/**
+ * toMapのMap entry 1件（Phase 8指示 §7.5-3・§7.5-6）。
+ * merge結果値へ独立のID（ElementId・合成ID）は付与しない——Map entryはPipelineを流れる要素ではなく、
+ * 既存Collector蓄積値（counting等）もElementIdを持たない前例に従う。復元契約・決定性は
+ * `keyRef`と`valueLabel`（＋`ExecutionFailureView`）で満たす。
+ */
+interface ToMapEntryRuntime {
+  readonly keyRef: string
+  readonly keyLabel: string
+  /** 現在Mapにある値（3件以上の衝突ではmergeの順次適用でここが更新される） */
+  value: SimValue
+}
+
 /** Collector ASTノード1つ分の実行時状態 */
 interface CollectorRuntimeNode {
   readonly nodeKey: string
@@ -122,6 +144,10 @@ interface CollectorRuntimeNode {
   buckets: BucketRuntime[]
   bucketIndex: Map<string, BucketRuntime>
   bucketCreatedByLast: boolean
+  // ---- toMap（Phase 8） ----
+  /** 蓄積順（encounter orderの挿入順）で保持する。表示順の並べ替えはview側で行う */
+  mapEntries: ToMapEntryRuntime[]
+  mapEntryIndex: Map<string, ToMapEntryRuntime>
   // ---- finisher ----
   finished: boolean
   finisherBefore: string | null
@@ -149,6 +175,14 @@ function nodeContainerLabel(dsl: CollectorDsl): string {
       return 'Set'
     case 'toCollection':
       return COLLECTOR_SUPPLIER_CONTAINER_NAMES[dsl.supplierId]
+    // Phase 8: 4引数版toMapはroot配置でCONTAINER_CREATEDを発行するため、
+    // 生成説明（「空の<コンテナ名>を生成しました」）で使うコンテナ名が必要になる。
+    // 2・3引数版はCONTAINER_CREATEDを発行しないが、表示名の導出規則は
+    // mapContainerLabelと同一にそろえる（Map実装型が無保証であることは構造4行が示す）
+    case 'toMap':
+      return dsl.mapFactoryId === null
+        ? 'Map'
+        : COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName
     default:
       return ''
   }
@@ -188,6 +222,8 @@ function createNode(dsl: CollectorDsl, inputType: TypeRef, nodeKey: string): Col
     buckets: [],
     bucketIndex: new Map<string, BucketRuntime>(),
     bucketCreatedByLast: false,
+    mapEntries: [],
+    mapEntryIndex: new Map<string, ToMapEntryRuntime>(),
     finished: false,
     finisherBefore: null,
     finisherAfter: null,
@@ -421,6 +457,17 @@ interface WalkCtx {
   readonly elementId: ElementId
   readonly path: string[]
   readonly pathLabels: string[]
+  /**
+   * 経路上の各bucket（groupingBy / partitioningByが所有）のnode keyとbucketキー（外側→内側）。
+   * `ExecutionFailureView.bucketPath`の素材。bucketを経由しない配置では空のままになる。
+   */
+  readonly bucketPath: { collectorNodeKey: string; keyLabel: string; keyRef: string }[]
+  /**
+   * 教材上想定された実行失敗（重複キー）。**TypeScript例外ではなく戻り値・状態で伝搬する**
+   * （v0.11 §6.2の2。`EngineInvariantError`経路と完全に分離する）。
+   * 非nullになった時点で、以降のCollector走査（teeing右branch・flatMapping子要素等）を打ち切る。
+   */
+  failure: ExecutionFailureView | null
 }
 
 function enter(ctx: WalkCtx, node: CollectorRuntimeNode, label: string): void {
@@ -444,6 +491,58 @@ function enterBucket(ctx: WalkCtx, bucketNodeKey: string, label: string): void {
   ctx.pathLabels.push(label)
   ctx.rt.currentPath = [...ctx.path]
   ctx.rt.currentPathLabel = ctx.pathLabels.join(' → ')
+}
+
+// ---- Phase 8: toMapの評価・表示補助（v0.11 §4の7・§6.2の8・§8.4、指示§7.8） ----
+
+/** 表示順が教材規約であり、JDK内部の評価順・例外送出順の断定ではないこと（v0.11 §6.2の8） */
+const TO_MAP_DISPLAY_ORDER_NOTE =
+  'この表示順（キー評価 → 値評価 → 重複検出）は教材上の規約であり、JDK内部でのkeyMapper / valueMapper評価と例外送出の実際の順序を示すものではありません。'
+
+/** 挿入がencounter orderであること（Javadoc Implementation Note区分。v0.11 §4の7・§7） */
+const TO_MAP_ENCOUNTER_ORDER_NOTE =
+  'toMapは結果をencounter orderでMapへ挿入します（Javadoc Implementation Note）。返却Mapのentry反復順序そのものはJDKの保証対象ではありません。'
+
+/** mergeFunctionの引数順の根拠（Map.merge契約。v0.11 §3.2） */
+const TO_MAP_MERGE_ARG_ORDER_NOTE =
+  'mergeFunctionの引数順は（Map内の既存値, 新しい値）です。根拠はtoMapのmergeFunctionが「as supplied to Map.merge(Object, Object, BiFunction)」と定義されていることです。'
+
+/** toMapのvalueMapperを評価する（identityは要素そのもの。fieldAccessは既存mapper評価を流用） */
+function evaluateToMapValue(dsl: ToMapValueDsl, value: SimValue): SimValue {
+  if (dsl.kind === 'identity') return value
+  return evaluateMapper({ kind: 'fieldAccess', field: dsl.field } as MapperDsl, value)
+}
+
+/**
+ * mergeFunctionの適用（v0.11 §8.4）。第1引数がMap内の既存値、第2引数が新しい値。
+ * 許可3種はいずれもnullを返さないため、`Map.merge`のnull削除意味論は発生しない（v0.11 §2.2）。
+ */
+function applyToMapMerge(mergeId: ToMapMergeId, existing: SimValue, incoming: SimValue): SimValue {
+  switch (mergeId) {
+    case 'first':
+      return existing
+    case 'last':
+      return incoming
+    case 'concat':
+      return { kind: 'string', value: `${stringOf(existing)}, ${stringOf(incoming)}` }
+  }
+}
+
+/** toMapノードの値型ラベル（結果型`Map<K, U>`のU） */
+function toMapValueTypeLabel(node: CollectorRuntimeNode): string {
+  return node.resultType.kind === 'map' ? formatTypeRef(node.resultType.valueType) : ''
+}
+
+/** toMapのentry表示順（TreeMapは実キー順、順序保証なしのMapは蓄積順） */
+function orderedToMapEntries(node: CollectorRuntimeNode): readonly ToMapEntryRuntime[] {
+  const dsl = node.dsl
+  if (dsl.kind === 'toMap' && dsl.mapFactoryId !== null) {
+    // TreeMapはキーのnatural ordering（String.compareTo = UTF-16コード単位）で並ぶ
+    return [...node.mapEntries].sort((a, b) =>
+      a.keyLabel < b.keyLabel ? -1 : a.keyLabel > b.keyLabel ? 1 : 0,
+    )
+  }
+  return node.mapEntries
 }
 
 /** 蓄積を持つ末端Collectorか（teeing branch rootの発行kind判定に使う） */
@@ -725,6 +824,8 @@ function accumulateNode(
       })
       if (!node.downstream) throw new Error('flatMappingにdownstreamがありません')
       for (const child of children) {
+        // 実行失敗が確定した後は残りの子要素を送出しない（COLLECT_FAILEDが終端。v0.11 §6.2の1）
+        if (ctx.failure !== null) return
         const childValue: SimValue = { kind: 'string', value: child }
         ctx.emit({
           kind: 'CHILD_EMITTED',
@@ -767,6 +868,12 @@ function accumulateNode(
       const bucket = existing ?? addBucket(node, key.ref, key.label, node.inputType)
       node.bucketCreatedByLast = existing === undefined
       enterBucket(ctx, bucket.node.nodeKey, `bucket ${key.label}`)
+      // bucket経由の失敗位置を一意に表すため、bucketの所有ノードとキーを経路へ積む（v0.11 §6.2の9）
+      ctx.bucketPath.push({
+        collectorNodeKey: node.nodeKey,
+        keyLabel: key.label,
+        keyRef: key.ref,
+      })
       ctx.emit({
         kind: 'BUCKET_SELECTED',
         currentElementId: ctx.elementId,
@@ -780,11 +887,10 @@ function accumulateNode(
         currentText: existing
           ? `キー${key.label}の既存bucketが選ばれました（bucket数 ${node.buckets.length}）。`
           : `キー${key.label}のbucketを新規生成しました。Mapが成長し、bucket数は${node.buckets.length}です。`,
-        jdkNote: dsl.mapFactoryId
-          ? `${COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName}はキーの順序性を持つMapです。`
-          : 'groupingByが返すMapの型・可変性・iteration orderはJDKの保証対象ではありません。',
+        jdkNote: bucketDownstreamCreationNote(node, existing === undefined),
       })
       accumulateNode(bucket.node, value, ctx, null)
+      ctx.bucketPath.pop()
       return
     }
     case 'partitioningBy': {
@@ -807,6 +913,7 @@ function accumulateNode(
       if (!bucket) throw new Error('partitioningByのbucketがありません')
       node.bucketCreatedByLast = false
       enterBucket(ctx, bucket.node.nodeKey, `partition ${keyRef}`)
+      ctx.bucketPath.push({ collectorNodeKey: node.nodeKey, keyLabel: keyRef, keyRef })
       ctx.emit({
         kind: 'BUCKET_SELECTED',
         currentElementId: ctx.elementId,
@@ -822,6 +929,118 @@ function accumulateNode(
           'partitioningByの結果Mapはtrue / false両キーを必ず含みます（該当要素が0件でも空のdownstream結果を保持）。キーはwrapper Booleanです。',
       })
       accumulateNode(bucket.node, value, ctx, null)
+      ctx.bucketPath.pop()
+      return
+    }
+    // ---- Phase 8: toMap（v0.11 §6.3、指示§8.1） ----
+    case 'toMap': {
+      enter(ctx, node, 'toMap')
+      const key = classifierKey(dsl.keyMapper, value)
+      // 1. キー評価の確定（groupingBy専用のCLASSIFIER_EVALUATEDは再利用しない）
+      ctx.emit({
+        kind: 'TO_MAP_KEY_EVALUATED',
+        currentElementId: ctx.elementId,
+        processing: {
+          title: 'keyMapper評価',
+          inputLabel: `${name} → ${key.label}`,
+          expression: classifierToJavaExpr(dsl.keyMapper),
+          evaluation: `キー = ${key.label}`,
+          outcome: 'このキーでMapへ蓄積します',
+        },
+        currentText: `keyMapperを評価しました。${name}のキーは${key.label}です。`,
+        jdkNote: TO_MAP_DISPLAY_ORDER_NOTE,
+      })
+      // 2. 値評価の確定（mapping系専用のMAPPING_APPLIEDは再利用しない）
+      const mapped = evaluateToMapValue(dsl.valueMapper, value)
+      const mappedLabel = formatSimValue(mapped)
+      const valueTypeLabel = toMapValueTypeLabel(node)
+      ctx.emit({
+        kind: 'TO_MAP_VALUE_EVALUATED',
+        currentElementId: ctx.elementId,
+        processing: {
+          title: 'valueMapper評価',
+          inputLabel: `${name} → ${mappedLabel}`,
+          expression: toMapValueToJavaExpr(dsl.valueMapper),
+          evaluation: `値 = ${mappedLabel}（${valueTypeLabel}）`,
+          outcome: `キー ${key.label} に対応づける値が確定しました`,
+        },
+        currentText: `valueMapperを評価しました。${describeToMapValue(dsl.valueMapper)}値は${mappedLabel}です。`,
+      })
+      const existing = node.mapEntryIndex.get(key.ref)
+      if (!existing) {
+        // 3a. 初回キー: 新規put
+        const entry: ToMapEntryRuntime = { keyRef: key.ref, keyLabel: key.label, value: mapped }
+        node.mapEntries.push(entry)
+        node.mapEntryIndex.set(key.ref, entry)
+        emitAccumulated(
+          `${key.label} = ${mappedLabel}`,
+          `キー ${key.label} は未登録のため新規に追加します`,
+          `Mapのentry数は${node.mapEntries.length}です`,
+          `キー${key.label}のentryを新規に追加しました（entry数 ${node.mapEntries.length}）。`,
+          TO_MAP_ENCOUNTER_ORDER_NOTE,
+        )
+        return
+      }
+      // 3b. 重複キー: 検出を確定（2引数版・3/4引数版で共通のkind。後続で区別する）
+      const existingLabel = formatSimValue(existing.value)
+      const mergeId = dsl.mergeFunctionId
+      ctx.emit({
+        kind: 'DUPLICATE_KEY_DETECTED',
+        currentElementId: ctx.elementId,
+        processing: {
+          title: '重複キー検出',
+          inputLabel: `重複キー ${key.label}`,
+          expression: node.label,
+          evaluation: `既存値 ${existingLabel} / 新しい値 ${mappedLabel}`,
+          outcome:
+            mergeId === null
+              ? 'mergeFunctionがないため、この時点で実行が失敗します'
+              : `mergeFunction（${TO_MAP_MERGE_META[mergeId].javaExpr}）で衝突を解決します`,
+        },
+        currentText:
+          mergeId === null
+            ? `キー${key.label}が重複しました。既存値は${existingLabel}、新しい値は${mappedLabel}です。2引数版のtoMapにはmergeFunctionがないため、ここで実行が失敗します。`
+            : `キー${key.label}が重複しました。既存値は${existingLabel}、新しい値は${mappedLabel}です。mergeFunctionで衝突を解決します。`,
+        jdkNote: TO_MAP_MERGE_ARG_ORDER_NOTE,
+      })
+      if (mergeId === null) {
+        // 3b-i. 2引数版: 失敗を戻り値・状態でStep Engineへ返す（TypeScript例外は投げない）
+        ctx.failure = {
+          kind: 'DUPLICATE_TO_MAP_KEY',
+          exceptionType: 'IllegalStateException',
+          collectorPath: [...ctx.path],
+          bucketPath: ctx.bucketPath.map((b) => ({ ...b })),
+          duplicateKeyLabel: key.label,
+          duplicateKeyRef: key.ref,
+          existingValueLabel: existingLabel,
+          incomingValueLabel: mappedLabel,
+        }
+        return
+      }
+      // 3b-ii. 3・4引数版: merge結果の「計算」確定（Map更新は含まない）
+      const merged = applyToMapMerge(mergeId, existing.value, mapped)
+      const mergedLabel = formatSimValue(merged)
+      ctx.emit({
+        kind: 'MERGE_FUNCTION_APPLIED',
+        currentElementId: ctx.elementId,
+        processing: {
+          title: 'mergeFunction適用',
+          inputLabel: `mergeFunction(${existingLabel}, ${mappedLabel})`,
+          expression: TO_MAP_MERGE_META[mergeId].javaExpr,
+          evaluation: `${existingLabel}, ${mappedLabel} → ${mergedLabel}`,
+          outcome: `${TO_MAP_MERGE_META[mergeId].meaningLabel}。結果は${mergedLabel}です`,
+        },
+        currentText: `mergeFunctionを適用しました。${describeToMapMerge(mergeId)}第1引数はMap内の既存値（${existingLabel}）、第2引数は新しい値（${mappedLabel}）で、結果は${mergedLabel}です。`,
+        jdkNote: TO_MAP_MERGE_ARG_ORDER_NOTE,
+      })
+      // 3b-iii. Map更新（置換）
+      existing.value = merged
+      emitAccumulated(
+        `${key.label} = ${mergedLabel}`,
+        `${existingLabel} → ${mergedLabel}（merge結果で置換）`,
+        `Mapのentry数は${node.mapEntries.length}のまま変わりません`,
+        `キー${key.label}の値をmerge結果${mergedLabel}へ置換しました（entry数 ${node.mapEntries.length}）。`,
+      )
       return
     }
     case 'teeing': {
@@ -834,6 +1053,11 @@ function accumulateNode(
         ['RIGHT', node.right],
       ]
       for (const [branch, child] of branches) {
+        // 実行失敗が確定した後は残りのbranchを処理しない（COLLECT_FAILEDが終端。v0.11 §6.3）
+        if (ctx.failure !== null) {
+          tee.activeBranch = 'NONE'
+          return
+        }
         tee.activeBranch = branch
         const setState = (state: BranchState): void => {
           if (branch === 'LEFT') tee.leftState = state
@@ -851,6 +1075,12 @@ function accumulateNode(
           // branch内部の蓄積更新は汎用Collector snapshot（この間はACCUMULATING）。
           // branch単位の確定を1件だけ発行する
           accumulateNode(child, value, ctx, null)
+          // 失敗要素ではTEE_BRANCH_ACCUMULATEDを発行しない（v0.11 §6.3）
+          if (ctx.failure !== null) {
+            ctx.pathLabels.length = branchLabelIndex
+            tee.activeBranch = 'NONE'
+            return
+          }
           setState('ACCUMULATED')
           ctx.emit({
             kind: 'TEE_BRANCH_ACCUMULATED',
@@ -871,6 +1101,48 @@ function accumulateNode(
       return
     }
   }
+}
+
+/**
+ * adapter系（mapping / flatMapping / filtering / collectingAndThen）の連なりを辿った
+ * **実効コンテナノード**を返す（v0.11 §6.3「adapter系はコンテナ・bucketを持たず外側の配置へ委譲する」）。
+ * `CONTAINER_CREATED`のroot判定（指示§8.1-1）とdownstream Map生成表示の判定で共有する。
+ */
+function effectiveContainerNode(node: CollectorRuntimeNode | null): CollectorRuntimeNode | null {
+  let current = node
+  while (current !== null) {
+    switch (current.dsl.kind) {
+      case 'mapping':
+      case 'flatMapping':
+      case 'filtering':
+      case 'collectingAndThen':
+        current = current.downstream
+        break
+      default:
+        return current
+    }
+  }
+  return null
+}
+
+/**
+ * bucketのdownstreamがtoMapのとき、そのMap生成をbucket決定事象のcontextで表す
+ * （v0.11 §6.3の親種別表。独立の`CONTAINER_CREATED`は追加しない）。
+ */
+function downstreamMapCreationNote(node: CollectorRuntimeNode | null): string | null {
+  const target = effectiveContainerNode(node)
+  if (!target || target.dsl.kind !== 'toMap') return null
+  return `このbucketのdownstream Map（${mapContainerLabel(target)}）はbucket生成と同時に用意されます（独立のCONTAINER_CREATEDは発行しません）。`
+}
+
+/** groupingByのBUCKET_SELECTEDに載せるjdkNote（新規生成時のみdownstream Map生成表示を加える） */
+function bucketDownstreamCreationNote(node: CollectorRuntimeNode, createdNow: boolean): string {
+  const dsl = node.dsl as Extract<CollectorDsl, { kind: 'groupingBy' }>
+  const base = dsl.mapFactoryId
+    ? `${COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName}はキーの順序性を持つMapです。`
+    : 'groupingByが返すMapの型・可変性・iteration orderはJDKの保証対象ではありません。'
+  const downstreamNote = createdNow ? downstreamMapCreationNote(node.downstream) : null
+  return downstreamNote === null ? base : `${base}${downstreamNote}`
 }
 
 function classifierKey(classifier: ClassifierDsl, value: SimValue): { ref: string; label: string } {
@@ -945,21 +1217,35 @@ function accumulationSummary(node: CollectorRuntimeNode): string {
       return view.candidateLabel ?? '候補なし'
     case 'MAP':
       return `${view.containerLabel}（${view.size}件）`
+    case 'TO_MAP':
+      return `${view.containerLabel}（entry ${view.entries.length}件）`
   }
 }
 
 /**
  * 要素1件をCollectorへ流し込む（Step Engineから呼ぶ）。
  * NODE_ARRIVALはStep Engine側で発行し、ここでは経路・蓄積のsnapshotを発行する。
+ *
+ * 戻り値は**教材上想定された実行失敗**（toMap 2引数版の重複キー）の構造化view。
+ * 失敗しなかった場合はnull。**TypeScript例外は投げない**（v0.11 §6.2の2）。
  */
 export function collectorAccumulate(
   rt: CollectorRuntime,
   elementId: ElementId,
   value: SimValue,
   emit: CollectorEmit,
-): void {
-  const ctx: WalkCtx = { emit, rt, elementId, path: [], pathLabels: [shortLabel(value)] }
+): ExecutionFailureView | null {
+  const ctx: WalkCtx = {
+    emit,
+    rt,
+    elementId,
+    path: [],
+    pathLabels: [shortLabel(value)],
+    bucketPath: [],
+    failure: null,
+  }
   accumulateNode(rt.root, value, ctx, null)
+  return ctx.failure
 }
 
 // ---- finisher / merger（finish cascade段階。指示§9.1発行表・§9.3） ----
@@ -1282,9 +1568,26 @@ function accumulationView(node: CollectorRuntimeNode): CollectorAccumulationView
     case 'groupingBy':
     case 'partitioningBy':
       return { kind: 'MAP', containerLabel: mapContainerLabel(node), size: node.buckets.length }
+    case 'toMap':
+      return {
+        kind: 'TO_MAP',
+        containerLabel: mapContainerLabel(node),
+        entries: toMapEntryViews(node),
+      }
     default:
       return { kind: 'NONE' }
   }
+}
+
+/** toMapのentry view（蓄積順。TreeMapは実キー順。UIは並べ替えない。指示§7.5-3） */
+function toMapEntryViews(node: CollectorRuntimeNode): readonly ToMapEntryView[] {
+  const valueTypeLabel = toMapValueTypeLabel(node)
+  return orderedToMapEntries(node).map((entry) => ({
+    keyLabel: entry.keyLabel,
+    keyRef: entry.keyRef,
+    valueLabel: formatSimValue(entry.value),
+    valueTypeLabel,
+  }))
 }
 
 function mapContainerLabel(node: CollectorRuntimeNode): string {
@@ -1292,14 +1595,36 @@ function mapContainerLabel(node: CollectorRuntimeNode): string {
   if (dsl.kind === 'groupingBy' && dsl.mapFactoryId !== null) {
     return COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName
   }
+  if (dsl.kind === 'toMap' && dsl.mapFactoryId !== null) {
+    return COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName
+  }
   return 'Map'
 }
 
 function mapIsJdkOrdered(node: CollectorRuntimeNode): boolean {
   const dsl = node.dsl
-  return dsl.kind === 'groupingBy' && dsl.mapFactoryId !== null
-    ? COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].jdkOrdered
-    : false
+  if (dsl.kind === 'groupingBy' && dsl.mapFactoryId !== null) {
+    return COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].jdkOrdered
+  }
+  if (dsl.kind === 'toMap' && dsl.mapFactoryId !== null) {
+    return COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].jdkOrdered
+  }
+  return false
+}
+
+/** toMapノードの構造4行view（v0.11 §5、指示§7.5-4）。省略行は意味論表示の確定文言を持つ */
+function toMapView(node: CollectorRuntimeNode): CollectorToMapView | null {
+  const dsl = node.dsl
+  if (dsl.kind !== 'toMap') return null
+  const mergeMeta = dsl.mergeFunctionId === null ? null : TO_MAP_MERGE_META[dsl.mergeFunctionId]
+  return {
+    keyMapperLabel: classifierToJavaExpr(dsl.keyMapper),
+    valueMapperLabel: toMapValueToJavaExpr(dsl.valueMapper),
+    mergeFunctionLabel: mergeMeta === null ? TO_MAP_NO_MERGE_LABEL : mergeMeta.javaExpr,
+    mergeMeaningLabel: mergeMeta === null ? null : mergeMeta.meaningLabel,
+    mapFactoryLabel: dsl.mapFactoryId ?? TO_MAP_NO_MAP_FACTORY_LABEL,
+    arity: toMapArity(dsl),
+  }
 }
 
 /** ノードの現在（または確定）結果の表示ラベル */
@@ -1358,6 +1683,12 @@ function resultLabelOf(node: CollectorRuntimeNode): string {
       const fields = node.tee?.finalFields
       if (!fields) return `${record.recordName}（merger未適用）`
       return `${record.recordName}[${fields.map((f) => `${f.name}=${f.valueLabel}`).join(', ')}]`
+    }
+    case 'toMap': {
+      const entries = orderedToMapEntries(node).map(
+        (entry) => `${entry.keyLabel}=${formatSimValue(entry.value)}`,
+      )
+      return `{${entries.join(', ')}}`
     }
   }
 }
@@ -1432,6 +1763,7 @@ function nodeView(node: CollectorRuntimeNode, activeKeys: ReadonlySet<string>): 
       }),
     ),
     teeing: teeingView(node),
+    toMap: toMapView(node),
   }
 }
 
@@ -1583,6 +1915,31 @@ function nodeResultView(node: CollectorRuntimeNode, isRoot: boolean): TerminalRe
         fields: fields.map((f) => ({ name: f.name, typeLabel: f.typeLabel, valueLabel: f.valueLabel })),
       }
     }
+    case 'toMap': {
+      // 既存MAP variantを再利用する（値は1件のスカラー相当。groupingByのようなList値ではない）
+      const jdkOrdered = mapIsJdkOrdered(node)
+      const valueTypeLabel = toMapValueTypeLabel(node)
+      const entries: CollectorMapEntryView[] = orderedToMapEntries(node).map((entry) => ({
+        keyLabel: entry.keyLabel,
+        keyRef: entry.keyRef,
+        value: {
+          kind: 'SCALAR',
+          typeLabel: valueTypeLabel,
+          valueLabel: formatSimValue(entry.value),
+        },
+      }))
+      const resultType = node.resultType
+      return {
+        kind: 'MAP',
+        containerLabel: mapContainerLabel(node),
+        keyTypeLabel: resultType.kind === 'map' ? formatTypeRef(resultType.keyType) : '',
+        valueTypeLabel,
+        size: entries.length,
+        entries,
+        jdkOrdered,
+        displayOrderNote: jdkOrdered ? null : DISPLAY_ORDER_NOTE,
+      }
+    }
   }
 }
 
@@ -1601,9 +1958,19 @@ export function collectorUsesOutputItems(rt: CollectorRuntime): boolean {
  * `CONTAINER_CREATED`（supplier適用）を実行開始時に発行するか。
  * 3引数collectでは必須（§9.1規則6）。toCollectionもコンテナsupplier IDの可視化が
  * 教材ポイントであるため発行する（実装判断。docs/phase-5-decisions.md §13）。
+ *
+ * Phase 8: **root配置の4引数版toMap**（`TreeMap::new`指定あり）を加算する（v0.11 §6.1・§6.3）。
+ * 判定は`rt.root.dsl.kind`だけを見ず、adapter系（mapping / flatMapping / filtering /
+ * collectingAndThen）の連なりを辿った**実効rootコンテナ**で行う。単純にrootのkindだけを
+ * 見ると`filtering(…, toMap(…, TreeMap::new))`等のroot adapter経由を取り逃す（指示§8.1-1）。
+ * 2・3引数版のroot、およびbucket / branch内のdownstream配置では発行しない。
  */
 export function collectorNeedsContainerCreated(rt: CollectorRuntime): boolean {
-  return rt.op === 'collectTriple' || rt.root.dsl.kind === 'toCollection'
+  if (rt.op === 'collectTriple') return true
+  // 既存対象（toCollection）の発行規則は変更しない（rootのkindで判定する）
+  if (rt.root.dsl.kind === 'toCollection') return true
+  const effective = effectiveContainerNode(rt.root)
+  return effective?.dsl.kind === 'toMap' && effective.dsl.mapFactoryId !== null
 }
 
 /** Collector経路の深さ（rootのみを通っているか。root levelのコンテナ更新判定用） */
@@ -1618,7 +1985,11 @@ export function collectorFinalLabel(rt: CollectorRuntime): string {
 
 /** 3引数collectのsupplier適用（CONTAINER_CREATED）。root levelのコンテナ生成で使用する。 */
 export function collectorCreateContainer(rt: CollectorRuntime, emit: CollectorEmit): void {
-  const node = rt.root
+  // adapter系経由のroot配置（filtering(…, toMap(…, TreeMap::new))等）では実効rootコンテナが対象
+  const node =
+    rt.op === 'collectTriple' || rt.root.dsl.kind === 'toCollection'
+      ? rt.root
+      : (effectiveContainerNode(rt.root) ?? rt.root)
   if (node.containerCreated) return
   node.containerCreated = true
   const supplierExpr =
@@ -1626,7 +1997,9 @@ export function collectorCreateContainer(rt: CollectorRuntime, emit: CollectorEm
       ? (rt.triple?.supplierId ?? '')
       : node.dsl.kind === 'toCollection'
         ? node.dsl.supplierId
-        : ''
+        : node.dsl.kind === 'toMap'
+          ? (node.dsl.mapFactoryId ?? '')
+          : ''
   emit({
     kind: 'CONTAINER_CREATED',
     currentElementId: null,

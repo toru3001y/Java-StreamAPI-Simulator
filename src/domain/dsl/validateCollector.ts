@@ -1,8 +1,16 @@
 import type { Result, ValidationIssue } from '../types/result'
 import { fail, issue, ok } from '../types/result'
 import type { DslPredicate } from './ast'
-import type { ClassifierDsl, CollectTripleDsl, CollectorDsl } from './collectorAst'
+import type {
+  ClassifierDsl,
+  CollectTripleDsl,
+  CollectorDsl,
+  ToMapValueDsl,
+} from './collectorAst'
 import {
+  TO_MAP_MERGE_IDS,
+  TO_MAP_MERGE_META,
+  TO_MAP_VALUE_KINDS,
   CLASSIFIER_DEPARTMENT_FIELDS,
   CLASSIFIER_DSL_KINDS,
   CLASSIFIER_EMPLOYEE_FIELDS,
@@ -73,6 +81,14 @@ const COLLECTOR_ALLOWED_KEYS: Readonly<Record<string, readonly string[]>> = {
   groupingBy: ['kind', 'classifier', 'mapFactoryId', 'downstream'],
   partitioningBy: ['kind', 'predicate', 'downstream'],
   teeing: ['kind', 'left', 'right', 'mergerId'],
+  // Phase 8: toMapは5キー厳密（引数省略はoptional keyではなく明示nullで表す。v0.11 §8）
+  toMap: ['kind', 'keyMapper', 'valueMapper', 'mergeFunctionId', 'mapFactoryId'],
+}
+
+/** ToMapValueDslのvariantごとの許可キー集合（closed schema。指示§7.3-1） */
+const TO_MAP_VALUE_ALLOWED_KEYS: Readonly<Record<string, readonly string[]>> = {
+  identity: ['kind'],
+  fieldAccess: ['kind', 'field'],
 }
 
 const CLASSIFIER_ALLOWED_KEYS: Readonly<Record<string, readonly string[]>> = {
@@ -164,6 +180,57 @@ export function validateClassifierStructure(
   }
   if (issues.length > 0) return fail(issues)
   return ok(input as ClassifierDsl)
+}
+
+/**
+ * toMapのvalueMapper（`ToMapValueDsl`）の構造検証（指示§7.3-7）。
+ *
+ * **専用実装**であり、`validateMapper.ts`の許可範囲は一切参照・変更しない。
+ * `fieldAccess`のfieldホワイトリストは既存`EMPLOYEE_FIELDS`参照と同一範囲とする。
+ */
+export function validateToMapValueStructure(
+  input: unknown,
+  path = 'valueMapper',
+): Result<ToMapValueDsl> {
+  if (typeof input !== 'object' || input === null) {
+    return fail([issue('STRUCTURE_INVALID', 'valueMapperはオブジェクトが必要です', path)])
+  }
+  const obj = input as Record<string, unknown>
+  const kind = String(obj['kind'])
+  if (!(TO_MAP_VALUE_KINDS as readonly string[]).includes(kind)) {
+    return fail([
+      issue(
+        'STRUCTURE_UNKNOWN_KIND',
+        `toMapのvalueMapperで許可されていないkindです: ${kind}（許可: ${TO_MAP_VALUE_KINDS.join(' / ')}）`,
+        `${path}.kind`,
+      ),
+    ])
+  }
+  const issues = unknownFieldIssues(obj, TO_MAP_VALUE_ALLOWED_KEYS[kind] ?? ['kind'], path)
+  if (kind === 'fieldAccess') {
+    const field = String(obj['field'])
+    if (!(field in EMPLOYEE_FIELDS)) {
+      issues.push(
+        issue('WHITELIST_FIELD', `Employeeに存在しないfieldです: ${field}`, `${path}.field`),
+      )
+    }
+  }
+  if (issues.length > 0) return fail(issues)
+  return ok(input as ToMapValueDsl)
+}
+
+/**
+ * toMapのvalueMapper出力型（値型U）を解決する（指示§7.3-6）。
+ * `identity`はU = 入力要素型（Employee）。`fieldAccess`は既存`resolveMapperOutputType`を
+ * 流用する（primitive fieldはwrapper型へboxing済み。`salary` → `Long`等）。
+ */
+export function resolveToMapValueType(
+  dsl: ToMapValueDsl,
+  inputType: TypeRef,
+  path = 'valueMapper',
+): Result<TypeRef> {
+  if (dsl.kind === 'identity') return ok(inputType)
+  return resolveMapperOutputType({ kind: 'fieldAccess', field: dsl.field }, inputType, path)
 }
 
 // ---- Collectorへ埋め込む既存DSLのclosed schema（指示§7.1） ----
@@ -461,6 +528,49 @@ export function validateCollectorStructure(
     }
   }
 
+  // ---- Phase 8: toMap（v0.11 §8.1、指示§7.3） ----
+  if (kind === 'toMap') {
+    issues.push(...delegateIssues(validateClassifierStructure(obj['keyMapper'], `${path}.keyMapper`)))
+    issues.push(
+      ...delegateIssues(validateToMapValueStructure(obj['valueMapper'], `${path}.valueMapper`)),
+    )
+    const mergeFunctionId = obj['mergeFunctionId']
+    if (mergeFunctionId !== null) {
+      if (!(TO_MAP_MERGE_IDS as readonly string[]).includes(String(mergeFunctionId))) {
+        issues.push(
+          issue(
+            'WHITELIST_KIND',
+            `許可されていないtoMapのmergeFunction IDです: ${String(mergeFunctionId)}（許可: ${TO_MAP_MERGE_IDS.join(' / ')}）`,
+            `${path}.mergeFunctionId`,
+          ),
+        )
+      }
+    }
+    const mapFactoryId = obj['mapFactoryId']
+    if (mapFactoryId !== null) {
+      if (!(COLLECTOR_MAP_FACTORY_IDS as readonly string[]).includes(String(mapFactoryId))) {
+        issues.push(
+          issue(
+            'WHITELIST_KIND',
+            `許可されていないmapFactory IDです: ${String(mapFactoryId)}`,
+            `${path}.mapFactoryId`,
+          ),
+        )
+      }
+      // overload組合せ: mapFactoryあり かつ mergeFunctionなしに対応するJava overloadは存在しない
+      // （toMapのoverloadは2引数 / 3引数 / 4引数の3形のみ。v0.11 §2.1・§8.1）
+      if (mergeFunctionId === null) {
+        issues.push(
+          issue(
+            'STRUCTURE_INVALID',
+            'toMapにmapFactoryを指定する場合はmergeFunctionが必要です（keyMapper, valueMapper, mapFactoryの3引数overloadはJavaに存在しません）',
+            `${path}.mergeFunctionId`,
+          ),
+        )
+      }
+    }
+  }
+
   if (kind === 'teeing') {
     if (!(TEEING_MERGER_IDS as readonly string[]).includes(String(obj['mergerId']))) {
       issues.push(
@@ -726,6 +836,43 @@ export function resolveCollectorType(
       if (!valueType.ok) return valueType
       // キーはwrapper Boolean（primitive booleanと混同しない。指示§6.3-1）
       return ok(mapOf(TYPE_BOOLEAN_WRAPPER, valueType.value))
+    }
+    case 'toMap': {
+      // keyMapper（ClassifierDsl）はEmployee入力を要求するため、toMapを配置できるのは
+      // 入力要素型がEmployeeであるslotに限られる（v0.11 §8.6。mapping配下等はTYPE_MISMATCH）
+      const keyType = resolveClassifierKeyType(dsl.keyMapper, inputType, `${path}.keyMapper`)
+      if (!keyType.ok) return keyType
+      const valueType = resolveToMapValueType(dsl.valueMapper, inputType, `${path}.valueMapper`)
+      if (!valueType.ok) return valueType
+      const issues: ValidationIssue[] = []
+      if (dsl.mergeFunctionId !== null) {
+        const meta = TO_MAP_MERGE_META[dsl.mergeFunctionId]
+        // concatは値型U = Stringのときのみ受理する（v0.11 §8.4）
+        if (meta?.requiresString && !isStringType(valueType.value)) {
+          issues.push(
+            issue(
+              'TYPE_MISMATCH',
+              `mergeFunction ${dsl.mergeFunctionId}（${meta.javaExpr}）はString値にのみ適用できます: ${formatTypeRef(valueType.value)}`,
+              `${path}.mergeFunctionId`,
+            ),
+          )
+        }
+      }
+      if (dsl.mapFactoryId !== null) {
+        // ComparatorなしのTreeMapはComparableなキーを要求する（既存規則の流用。指示§7.3-4）
+        const meta = COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId]
+        if (meta?.jdkOrdered && !COMPARABLE_CLASSIFIER_KINDS.includes(dsl.keyMapper.kind)) {
+          issues.push(
+            issue(
+              'TYPE_MISMATCH',
+              `${dsl.mapFactoryId}（Comparatorなし）はComparableでないキー（${dsl.keyMapper.kind}）と組み合わせられません`,
+              `${path}.mapFactoryId`,
+            ),
+          )
+        }
+      }
+      if (issues.length > 0) return fail(issues)
+      return ok(mapOf(keyType.value, valueType.value))
     }
     case 'teeing': {
       const left = resolveCollectorType(dsl.left, inputType, `${path}.left`)

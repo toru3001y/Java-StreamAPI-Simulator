@@ -1,4 +1,5 @@
 import type { DslPredicate } from './ast'
+import type { ToMapMergeId, ToMapValueDsl } from './collectorAst'
 import type { ComparatorDsl } from './comparatorAst'
 import type { ConsumerDsl } from './consumerAst'
 import type { MapperDsl } from './mapperAst'
@@ -99,6 +100,33 @@ export function describeMapper(mapper: MapperDsl): string {
       return 'Listの要素を1件ずつ送出するmapped Streamへ展開します'
     case 'arrayStream':
       return `${mapper.primitive}配列の要素を1件ずつ送出するmapped Streamへ展開します`
+  }
+}
+
+/**
+ * toMapのvalueMapperの自然文説明（Phase 8指示 §7.4）。
+ * `identity`は公式API Note（v0.11 §3.1）の「キーか値のどちらかを要素そのものにする典型形」。
+ */
+export function describeToMapValue(dsl: ToMapValueDsl): string {
+  if (dsl.kind === 'identity') {
+    return 'Function.identity()により要素そのものを値にします。'
+  }
+  return `Employeeの${dsl.field}()を値として取り出します。`
+}
+
+/**
+ * toMapのmergeFunctionの自然文説明（v0.11 §8.4、Phase 8指示 §7.8）。
+ * 「先勝ち / 後勝ち」だけにせず、意味論ラベルを併記する。
+ * 「先 / 後」は現在の決定的な逐次実行における入力順を指す（v0.11 §4の7）。
+ */
+export function describeToMapMerge(mergeId: ToMapMergeId): string {
+  switch (mergeId) {
+    case 'first':
+      return '既存値を保持（先勝ち）します。ここでの「先」は現在の決定的な逐次実行における入力順を指します。'
+    case 'last':
+      return '新しい値で置換（後勝ち）します。ここでの「後」は現在の決定的な逐次実行における入力順を指します。'
+    case 'concat':
+      return '既存値と新しい値を", "で連結します。'
   }
 }
 

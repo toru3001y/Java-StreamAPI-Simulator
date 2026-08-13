@@ -6,12 +6,15 @@
   1. v0.8 docx がバイト単位で不変であること
   2. ZIP/XML整合（全part存在・XMLとしてパース可能・styleとnumIdが定義済み）
   3. 差分の限定（v0.8の本文要素が削除されていないこと・変更要素が想定どおりであること）
-  4. 転記の網羅性（差分mdの全ブロックが第26/27章に存在すること）
-  5. §参照の健全性（全参照が実在する見出しを指すこと）
+  4. 転記の網羅性（差分mdの全ブロックが第26/27/28章に存在すること）
+  5. §参照の健全性（全参照が実在する見出しを指すこと。リポジトリ文書への§参照は文脈除外）
 
 使い方:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
-      --v09 <v0.9.md> [--v10 <v0.10.md>] [--dump <章本文の書き出し先>]
+      --v09 <v0.9.md> [--v10 <v0.10.md>] [--v11 <v0.11.md>] [--dump <章本文の書き出し先>]
+
+  --v11 には --v10 が必要（ビルダーと同じ依存関係。v0.11統合docxは第27章を含むため、
+  --v10 を省略すると第27章の転記検証が抜けたまま合格し得る）。
 """
 
 import argparse
@@ -24,7 +27,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
-from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10,
+from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10, EXC_V11,
                              V10_MAPPING_HEADER, tokenize_inline)
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
@@ -45,7 +48,6 @@ EXPECTED_CHANGES = [
     '区分主な内容識別snapshot ID',                     # §12.3 Snapshot構造表
     '操作内部状態distinct既出値',                       # §12.5 操作固有状態表
     '対象可視化仕様filter値取得',                       # §14.1 中間操作表
-    'Phase実装内容完了条件1React + TS + Vite',        # §20 Phase表（Phase 7行）
     'メソッド優先度filter()高map()高mapToInt()',       # 付録A.2
     '操作0件時の表示Stream.toList()',                  # 付録B
     '可視化パターン対象生成元型Collection.stream',       # 付録C
@@ -114,9 +116,21 @@ def main():
     ap.add_argument('--out', required=True)
     ap.add_argument('--v09', required=True)
     ap.add_argument('--v10')
+    ap.add_argument('--v11')
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
+
+    if args.v11 and not args.v10:
+        raise SystemExit('--v11 には --v10 が必要です（省略すると第27章の転記検証が抜ける）')
+
+    if args.v10:
+        # §20 Phase表へのPhase 7行追加はapply_v10_pointers（--v10指定時）だけが行う。
+        # 無条件に期待するとv0.9単独版の検証が常に偽陽性で不合格になる
+        EXPECTED_CHANGES.append('Phase実装内容完了条件1React + TS + Vite')
+    if args.v11:
+        # v0.11は付録A.4（Collector / Collectors表）へも行を追加する
+        EXPECTED_CHANGES.append('メソッド優先度Collectors.toList() / toSet()')
 
     print('=== 1. v0.8 docx の不変性 ===')
     sha = hashlib.sha256(open(args.base, 'rb').read()).hexdigest()
@@ -199,20 +213,28 @@ def main():
     ch_start = {}
     for idx, rec in enumerate(texts):
         if rec[0] == 'p' and rec[2] == 'Heading1':
-            if re.match(r'^(26|27)\. ', rec[1]):
+            if re.match(r'^(26|27|28)\. ', rec[1]):
                 ch_start[rec[1][:2]] = idx
             elif rec[1].startswith('付録A'):
                 ch_start['付録'] = idx
-    for ch, mdpath in (('26', args.v09), ('27', args.v10)):
+    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11}
+    next_ch = {'26': '27', '27': '28', '28': None}
+    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11)):
         if not mdpath:
             continue
         start = ch_start[ch]
-        end = ch_start.get('27') if ch == '26' else ch_start.get('付録', len(texts))
+        end = None
+        nc = next_ch[ch]
+        while nc and end is None:
+            end = ch_start.get(nc)
+            nc = next_ch[nc]
+        if end is None:
+            end = ch_start.get('付録', len(texts))
         seg = texts[start:end]
         segtext = '\n'.join(t[1] if t[0] == 'p' else
                             '\n'.join('|'.join(r) for r in t[1]) for t in seg)
         blocks = parse_markdown(open(mdpath, encoding='utf-8').read())
-        res = RefResolver(int(ch), EXC_V09 if ch == '26' else EXC_V10)
+        res = RefResolver(int(ch), exc_map[ch])
         missing, n_items, n_rows, n_para, n_head = [], 0, 0, 0, 0
         for b in blocks:
             if b['k'] == 'h':
@@ -278,6 +300,10 @@ def main():
                         '\n'.join('|'.join(r) for r in t[1]) for t in texts)
     refs = {}
     for m in re.finditer(r'§(\d+(?:\.\d+)*)', alltext):
+        # リポジトリ文書（docs/phase-5-decisions.md等）への§参照は本書の節番号ではない
+        ctx = alltext[max(0, m.start() - 30):m.start()]
+        if 'decisions.md' in ctx or ctx.endswith('Phase 5 '):
+            continue
         refs.setdefault(m.group(1), 0)
         refs[m.group(1)] += 1
     bad = sorted(r for r in refs if r not in valid)

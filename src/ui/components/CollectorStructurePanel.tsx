@@ -89,7 +89,80 @@ function AccumulationView({ accumulation }: { accumulation: CollectorAccumulatio
           bucket数: <code>{accumulation.size}</code>
         </p>
       )
+    // ---- Phase 8: toMapのentry蓄積（キー → 値1件。groupingByのbucket Listとの視覚差が対比の核） ----
+    case 'TO_MAP':
+      return (
+        <div
+          className="collector-accumulation collector-acc-tomap"
+          data-testid="collector-acc-tomap"
+          data-container={accumulation.containerLabel}
+        >
+          <span className="collector-acc-label">{accumulation.containerLabel}</span>
+          entry数: <code>{accumulation.entries.length}</code>
+          {accumulation.entries.length === 0 ? (
+            <code className="empty-note">{'{}'}</code>
+          ) : (
+            <ul className="tomap-entries" data-testid="collector-tomap-entries">
+              {/* 蓄積順（TreeMapは実キー順）で確定済み。UIは並べ替えない（指示§7.5-3） */}
+              {accumulation.entries.map((entry) => (
+                <li key={entry.keyRef} data-key-ref={entry.keyRef}>
+                  <span className="map-key">{entry.keyLabel}</span>
+                  <span className="map-arrow" aria-hidden="true">
+                    {' = '}
+                  </span>
+                  <code>{entry.valueLabel}</code>
+                  <span className="scalar-type">（{entry.valueTypeLabel}）</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )
   }
+}
+
+/**
+ * toMapノードの構造4行（keyMapper / valueMapper / mergeFunction / mapFactory）。
+ * 省略overloadの行も常設し、意味論表示の確定文言（snapshot側で確定）を描画する（v0.11 §5）。
+ */
+function ToMapStructureView({ node }: { node: CollectorNodeView }) {
+  const toMap = node.toMap
+  if (!toMap) return null
+  return (
+    <table className="stats-table collector-tomap" data-testid="collector-tomap" data-arity={toMap.arity}>
+      <tbody>
+        <tr>
+          <th scope="row">keyMapper</th>
+          <td data-testid="tomap-key-mapper">
+            <code>{toMap.keyMapperLabel}</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">valueMapper</th>
+          <td data-testid="tomap-value-mapper">
+            <code>{toMap.valueMapperLabel}</code>
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">mergeFunction</th>
+          <td data-testid="tomap-merge-function">
+            <code>{toMap.mergeFunctionLabel}</code>
+            {toMap.mergeMeaningLabel !== null && (
+              <span className="scalar-type" data-testid="tomap-merge-meaning">
+                （{toMap.mergeMeaningLabel} / 引数順は(Map内の既存値, 新しい値)）
+              </span>
+            )}
+          </td>
+        </tr>
+        <tr>
+          <th scope="row">mapFactory</th>
+          <td data-testid="tomap-map-factory">
+            <code>{toMap.mapFactoryLabel}</code>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  )
 }
 
 function TeeingView({ node }: { node: CollectorNodeView }) {
@@ -174,6 +247,7 @@ function CollectorNode({ node, depth }: { node: CollectorNodeView; depth: number
           {node.inputTypeLabel} → {node.resultTypeLabel}
         </span>
       </div>
+      <ToMapStructureView node={node} />
       <AccumulationView accumulation={node.accumulation} />
       {node.finisher && (
         <p className="collector-finisher" data-testid="collector-finisher" data-state={node.finisher.state}>

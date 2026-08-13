@@ -1,6 +1,11 @@
 import type { DslPredicate } from './ast'
-import type { ClassifierDsl, CollectTripleDsl, CollectorDsl } from './collectorAst'
-import { TEEING_MERGER_RECORDS } from './collectorAst'
+import type {
+  ClassifierDsl,
+  CollectTripleDsl,
+  CollectorDsl,
+  ToMapValueDsl,
+} from './collectorAst'
+import { TEEING_MERGER_RECORDS, TO_MAP_MERGE_META } from './collectorAst'
 import type { ComparatorDsl, ComparatorKey } from './comparatorAst'
 import { COMPARATOR_FIELD_JAVA_KIND } from './comparatorAst'
 import type { ConsumerDsl } from './consumerAst'
@@ -367,7 +372,24 @@ export function collectorToJavaExpr(dsl: CollectorDsl): string {
     }
     case 'teeing':
       return `Collectors.teeing(${collectorToJavaExpr(dsl.left)}, ${collectorToJavaExpr(dsl.right)}, ${dsl.mergerId})`
+    case 'toMap': {
+      // Phase 8指示 §7.4: 2引数版 = keyMapper, valueMapper / 3引数版 = + mergeFunction /
+      // 4引数版 = + mapFactory。省略引数は表示しない（overload形がそのまま読める）
+      const args = [classifierToJavaExpr(dsl.keyMapper), toMapValueToJavaExpr(dsl.valueMapper)]
+      if (dsl.mergeFunctionId !== null) args.push(TO_MAP_MERGE_META[dsl.mergeFunctionId].javaExpr)
+      if (dsl.mapFactoryId !== null) args.push(dsl.mapFactoryId)
+      return `Collectors.toMap(${args.join(', ')})`
+    }
   }
+}
+
+/**
+ * toMapのvalueMapper式（Phase 8指示 §7.4）。
+ * `identity`は公式API Note（v0.11 §3.1）の`Function.identity()`、
+ * `fieldAccess`は既存mapperのJava表記（`Employee::name`等）を流用する。
+ */
+export function toMapValueToJavaExpr(dsl: ToMapValueDsl): string {
+  return dsl.kind === 'identity' ? 'Function.identity()' : `Employee::${dsl.field}`
 }
 
 /** 3引数collectの引数列（例: ArrayList::new, ArrayList::add, ArrayList::addAll） */
@@ -397,7 +419,8 @@ export function mapperToJavaExpr(mapper: MapperDsl): string {
 export function sourceToJavaExpr(source: SourceDsl): string {
   switch (source.kind) {
     case 'collection':
-      return 'employees.stream()'
+      // collectionIdをJava変数名としてそのまま用いる（既存'employees'の表示は不変。指示§7.6）
+      return `${source.collectionId}.stream()`
     case 'arrayObject':
       return `Arrays.stream(${source.arrayId})`
     case 'arrayPrimitive':
@@ -563,8 +586,9 @@ function sourceDeclLines(source: SourceDsl, employeeDataset: readonly DatasetEle
   switch (source.kind) {
     case 'collection': {
       const lines: string[] = [...RECORD_LINES, '']
+      const varName = source.collectionId
       if (employeeDataset.length === 0) {
-        lines.push('List<Employee> employees = List.of();')
+        lines.push(`List<Employee> ${varName} = List.of();`)
         return lines
       }
       const departmentVars = assignDepartmentVarNames(employeeDataset)
@@ -580,7 +604,7 @@ function sourceDeclLines(source: SourceDsl, employeeDataset: readonly DatasetEle
           `Department ${varName} = new Department(${javaStringLiteral(department.name)}, ${javaStringLiteral(department.division)});`,
         )
       }
-      lines.push('List<Employee> employees = List.of(')
+      lines.push(`List<Employee> ${varName} = List.of(`)
       employeeDataset.forEach((element, i) => {
         lines.push(
           ...employeeConstructorLines(

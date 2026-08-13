@@ -5,9 +5,11 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
 - 基準仕様: `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`（Draft v0.8 / Java SE 25基準）
   + `docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`（v0.10 / Phase 6手動連携差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`（v0.9 / Phase 7 Gatherers差分）
-  + `docs/Java_Stream_API_Visualization_Spec_v0.10.docx`（上記3文書の統合ビルド。閲覧用。正は各原本）
-- 実装状況: **Phase 7 完了**（Gatherers。`Stream.gather` と組み込み4種の縦断実装。
-  詳細は `docs/phase-7-completion-report.md`）
+  + `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md`（v0.11 / Phase 8 Collectors.toMap差分）
+  + `docs/Java_Stream_API_Visualization_Spec_v0.11.docx`（上記4文書の統合ビルド。閲覧用。正は各原本）
+- 実装状況: **Phase 8（Collectors.toMap）実装済み・未完了判定**（3 overloadの縦断実装と実行失敗契約は
+  成立。teeing branchへのtoMap配置のみ現行merger whitelistの型制約により実施できず未実装。
+  詳細は `docs/phase-8-completion-report.md`）
 - J-2（`Collectors.teeing` の左右2系統と処理中要素数の関係）は Phase 5着手前に仕様確定し、本体へ実装済み
   （`docs/phase-5-decisions.md`。teeingでも「処理中要素は最大1件」の例外なし）
 - Phase 6でAI API接続（サーバーAPI・AI adapter・RemoteScenarioProvider）は**廃止**し、**手動連携方式**へ置換した
@@ -16,10 +18,11 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   `docs/Claude_Code_Phase2_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase5_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase6_Implementation_Instructions.md` /
-  `docs/Claude_Code_Phase7_Implementation_Instructions.md`
+  `docs/Claude_Code_Phase7_Implementation_Instructions.md` /
+  `docs/Claude_Code_Phase8_Implementation_Instructions.md`
   （Phase 3 / Phase 4の指示書は、指示書自身の複製禁止規定によりリポジトリへ含めていない）
 
-## 実装済み操作（Phase 7時点）
+## 実装済み操作（Phase 8時点）
 
 - **Stream生成**: `Collection.stream()` / `Arrays.stream()`（object・int[]・long[]・double[]）/ `Stream.of()` /
   `Stream.generate()` / `Stream.iterate(seed, operator)` / `Stream.iterate(seed, predicate, operator)` /
@@ -54,7 +57,35 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   - 結果はtagged union（LIST / SCALAR / OPTIONAL / ARRAY / STATISTICS / VOID / COLLECTION / MAP / RECORD）
     として構造化し、Set / Mapの表示順はUIの純粋なDisplayOrderProjectionで安定化する（JDKのiteration
     order保証とは区別して注記）
-  - `Collectors.toMap()` は Draft v0.8 付録A.4の対象外のため未実装
+- **Collector: `toMap`（Phase 8）**: `Collectors.toMap` の3 overloadを縦断実装
+  - 2引数版 `toMap(keyMapper, valueMapper)` / 3引数版 `+ mergeFunction` /
+    4引数版 `+ mapFactory`（`TreeMap::new`）。`mapFactory`のみ指定する形はJavaに存在しないため
+    構造検証で拒否する
+  - keyMapperは既存 `ClassifierDsl` を変更なしで流用。valueMapperはtoMap専用の `ToMapValueDsl`
+    （`identity`（`Function.identity()`）/ `fieldAccess`）を新設し、共有 `MapperDsl` は変更しない
+  - mergeFunctionは3種のIDホワイトリスト: `first`（`(a, b) -> a` / 既存値を保持・先勝ち）/
+    `last`（`(a, b) -> b` / 新しい値で置換・後勝ち）/ `concat`（`(s, a) -> s + ", " + a`。値型U=Stringのみ）。
+    引数順は（Map内の既存値, 新しい値）で、根拠は `Map.merge` 契約
+  - toMapノードは **keyMapper / valueMapper / mergeFunction / mapFactory の常設4行**で表示し、
+    省略overloadの行は意味論（「なし（重複キーで`IllegalStateException`）」「なし（Map実装型は無保証）」）を示す
+  - **本シミュレーター初の「正常完了しないPipeline」**: 2引数版の重複キーをvalidationで隠さず実行で
+    体験させる。Step Engineは**TypeScript例外を投げず**、`COLLECT_FAILED` 終端の正規snapshot列
+    （`completion: 'EXECUTION_FAILED'` / `output.result: null`）を生成し、再生状態は `FAILED`
+    （エンジン内部不整合の `ERROR` とは別区分）へ遷移する
+  - 失敗内容は構造化view `ExecutionFailureView`（例外型 / Collector経路 / bucketキー / 重複キー /
+    衝突した2値）として保持し、UIは表示文言ではなくこのviewから描画する。
+    **例外メッセージ全文は表示・照合の契約に含めない**（型のみ）
+  - 新しいSnapshotKind 5種: `TO_MAP_KEY_EVALUATED` / `TO_MAP_VALUE_EVALUATED` /
+    `DUPLICATE_KEY_DETECTED` / `MERGE_FUNCTION_APPLIED` / `COLLECT_FAILED`
+    （groupingBy専用の `CLASSIFIER_EVALUATED`・mapping系専用の `MAPPING_APPLIED` は再利用しない）
+  - 教材データとして merge実演用の補助データセット `employeesMergeDemo`（関東3件）を追加し、
+    「重複キーで失敗」「first / last / concat」「同一データの `groupingBy(region)` 比較」を
+    **同一データ・同一keyMapper**で直接比較できる導線を設けた
+  - `toConcurrentMap` / `toUnmodifiableMap` / 数値加算merge（`Long::sum`等）/ key側identity は
+    **実行対象外**（存在と理由を補助説明で表示）。toMapを含むtemplateは**手動連携の取込対象外**
+    （v0.11 §10-6のユーザー決定。将来拡張として持越し）
+  - teeing branchへのtoMap配置は、現行の teeing merger record（`SalarySummary(long, double)` の1件のみ）が
+    branch結果型を拘束するため**構築できず未実装**（`docs/phase-8-decisions.md` §9）
 - **Gatherer（Phase 7）**: `gather(Gatherer)`（STATEFUL中間操作）
   - 組み込みGatherer: `Gatherers.windowFixed` / `windowSliding` / `scan` / `fold`
   - Gatherer<T, A, R>の4構成要素（initializer / integrator / combiner / finisher）を**常設4行**で表示し、
@@ -123,8 +154,14 @@ React UI (src/ui)
   **合成要素**として `registerElement` してから下流へ depth-first で流す
 - 無限source（generate / iterate2）は有限性解析で必要source要求件数を事前導出し、必要な分だけ決定的に生成
   （`PipelineDefinition.boundedness` / `orderMeta`）
+- Phase 8では、Collector Runtimeの走査へ**教材上想定された実行失敗**（toMap 2引数版の重複キー）の
+  伝搬を追加。**TypeScript例外ではなく戻り値・状態**（`collectorAccumulate` の戻り値と `WalkCtx.failure`）で
+  Step Engineへ伝え、Step Engineが `COLLECT_FAILED` を発行して上流を停止し、finish cascade・
+  `RESULT_CONFIRMED`・`STREAM_CONSUMED` を発行せずにtimelineを終える。`EngineInvariantError` の
+  catch経路（`session.ts`）とは完全に分離している
 - 「戻る」は再計算せず保存済みsnapshotを復元（seen・buffer・count・Side Effect履歴・Collectorのbucket /
-  蓄積 / finisher / merger結果も完全復元）。全パネルが同一snapshot IDを描画
+  蓄積 / finisher / merger結果、toMapのentry蓄積・`ExecutionFailureView` も完全復元）。
+  全パネルが同一snapshot IDを描画
 
 ## 実行方法
 
@@ -136,25 +173,29 @@ npm run lint         # oxlint
 npm run test:unit    # Domain/Application/Reactテスト（Vitest）
 npm run build        # production build
 npm run test:e2e     # Playwright E2E + 視覚回帰（要: npx playwright install chromium）
-npm run test:oracle  # JDK 25照合 P1-O01〜P7-O01（要: Docker + gradle:9.6.1-jdk25イメージ）
-                     # 証跡を書き込むのは現行Phase（P7-O01 → artifacts/phase-7/oracle-result.md）のみ。
-                     # P1〜P6は照合のみで、実行前後に artifacts/phase-1〜phase-6 のSHA-256不変を検証する
+npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1-jdk25イメージ）
+                     # 証跡を書き込むのは現行Phase（P8-O01 → artifacts/phase-8/oracle-result.md）のみ。
+                     # P1〜P7は照合のみで、実行前後に artifacts/phase-1〜phase-7 のSHA-256不変を検証する
 ```
 
-## テスト結果（Phase 7 最終）
+## テスト結果（Phase 8 最終）
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7） | 651（59ファイル） | 全成功 |
-| E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05 + P7-E01〜05） | 81 | 全成功 |
-| JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 + P4-O02 / P7-O02） | 7 suite | 完全一致 |
+| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8） | 787（67ファイル） | 全成功 |
+| E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05 + P7-E01〜05 + P8-E01〜05） | 93 | 全成功 |
+| JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 / P8-O01 + P4-O02 / P8-O02） | 8 suite | 完全一致 |
 
 - P1必須41 ID + P1-O01、P2必須52 ID、P3必須60 ID、P4必須72 ID、P5必須59 ID、P6必須39 ID、
   P7必須39 ID をすべて実装・成功（対応表: 各completion-report）
-- 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-7/`
-- 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 7では既存27枚を据え置き、Gathererパネルの
-  新規8枚を追加）
-- 全実行可能template（116件） × modeの222組合せで終端到達・snapshot予算内・Javaコード生成を機械検証（P6-D22）
+- P8必須39 IDのうち**37 ID完全成功・1 ID部分実装（P8-D15）・1 ID未実装（P8-D18）**
+  （いずれもteeing branch配置。現行merger whitelistの型制約により構築不能。
+  `docs/phase-8-completion-report.md`）
+- 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-8/`
+- 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 8では既存35枚を据え置き、toMap表示・FAILED表示の
+  新規8枚を追加。新規8枚は最下部`DetailsDisclosure`のみマスクして安定化。thresholdは緩和なし）
+- 全実行可能template（124件） × modeの232組合せで、`expectedCompletion`どおりの終端
+  （`STREAM_CONSUMED` / `EXECUTION_FAILED`）・snapshot予算内・Javaコード生成を機械検証（P8-D22）
 - production bundleはReact vendor chunkを分離し、各chunk 500 kB未満（`vite.config.ts`）
 
 ## ドキュメント
@@ -163,6 +204,10 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P7-O01（要: Docker + gradle:9.6.1
 |---|---|
 | `docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md` | v0.10 仕様（Phase 6手動連携差分。AI API接続の廃止と取込方式） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md` | v0.9 仕様（Phase 7 Gatherers差分） |
+| `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md` | v0.11 仕様（Phase 8 Collectors.toMap差分） |
+| `docs/Claude_Code_Phase8_Implementation_Instructions.md` | Phase 8実装指示書（確定値・snapshot列・必須テストID） |
+| `docs/phase-8-completion-report.md` | Phase 8完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・未実装事項） |
+| `docs/phase-8-decisions.md` | Phase 8判断記録（補助データセット・実行失敗の伝搬設計・FAILED区分・取込対象外方式・teeing制約） |
 | `docs/Claude_Code_Phase7_Implementation_Instructions.md` | Phase 7実装指示書（確定値・snapshot列・必須テストID） |
 | `docs/phase-7-completion-report.md` | Phase 7完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・差異記録） |
 | `docs/phase-7-decisions.md` | Phase 7判断記録（累積評価の独立実装・list / stringList並存・取込対象外方式・OBSERVATION反映） |
@@ -184,6 +229,6 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P7-O01（要: Docker + gradle:9.6.1
 工程別ブランチで作業し、Pull Request経由で `main` へマージする運用。
 Phase 1は積み上げ式の細分ブランチ（`phase1/00-spec` 〜 `phase1/12-reports`）で進め、
 Phase 2以降は各Phaseにつき1本のブランチ（`phase-2` / `phase-3` / `phase-4` / `phase-5` / `phase-6` /
-`phase-7`）を
+`phase-7` / `phase-8`）を
 `main` から分岐させ、レビュー後にPull Requestでマージしている。
 各Phaseで作成したファイルは、対応するブランチのコミット（またはmainのマージコミット）の差分で確認できる。

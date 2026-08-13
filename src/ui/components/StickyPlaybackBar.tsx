@@ -7,6 +7,8 @@ const PLAYBACK_LABELS: Readonly<Record<SessionState['playbackState'], string>> =
   PAUSED: '一時停止',
   COMPLETED: '完了',
   LIMIT_REACHED: '安全上限到達',
+  // 教材上想定された実行失敗（v0.11 §6.2）。エンジン内部不整合のERRORとは区別する
+  FAILED: '実行失敗（想定内）',
   ERROR: 'エラー',
 }
 
@@ -21,10 +23,13 @@ export function StickyPlaybackBar({ app, state }: { app: AppInstance; state: Ses
     cursor === historyLength - 1 && snapshot.completion === 'STREAM_CONSUMED'
 
   const disableRestart = playbackState === 'PLAYING' || (cursor === 0 && playbackState !== 'ERROR')
+  // FAILEDでも「戻る」は有効（v0.11 §6.2の4）
   const disableBack = playbackState === 'PLAYING' || playbackState === 'ERROR' || cursor === 0
   const disableForward =
     playbackState === 'PLAYING' ||
     playbackState === 'ERROR' ||
+    // 教材上想定された実行失敗では進む・自動再生を無効化する（LIMIT_REACHEDと同様の停止）
+    playbackState === 'FAILED' ||
     playbackState === 'LIMIT_REACHED' ||
     atConsumedEnd
   const disablePlay = disableForward

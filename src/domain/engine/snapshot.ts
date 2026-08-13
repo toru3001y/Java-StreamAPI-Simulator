@@ -84,6 +84,23 @@ export type SnapshotKind =
   | 'GATHER_FINISHED'
   /** gather出力要素1件の後段送出確定（窓・scan累積値・fold最終値に共通） */
   | 'GATHER_EMITTED'
+  // ---- Phase 8（Collectors.toMap。v0.11 §6.1、Phase 8指示 §7.1） ----
+  /** keyMapper評価の確定（キーの確定）。groupingBy専用のCLASSIFIER_EVALUATEDは再利用しない */
+  | 'TO_MAP_KEY_EVALUATED'
+  /** valueMapper評価の確定（値の確定）。mapping系専用のMAPPING_APPLIEDは再利用しない */
+  | 'TO_MAP_VALUE_EVALUATED'
+  /**
+   * 重複キー検出の確定。キー・既存値・新しい値をcontextで表示する。
+   * 2引数版（この後失敗）・3引数版（この後merge）で共通のkindとし、後続で区別する。
+   */
+  | 'DUPLICATE_KEY_DETECTED'
+  /**
+   * mergeFunction適用結果の**計算**確定（Map更新は含まない。更新は後続のCONTAINER_UPDATED。
+   * teeing branch rootではTEE_BRANCH_ACCUMULATEDがMap更新を兼ねる）。
+   */
+  | 'MERGE_FUNCTION_APPLIED'
+  /** 教材上想定された実行失敗の確定。timelineの最終snapshotとなる（v0.11 §6.2） */
+  | 'COLLECT_FAILED'
 
 /** 処理中パネルの表示内容（§12.3 処理中）。UIはこの確定値を描画するだけで独自計算しない。 */
 export interface ProcessingView {
@@ -183,6 +200,70 @@ export type CollectorAccumulationView =
     }
   /** groupingBy / partitioningByのMap本体（bucketはCollectorNodeView.bucketsが持つ） */
   | { readonly kind: 'MAP'; readonly containerLabel: string; readonly size: number }
+  /**
+   * toMapのentry蓄積（キー → 値1件。Phase 8指示 §7.5-3）。
+   * groupingByのbucket（キー → List）と視覚的に区別するため、既存`MAP` variantを再利用せず新設する。
+   * entriesは蓄積順（encounter orderの挿入順。TreeMapはキー順）で保持し、UIは並べ替えない。
+   */
+  | {
+      readonly kind: 'TO_MAP'
+      /** Map（無保証）/ TreeMap */
+      readonly containerLabel: string
+      readonly entries: readonly ToMapEntryView[]
+    }
+
+/** toMapのentry 1件（値参照は「表示ラベル + 安定キー文字列」のペア。指示§7.5-1・§7.5-6） */
+export interface ToMapEntryView {
+  readonly keyLabel: string
+  /** キーの安定キー文字列（値等価。履歴復元・照合用） */
+  readonly keyRef: string
+  readonly valueLabel: string
+  readonly valueTypeLabel: string
+}
+
+/**
+ * toMapノードの構造4行（v0.11 §5、Phase 8指示 §7.5-4）。
+ * 省略overloadの行は意味論表示の確定文言を含める（keyMapper / valueMapperは常に非省略）。
+ */
+export interface CollectorToMapView {
+  readonly keyMapperLabel: string
+  readonly valueMapperLabel: string
+  /** 2引数版は「なし（重複キーでIllegalStateException）」 */
+  readonly mergeFunctionLabel: string
+  /** merge指定時の意味論併記（「既存値を保持（先勝ち）」等）。省略時はnull */
+  readonly mergeMeaningLabel: string | null
+  /** 2・3引数版は「なし（Map実装型は無保証）」 */
+  readonly mapFactoryLabel: string
+  /** overload形（2 / 3 / 4引数） */
+  readonly arity: 2 | 3 | 4
+}
+
+/**
+ * 教材上想定された実行失敗の構造化view（v0.11 §6.2の9、Phase 8指示 §7.5-1）。
+ *
+ * 値参照は**表示ラベル + 安定キー文字列のペア**とする（既存`CollectorMapEntryView`の
+ * `keyLabel` / `keyRef`前例。SimValueを直接保持しない）。
+ * UI表示・戻る→進む復元・Oracle / unitテストはこのviewを参照し、表示文言へ依存しない。
+ */
+export interface ExecutionFailureView {
+  readonly kind: 'DUPLICATE_TO_MAP_KEY'
+  readonly exceptionType: 'IllegalStateException'
+  /** 失敗したtoMapノードまでのCollector node key列（currentPathと同一の値・規約） */
+  readonly collectorPath: readonly string[]
+  /**
+   * 経路上の各bucketについて「bucketを所有するgroupingBy / partitioningByノード」のnode keyと
+   * bucketキーの列。多段groupingByは外側→内側の順。bucketを経由しない配置では空配列。
+   */
+  readonly bucketPath: readonly {
+    readonly collectorNodeKey: string
+    readonly keyLabel: string
+    readonly keyRef: string
+  }[]
+  readonly duplicateKeyLabel: string
+  readonly duplicateKeyRef: string
+  readonly existingValueLabel: string
+  readonly incomingValueLabel: string
+}
 
 /** Collector finisherの状態（指示§9.1発行表・§9.3） */
 export interface CollectorFinisherView {
@@ -260,6 +341,8 @@ export interface CollectorNodeView {
   readonly right: CollectorNodeView | null
   readonly buckets: readonly CollectorBucketView[]
   readonly teeing: CollectorTeeingView | null
+  /** toMapノードのみ非null（構造4行の常設表示。Phase 8指示 §7.5-4） */
+  readonly toMap: CollectorToMapView | null
 }
 
 /**
@@ -617,8 +700,12 @@ export interface SnapshotOutput {
   readonly count: number
   readonly confirmed: boolean
   readonly resultTypeLabel: string
-  /** 終端結果の構造化view（Phase 4指示 §7。toListはLIST） */
-  readonly result: TerminalResultView
+  /**
+   * 終端結果の構造化view（Phase 4指示 §7。toListはLIST）。
+   * **nullになるのは`COLLECT_FAILED`のみ**（v0.11 §6.2の6）。既存snapshotでは常に非nullであり、
+   * 既存契約に対して加算的な変更である。
+   */
+  readonly result: TerminalResultView | null
 }
 
 export interface Snapshot {
@@ -654,7 +741,16 @@ export interface Snapshot {
   }
   /** 現操作で発生可能な状態だけ（§12.3 凡例） */
   readonly legend: readonly ElementStateKind[]
-  readonly completion: 'NONE' | 'STREAM_CONSUMED'
+  /**
+   * 完了区分（v0.11 §6.2の3で`'EXECUTION_FAILED'`を追加）。
+   * `'EXECUTION_FAILED'`は教材上想定された実行失敗（`COLLECT_FAILED`）でのみ設定する。
+   */
+  readonly completion: 'NONE' | 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
+  /**
+   * 教材上想定された実行失敗の内容（`COLLECT_FAILED`で必須・その他はnull）。
+   * エンジン内部不整合（`EngineInvariantError` → ERROR）とは完全に別物である。
+   */
+  readonly executionFailure: ExecutionFailureView | null
 }
 
 export const ELEMENT_STATE_LABELS: Readonly<Record<ElementStateKind, string>> = {

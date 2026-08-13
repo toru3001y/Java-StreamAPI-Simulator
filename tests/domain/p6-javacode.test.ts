@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { collectFixtureJavaCode, GATHER_TEMPLATES, importScenario } from '../p6-helpers'
+import { P8_TEMPLATES } from '../../src/domain/template/templatesP8'
 import { assignDepartmentVarNames, javaStringLiteral } from '../../src/domain/dsl/javaCode'
 import { formatDoubleLiteral, formatLongLiteral } from '../../src/domain/model/value'
 import { DSL_VERSION } from '../../src/domain/dsl/ast'
@@ -150,6 +151,10 @@ describe('P6-D18 文字列エスケープ契約', () => {
    * 検証意味（**既存fixtureのJavaコード出力が改修前後で不変**）はそのまま保存し、
    * 追加キーがPhase 7のgather template由来のものだけであることを明示的に検証する
    * （新規キーが無検査で増えることを防ぐ。goldenファイル自体は書き換えない）。
+   *
+   * **Phase 8指示 §12冒頭の意図的更新**: 追加キーの許可集合を
+   * 「Phase 7 gather 11件 + Phase 8で確定した10 fixture」へ拡張した。
+   * goldenの既存キー・出力の不変検証は一切緩めていない。
    */
   it('P6-D18: 全fixtureのJavaコード出力が改修前後で不変である', () => {
     const golden = JSON.parse(
@@ -163,13 +168,18 @@ describe('P6-D18 文字列エスケープ契約', () => {
     for (const key of goldenKeys) {
       expect(current[key], key).toEqual(golden[key])
     }
-    // 追加キーはPhase 7のgather template × modeのものだけ
+    // 追加キーはPhase 7のgather template × mode（11件）とPhase 8のtemplate × mode（10件）だけ
     const gatherTemplateIds = GATHER_TEMPLATES.map((t) => t.templateId)
     const addedKeys = currentKeys.filter((key) => !goldenKeys.includes(key)).sort()
-    const expectedAdded = GATHER_TEMPLATES.flatMap((t) =>
+    const gatherAdded = GATHER_TEMPLATES.flatMap((t) =>
       t.supportedModes.map((mode) => `${t.templateId}:${mode}`),
-    ).sort()
-    expect(addedKeys).toEqual(expectedAdded)
+    )
+    const p8Added = P8_TEMPLATES.flatMap((t) =>
+      t.supportedModes.map((mode) => `${t.templateId}:${mode}`),
+    )
+    expect(gatherAdded).toHaveLength(11)
+    expect(p8Added).toHaveLength(10)
+    expect(addedKeys).toEqual([...gatherAdded, ...p8Added].sort())
     expect(gatherTemplateIds).toHaveLength(7)
   })
 

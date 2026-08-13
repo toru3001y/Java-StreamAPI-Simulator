@@ -141,4 +141,18 @@ export interface PipelineTemplate {
    */
   readonly executable?: boolean
   readonly disabledReason?: string
+  /**
+   * このtemplateが到達する終端区分（v0.11 §1.2、Phase 8指示 §5.2）。
+   * 未指定は`'STREAM_CONSUMED'`（既存全templateの意味を変えない加算的フィールド）。
+   * `'EXECUTION_FAILED'`は教材上想定された実行失敗（toMap 2引数版の重複キー）で終わるtemplate。
+   * 総点検（P8-D22）はこの値どおりの終端に到達することを機械検証する。
+   */
+  readonly expectedCompletion?: 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
+}
+
+/** templateの期待終端区分（未指定は`STREAM_CONSUMED`）。走査系テストの単一定義源とする。 */
+export function expectedCompletionOf(
+  template: PipelineTemplate,
+): 'STREAM_CONSUMED' | 'EXECUTION_FAILED' {
+  return template.expectedCompletion ?? 'STREAM_CONSUMED'
 }

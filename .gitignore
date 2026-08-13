@@ -20,10 +20,11 @@ playwright-report
 __pycache__/
 *.py[cod]
 
-# 運用ファイル（実装開始依頼文・codexレビュー依頼文）。
+# 運用ファイル（実装開始依頼文・codexレビュー依頼文・レビュー結果）。
 # 各Phaseの作業中のみ使う一時文書で、判断・経緯は完了報告と判断記録へ転記するため追跡しない。
 docs/*_start_request.md
 docs/codex_review_request_*.md
+docs/codex_review_result_*.md
 
 # Editor directories and files
 .vscode/*

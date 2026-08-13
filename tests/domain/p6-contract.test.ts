@@ -8,13 +8,13 @@ import {
   RESERVED_TOP_LEVEL_KEYS,
   TOP_LEVEL_KEYS,
   buildTemplateContract,
-  hasGatherNode,
   usesEmployeeDataset,
   validateBySpec,
   type SpecNode,
   type TemplateContract,
 } from '../../src/application/importContract'
 import { ALL_TEMPLATES } from '../../src/domain/template/templates'
+import { IMPORTABLE_TEMPLATES } from '../p6-helpers'
 import type { PipelineTemplate } from '../../src/domain/template/pipelineTemplate'
 import { FixtureScenarioProvider } from '../../src/providers/fixtureScenarioProvider'
 import { DSL_VERSION } from '../../src/domain/dsl/ast'
@@ -45,10 +45,12 @@ import type { Result } from '../../src/domain/types/result'
  * Phase 7指示 §7.8-1）のため、Contract受理を前提とするP6-D01〜D03の走査対象から外す。
  * **既存の非gather実行可能template全件**に対する検証意味（importable・fixture受理・Contract整合）は
  * 保存している。gather templateの拒否検証はP7-D21が担う。
+ *
+ * **Phase 8指示 §12冒頭の意図的更新**: 同じ理由で、collector slotの許可kindに`'toMap'`を含む
+ * templateも走査対象から外す（Phase 8指示 §7.7-1）。導出は`tests/p6-helpers.ts`の
+ * `IMPORTABLE_TEMPLATES`へ一元化した。toMap templateの拒否検証はP8-D21が担う。
  */
-const EXECUTABLE_TEMPLATES = ALL_TEMPLATES.filter(
-  (t) => t.executable !== false && !hasGatherNode(t),
-)
+const EXECUTABLE_TEMPLATES = IMPORTABLE_TEMPLATES
 
 function contractOf(template: PipelineTemplate): TemplateContract {
   return buildTemplateContract(template)
