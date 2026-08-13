@@ -704,6 +704,11 @@ python tools/verify_spec_docx.py \
 `git add` / `git commit` / `git push` / `gh pr create` / `git merge` はいずれも未実行である。
 ブランチは `phase-8` のまま、HEADは作業開始時と同じ `251fa03` である。
 
+> **その後の扱い**: 本報告の作成後、**ユーザーの明示指示（2026-08-13）を受けて**
+> commit・push・PR作成を実施した。詳細は **§20**。`main`へのmergeは実施していない。
+> 上記の `git diff --stat` / `git status --short` は **commit直前**の実測記録であり、
+> そのまま残している。
+
 ## 19. v0.11 §10 の判断事項8件それぞれの結論
 
 | # | v0.11 §10の判断事項 | 結論 | 実装との差異 |
@@ -716,3 +721,31 @@ python tools/verify_spec_docx.py \
 | 6 | 手動連携取込候補へのtoMap開放可否 | **開放しない**（ユーザー決定2026-08-13）。`importContract.ts` の1点のみで `importable: false` 化し、`collectorVariants` へvariantを追加しない二重防御とした | なし（指示§7.7の確定値どおり） |
 | 7 | 視覚回帰基準画像・共通UI・Oracle suite構成の意図的更新の範囲 | 視覚回帰: 既存35枚**据え置き**・新規8枚。共通UI: 操作一覧不変（新operationIdなし）、`StickyPlaybackBar` へFAILEDラベルと無効化条件を加算。Oracle: P8-O01追加・P7-O01の書込み停止・`PAST_ARTIFACT_DIRS` へphase-7追加・P7-O02のfixture固定化 | なし。すべて本報告§10・§13に理由つきで記録 |
 | 8 | §6.2の8（表示順の教材規約）の表示文言 | 確定文言:「この表示順（キー評価 → 値評価 → 重複検出）は教材上の規約であり、JDK内部でのkeyMapper / valueMapper評価と例外送出の実際の順序を示すものではありません。」を `TO_MAP_KEY_EVALUATED` のjdkNoteとtemplate jdkNoteの双方へ配置。あわせて encounter order は Javadoc Implementation Note 区分として扱い、first / last の「先 / 後」は現在の決定的な逐次実行における入力順であることを明示 | なし（指示§7.8の確定値どおり）。P8-R04が画面表示を機械検証 |
+
+## 20. commit / push / PRの実施内容
+
+Phase 8実装中は commit / push / PR / merge を行わなかった（§18）。
+本報告の作成後、**ユーザーの明示指示（2026-08-13）を受けて**、次のとおり commit と push、
+PR作成を実施した。**`main`へのmergeは実施していない**（指示に含まれていないため）。
+
+### commit列
+
+| commit | 内容 |
+|---|---|
+| `c5dbad2` / `d9e04b4` / `e1ea25a` | （Phase 8着手前）統合版docx v0.11の生成と、ビルド・検証ツールの `--v11` 対応 |
+| `251fa03` | （Phase 8着手前）codexレビュー結果ファイルの `.gitignore` 追加。**作業開始時のHEAD** |
+| `7b185de` | Phase 8本体（**71ファイル**）。`src` / `tests` / `e2e`（specとP8基準画像8枚）/ `oracle` / `artifacts/phase-8`（17件）/ `README.md` |
+| `33b5b72` | Phase 8完了報告と判断記録（`docs/phase-8-completion-report.md` / `docs/phase-8-decisions.md`。判断記録 §9.1 を含む） |
+| （本commit） | 本節の新設と、§18を実施済みへ更新 |
+
+Pull Request: **#10** https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/10
+（base `main` / head `phase-8`。**merge未実施**）
+
+push先: `origin/phase-8`（新規ブランチ。`251fa03..33b5b72`）
+
+### 完了判定への影響
+
+commit / push / PR の実施は **Phase 8の完了判定を変更しない**。§1の判定は
+**未完了**（P8-D15 部分実装 / P8-D18 未実装、完全成功37 ID）のままである。
+teeing branchへのtoMap配置は `docs/phase-8-decisions.md` §9.1 の決定
+（2026-08-13）に従い、残作業(1)〜(3)とあわせて独立Phaseで扱う。
