@@ -9,7 +9,8 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   + `docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`（v0.12 / Phase 9 teeing×toMap差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`（v0.13 / Phase 10 数値加算merge差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md`（v0.14 / Phase 11 unmodifiable系Collector差分）
-  + `docs/Java_Stream_API_Visualization_Spec_v0.14.docx`（上記7文書の統合ビルド。閲覧用。正は各原本）
+  + `docs/Java_Stream_API_Visualization_Spec_v1.00.docx`（上記7文書の統合ビルド＝**確定版 v1.00**。
+    閲覧用。正は各原本。第1〜25章・付録A〜FはDraft v0.8のまま、v0.9〜v0.14の差分は第26〜31章として保持）
 - 実装状況: **Phase 11（unmodifiable系Collector）まで実装済み**。Phase 8で唯一未達だったteeing branchへの
   toMap配置はPhase 9（v0.12）で解消し（**P8必須39 IDを含む全Phaseの必須IDが完全成功**。
   `docs/phase-8-completion-report.md` §17-1追記・`docs/phase-8-decisions.md` §9.2）、
@@ -269,6 +270,8 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
 
 | ファイル | 内容 |
 |---|---|
+| `docs/Java_Stream_API_Visualization_Spec_v1.00.docx` | **確定版 v1.00**（Draft v0.8本文 + v0.9〜v0.14差分の統合ビルド。第1〜31章＋付録A〜F。閲覧用で、正は下記の各原本） |
+| `docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx` | Draft v0.8 仕様（基準仕様。第1〜25章・付録A〜Fの原本。無編集で保持） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md` | v0.10 仕様（Phase 6手動連携差分。AI API接続の廃止と取込方式） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md` | v0.9 仕様（Phase 7 Gatherers差分） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md` | v0.11 仕様（Phase 8 Collectors.toMap差分） |
