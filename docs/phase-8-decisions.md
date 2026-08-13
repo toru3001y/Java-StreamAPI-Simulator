@@ -658,3 +658,8 @@ Phase 9 / 10は新規テストファイルを作らずp8-\*へ追記したが、
   視覚回帰基準画像（`e2e/__screenshots__`）の更新**ゼロ**（43枚のまま）。E2E実行により現行Phase証跡
   `artifacts/phase-8/`のキャプチャ12枚が再生成された（対象外注記の削除を反映。寸法・レイアウトは
   不変で、capture-helperが現行Phaseの証跡を上書きする既存運用どおり）。
+
+**確定記録**: 実装コミットは`phase-11`ブランチの`1355c78`、Pull Requestは
+https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/17 。
+PR #17は2026-08-14にmainへマージされた（merge commit **`d8d9ada`**）。これによりv0.11 §2.2が
+将来のunmodifiable系一括Phaseへ持越していた4論点（§17の3番）はすべて解消となった。
