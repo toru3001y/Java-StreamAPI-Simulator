@@ -6,7 +6,8 @@ import { DSL_VERSION } from '../src/domain/dsl/ast'
 import type { Scenario } from '../src/domain/scenario/scenario'
 import type { PipelineTemplate } from '../src/domain/template/pipelineTemplate'
 import { CandidateImportService } from '../src/application/candidateImport'
-import { hasGatherNode } from '../src/application/importContract'
+import { hasGatherNode, hasToMapCollectorSlot } from '../src/application/importContract'
+import { P8_TEMPLATE_IDS } from '../src/domain/template/templatesP8'
 
 /** Phase 6テスト共通helper */
 
@@ -15,21 +16,43 @@ export const EXECUTABLE_TEMPLATES: readonly PipelineTemplate[] = ALL_TEMPLATES.f
 )
 
 /**
- * 取込対象の実行可能template（Phase 7指示 §12冒頭の意図的更新）。
+ * 取込対象の実行可能template（Phase 7指示 §12冒頭・Phase 8指示 §12冒頭の意図的更新）。
  *
  * Phase 7でgather templateを追加した。gatherノードを含むtemplateは実行可能だが
  * 手動連携の取込対象外（`importable: false`。Phase 7指示 §7.8-1、v0.9 §10-6のユーザー決定）
  * のため、Import Contractの走査対象からは外す。
- * `EXECUTABLE_TEMPLATES`の意味・値は変更していない（P6-D22の実行総点検は従来どおり全件を通す）。
- * gather templateの取込拒否検証はP7-D21が担う。
+ * Phase 8では同じ理由でtoMapを含むtemplate（collector slotの許可kindに`'toMap'`を含む）も
+ * 走査対象から外す（Phase 8指示 §7.7-1、v0.11 §10-6のユーザー決定）。
+ * `EXECUTABLE_TEMPLATES`の意味・値は変更していない。
+ * gather / toMap templateの取込拒否検証はP7-D21 / P8-D21が担う。
  */
 export const IMPORTABLE_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter(
-  (t) => !hasGatherNode(t),
+  (t) => !hasGatherNode(t) && !hasToMapCollectorSlot(t),
 )
 
 /** 取込対象外（gatherノードを含む）の実行可能template */
 export const GATHER_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter((t) =>
   hasGatherNode(t),
+)
+
+/** 取込対象外（collector slotの許可kindに'toMap'を含む）の実行可能template（Phase 8） */
+export const TO_MAP_TEMPLATES: readonly PipelineTemplate[] =
+  EXECUTABLE_TEMPLATES.filter(hasToMapCollectorSlot)
+
+/**
+ * Phase 7完了時点のtemplate集合（Phase 8指示 §12冒頭）。
+ *
+ * 走査母集団・固定件数を検証する既存テスト（P6-D22 / P7-D20）を、Phase 8のtemplate追加から
+ * 保護するためのスコープ固定。固定方法は「`ALL_TEMPLATES`から`P8_TEMPLATES`全件を除外」とする。
+ * **「toMap非含有」での抽出は不可**——新設`tmpl-collect-groupby-mergedemo`はtoMap非含有のため、
+ * その抽出ではPhase 7時点集合と一致しない（119 / 117 / 223になる）。
+ */
+export const PHASE7_TEMPLATES: readonly PipelineTemplate[] = ALL_TEMPLATES.filter(
+  (t) => !P8_TEMPLATE_IDS.includes(t.templateId),
+)
+
+export const PHASE7_EXECUTABLE_TEMPLATES: readonly PipelineTemplate[] = PHASE7_TEMPLATES.filter(
+  (t) => t.executable !== false,
 )
 
 export function templateById(templateId: string): PipelineTemplate {

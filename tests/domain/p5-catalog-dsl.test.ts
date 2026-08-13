@@ -104,8 +104,13 @@ describe('P5-D02 Collector AST検証（closed schema）', () => {
     }
   })
 
+  /**
+   * Phase 8指示 §12冒頭で許可された最小更新: 未知kindの例に使っていた`'toMap'`は
+   * Phase 8で実装済みkindになったため、v0.11 §2.2で対象外と明記された`'toConcurrentMap'`へ
+   * 差し替えた。検証意味（未知kindはSTRUCTURE_UNKNOWN_KINDで拒否される）は変更していない。
+   */
   it('P5-D02: 未知kindを構造化issueで拒否する', () => {
-    const result = validateCollectorStructure({ kind: 'toMap' })
+    const result = validateCollectorStructure({ kind: 'toConcurrentMap' })
     expect(result.ok).toBe(false)
     if (!result.ok) {
       expect(result.issues[0]?.code).toBe('STRUCTURE_UNKNOWN_KIND')

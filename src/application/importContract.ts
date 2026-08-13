@@ -1422,6 +1422,24 @@ export function hasGatherNode(template: PipelineTemplate): boolean {
 export const GATHER_NOT_IMPORTABLE_REASON =
   'gatherを含むtemplateは手動連携の取込対象外です。固定サンプル（fixture）で実行してください。'
 
+/**
+ * collector slotの許可kindに`'toMap'`を含むtemplateか（Phase 8指示 §7.7）。
+ *
+ * template定義（slot許可kind）由来の導出とし、新規template属性は追加しない。
+ * gatherと同様、toMapは手動連携の取込候補へ開放しない（ユーザー決定2026-08-13）。
+ * `collectorVariants`へtoMap variantを追加していないため、仮に取込へ到達しても
+ * Contract検証が「未定義kind」として拒否する（二重の防御。P8-D21）。
+ */
+export function hasToMapCollectorSlot(template: PipelineTemplate): boolean {
+  return template.parameterSlots.some(
+    (slot) => slot.kind === 'collector' && slot.allowedCollectorKinds.includes('toMap'),
+  )
+}
+
+/** toMap templateを取込対象外とする理由（§7.7-1） */
+export const TO_MAP_NOT_IMPORTABLE_REASON =
+  'toMapを含むtemplateは手動連携の取込対象外です。固定サンプル（fixture）で実行してください。'
+
 /** templateがEmployee dataset（collection source）を使うか */
 export function usesEmployeeDataset(template: PipelineTemplate): boolean {
   const definition = template.sourceDefinition
@@ -1456,17 +1474,21 @@ export function buildTemplateContract(template: PipelineTemplate): TemplateContr
   const datasetPolicy = usesEmployeeDataset(template) ? 'required' : 'forbidden'
   // Phase 7指示 §7.8-1: 実行可能であってもgatherノードを含むtemplateは取込対象外とする
   const gatherExcluded = hasGatherNode(template)
+  // Phase 8指示 §7.7-1: collector slotの許可kindに'toMap'を含むtemplateも取込対象外とする
+  const toMapExcluded = hasToMapCollectorSlot(template)
   return {
     templateId: template.templateId,
     templateVersion: template.version,
     supportedModes: template.supportedModes,
-    importable: template.executable !== false && !gatherExcluded,
+    importable: template.executable !== false && !gatherExcluded && !toMapExcluded,
     disabledReason:
       template.executable === false
         ? (template.disabledReason ?? null)
         : gatherExcluded
           ? GATHER_NOT_IMPORTABLE_REASON
-          : null,
+          : toMapExcluded
+            ? TO_MAP_NOT_IMPORTABLE_REASON
+            : null,
     datasetPolicy,
     topLevelKeys: TOP_LEVEL_KEYS.filter((key) => key !== 'dataset' || datasetPolicy === 'required'),
     topLevelTypes: TOP_LEVEL_TYPES,

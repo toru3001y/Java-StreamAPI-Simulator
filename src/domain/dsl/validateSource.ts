@@ -1,7 +1,11 @@
 import type { Result, ValidationIssue } from '../types/result'
 import { fail, issue, ok } from '../types/result'
 import type { SourceDsl } from './sourceAst'
-import { ALLOWED_GENERATE_RULES, ALLOWED_ITERATE_OPERATORS } from './sourceAst'
+import {
+  ALLOWED_GENERATE_RULES,
+  ALLOWED_ITERATE_OPERATORS,
+  SOURCE_COLLECTION_IDS,
+} from './sourceAst'
 import type { TypeRef } from '../types/typeRef'
 import { streamOf } from '../types/typeRef'
 import { PRIMITIVE_STREAM_NAMES, WRAPPER_NAMES } from '../model/value'
@@ -61,7 +65,7 @@ export function validateSourceStructure(input: unknown, path = 'source'): Result
   const issues: ValidationIssue[] = []
   switch (kind) {
     case 'collection':
-      if (obj['collectionId'] !== 'employees') {
+      if (!(SOURCE_COLLECTION_IDS as readonly string[]).includes(String(obj['collectionId']))) {
         issues.push(
           issue('STRUCTURE_UNKNOWN_KIND', `未知のcollectionです: ${String(obj['collectionId'])}`, `${path}.collectionId`),
         )

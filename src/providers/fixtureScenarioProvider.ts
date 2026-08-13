@@ -5,6 +5,7 @@ import type {
   ScenarioProvider,
 } from './scenarioProvider'
 import { EMPTY_EMPLOYEES, STANDARD_EMPLOYEES } from '../domain/fixtures/employees'
+import { MERGE_DEMO_EMPLOYEES } from '../domain/fixtures/mergeDemoEmployees'
 import { NUMERIC_COLLECTOR_TEMPLATE_IDS } from '../domain/template/templatesP5'
 import { DSL_VERSION } from '../domain/dsl/ast'
 import { deepFreeze } from '../domain/util/deepFreeze'
@@ -940,6 +941,190 @@ const P7_FIXTURES: readonly FixtureDefinition[] = [
       },
     },
     EMPTY_EMPLOYEES,
+  ),
+]
+
+/**
+ * Phase 8 toMap fixture（指示§7.6。standard 8 + emptySource 2 = 10件）。
+ *
+ * duplicate / merge-first / merge-last / merge-concatの4件は**同一データセット
+ * （MERGE_DEMO_EMPLOYEES）・同一keyMapper（region）**を用い、mergeの有無と種類による
+ * 結果差を同一データで直接比較できるようにする（v0.11 §8.6-4・§8.6追補）。
+ * `tmpl-collect-groupby-mergedemo`も同じデータで実行するgroupingBy比較fixtureである。
+ *
+ * midEmptyは全Phase 8 templateで非対応とする（空Map成立の教材価値がemptySourceと重複し、
+ * 失敗templateでは重複キー到達前に要素が尽きてexpectedCompletionと矛盾するため。
+ * 判断は docs/phase-8-decisions.md）。
+ */
+const regionKeyMapper = { kind: 'employeeField', field: 'region' } as const
+const nameKeyMapper = { kind: 'employeeField', field: 'name' } as const
+const identityValueMapper = { kind: 'identity' } as const
+const nameValueMapper = { kind: 'fieldAccess', field: 'name' } as const
+const salaryValueMapper = { kind: 'fieldAccess', field: 'salary' } as const
+
+const P8_FIXTURES: readonly FixtureDefinition[] = [
+  // ---- 2引数版・全キー一意・value側identity（v0.11 §4の5の必須教材） ----
+  fx(
+    'tmpl-collect-tomap-identity',
+    'standard',
+    'collect(toMap(name, identity))標準',
+    'Employee 4件を「氏名 → Employee本体」のMapへ収集します。valueMapperはFunction.identity()で、値は要素そのものです。氏名は全件一意のため衝突は起きません。期待結果はMap<String, Employee> 4 entryです。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: nameKeyMapper,
+        valueMapper: identityValueMapper,
+        mergeFunctionId: null,
+        mapFactoryId: null,
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-identity',
+    'emptySource',
+    'collect(toMap(name, identity))空ソース',
+    '入力0件のため空Mapが確定します。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: nameKeyMapper,
+        valueMapper: identityValueMapper,
+        mergeFunctionId: null,
+        mapFactoryId: null,
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  // ---- 2引数版・重複キー（実行失敗形。教材の中核） ----
+  fx(
+    'tmpl-collect-tomap-duplicate',
+    'standard',
+    'collect(toMap(region, name))重複キーで実行失敗',
+    'regionをキーにEmployee 5件を収集しますが、関東が3件あるため2件目（渡辺）でキーが重複します。2引数版のtoMapにはmergeFunctionがないため、この時点で実行が失敗します（JDKではIllegalStateException）。残りの要素は評価されません。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: nameValueMapper,
+        mergeFunctionId: null,
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  // ---- 3引数版・first / last / concat（重複templateと同一データ・同一keyMapper） ----
+  fx(
+    'tmpl-collect-tomap-merge-first',
+    'standard',
+    'collect(toMap(region, name, first))標準',
+    '重複キーで実行失敗するfixtureと同じデータ・同じkeyMapperに、mergeFunction（(a, b) -> a）を追加しました。既存値を保持（先勝ち）するため、関東は最初の伊藤になります。期待結果は{関東=伊藤, 関西=中村, 中部=小林}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: nameValueMapper,
+        mergeFunctionId: 'first',
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-merge-last',
+    'standard',
+    'collect(toMap(region, name, last))標準',
+    'mergeFunctionを(a, b) -> bにすると新しい値で置換（後勝ち）します。同じデータ・同じkeyMapperでも関東は最後の山本になります。期待結果は{関東=山本, 関西=中村, 中部=小林}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: nameValueMapper,
+        mergeFunctionId: 'last',
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-merge-concat',
+    'standard',
+    'collect(toMap(region, name, concat))3件衝突の順次適用',
+    'mergeFunctionを(s, a) -> s + ", " + aにすると既存値と新しい値を連結します。関東は3件衝突するため、mergeが「現在Mapにある値」へ2回順次適用され「伊藤, 渡辺, 山本」になります。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: nameValueMapper,
+        mergeFunctionId: 'concat',
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  // ---- 同一データのgroupingBy比較（v0.11 §8.6追補。toMap非含有） ----
+  fx(
+    'tmpl-collect-groupby-mergedemo',
+    'standard',
+    'collect(groupingBy(region))— toMapと同一データの対比',
+    'toMapの重複キー・merge対比fixtureと同じデータをgroupingBy(Employee::region)で収集します。groupingByは1キーに値のListを蓄積するため衝突は起きず、関東は[伊藤, 渡辺, 山本]になります。',
+    { 'slot-collector': { kind: 'groupingBy', classifier: regionClassifier, mapFactoryId: null, downstream: null } },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  // ---- 4引数版・TreeMap（キー昇順） ----
+  fx(
+    'tmpl-collect-tomap-treemap',
+    'standard',
+    'collect(toMap(region, salary, first, TreeMap::new))標準',
+    'mapFactoryにTreeMap::newを指定すると、キーのnatural orderingで並ぶMapが得られます。関東が2件衝突しますがfirstで既存値（佐藤の5_500_000L）を保持します。期待結果は{中部=4_800_000L, 関東=5_500_000L, 関西=4_200_000L}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: salaryValueMapper,
+        mergeFunctionId: 'first',
+        mapFactoryId: 'TreeMap::new',
+      },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-treemap',
+    'emptySource',
+    'collect(toMap 4引数版)空ソース',
+    '入力0件でも実行開始時にTreeMapが生成され、空のTreeMapが結果として確定します。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: salaryValueMapper,
+        mergeFunctionId: 'first',
+        mapFactoryId: 'TreeMap::new',
+      },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  // ---- downstream形（nested Map・bucketごとの重複判定） ----
+  fx(
+    'tmpl-collect-tomap-grouped',
+    'standard',
+    'collect(groupingBy(region) + toMap(name, salary))標準',
+    'regionでbucketへ振り分けたうえで、bucketごとに「氏名 → salary」のMapを作ります。重複キーの判定はbucketごとのMapに対して行われるため、関東bucket内の佐藤と高橋は衝突しません。期待結果はMap<String, Map<String, Long>>です。',
+    {
+      'slot-collector': {
+        kind: 'groupingBy',
+        classifier: regionClassifier,
+        mapFactoryId: null,
+        downstream: {
+          kind: 'toMap',
+          keyMapper: nameKeyMapper,
+          valueMapper: salaryValueMapper,
+          mergeFunctionId: null,
+          mapFactoryId: null,
+        },
+      },
+    },
+    STANDARD_EMPLOYEES,
   ),
 ]
 
@@ -2193,6 +2378,8 @@ const FIXTURES: readonly FixtureDefinition[] = deepFreeze([
   ...P5_FIXTURES,
   // ---- Phase 7: Gatherer（指示§7.6） ----
   ...P7_FIXTURES,
+  // ---- Phase 8: Collectors.toMap（指示§7.6） ----
+  ...P8_FIXTURES,
 ])
 
 export class FixtureScenarioProvider implements ScenarioProvider {

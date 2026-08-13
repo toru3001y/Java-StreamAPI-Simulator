@@ -23,8 +23,22 @@ export interface IteratePredicate {
   readonly value: number
 }
 
+/**
+ * `collection` sourceのcollection ID（Java変数名と一致させる）。
+ *
+ * Phase 8で`'employeesMergeDemo'`を**加算的に追加**した（指示§7.6。Phase 5のPredicate DSLへの
+ * long定数加算的追加〔phase-5-decisions §13.7〕の前例に従い、既存`'employees'`の挙動・表示は不変）。
+ *
+ * **データ選択の単一定義源はFixtureScenarioProviderのdataset**であり、`collectionId`は
+ * 検証・表示・Javaコード上の識別子である（`materializeSource`は外部から渡された
+ * `employeeDataset`を具現化し、`collectionId`でデータを選択しない。この構造は変更しない）。
+ * `collectionId`とtemplate / fixtureのdataset対応はP8-D20が機械検証する。
+ */
+export const SOURCE_COLLECTION_IDS = ['employees', 'employeesMergeDemo'] as const
+export type SourceCollectionId = (typeof SOURCE_COLLECTION_IDS)[number]
+
 export type SourceDsl =
-  | { readonly kind: 'collection'; readonly collectionId: 'employees' }
+  | { readonly kind: 'collection'; readonly collectionId: SourceCollectionId }
   | {
       readonly kind: 'arrayObject'
       readonly arrayId: string

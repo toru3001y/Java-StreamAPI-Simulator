@@ -27,6 +27,8 @@ const INDEXED_SOURCE_KINDS = [
  */
 function TerminalResultOutput({ snapshot }: { snapshot: SessionState['snapshot'] }) {
   const result = snapshot.output.result
+  // COLLECT_FAILEDのみresultがnullになる（v0.11 §6.2の6）。終端結果は確定しない
+  if (result === null) return <ExecutionFailureResult snapshot={snapshot} />
   switch (result.kind) {
     case 'LIST':
       return (
@@ -164,6 +166,82 @@ function TerminalResultOutput({ snapshot }: { snapshot: SessionState['snapshot']
         </div>
       )
   }
+}
+
+/**
+ * 教材上想定された実行失敗の表示（v0.11 §5・§6.2、Phase 8指示 §9）。
+ *
+ * エンジン内部不整合（`EngineInvariantError` → ERROR）とは**明確に異なる表示区分・文言**とする。
+ * 表示内容はすべて`snapshot.executionFailure`から取り、UIで独自計算しない。
+ * 例外メッセージ全文は表示契約に含めない（型のみ）。
+ */
+function ExecutionFailureResult({ snapshot }: { snapshot: SessionState['snapshot'] }) {
+  const failure = snapshot.executionFailure
+  if (!failure) {
+    return (
+      <p className="empty-note" data-testid="output-unconfirmed">
+        終端結果はまだ確定していません。
+      </p>
+    )
+  }
+  return (
+    <div
+      className="execution-failure"
+      data-testid="execution-failure"
+      data-failure-kind={failure.kind}
+      role="status"
+    >
+      <p className="execution-failure-title" data-testid="execution-failure-title">
+        教材上想定された実行失敗です（エンジンの内部エラーではありません）
+      </p>
+      <table className="stats-table">
+        <tbody>
+          <tr>
+            <th scope="row">例外型</th>
+            <td data-testid="execution-failure-exception">
+              <code>{failure.exceptionType}</code>
+              <span className="scalar-type">（メッセージ全文はJDK実装詳細のため表示しません）</span>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">原因キー</th>
+            <td data-testid="execution-failure-key">
+              <code>{failure.duplicateKeyLabel}</code>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">衝突した2値</th>
+            <td data-testid="execution-failure-values">
+              既存値 <code>{failure.existingValueLabel}</code> / 新しい値{' '}
+              <code>{failure.incomingValueLabel}</code>
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">Collector経路</th>
+            <td data-testid="execution-failure-path">
+              <code>{failure.collectorPath.join(' → ')}</code>
+            </td>
+          </tr>
+          {failure.bucketPath.length > 0 && (
+            <tr>
+              <th scope="row">bucketキー</th>
+              <td data-testid="execution-failure-buckets">
+                {failure.bucketPath.map((entry) => (
+                  <span key={entry.collectorNodeKey} className="map-key" data-key-ref={entry.keyRef}>
+                    {entry.keyLabel}
+                  </span>
+                ))}
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <p className="op-context-note" data-testid="execution-failure-note">
+        JDKで実行した場合、ここで{failure.exceptionType}が送出されます。終端結果は確定せず、
+        残りの要素は評価されません。ここまでの蓄積Mapは処理中の内部状態としてのみ表示しています。
+      </p>
+    </div>
+  )
 }
 
 /** toSet / toCollection等のコンテナ結果（表示順はUIのDisplayOrderProjectionで決定的にする） */

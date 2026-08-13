@@ -61,6 +61,7 @@ import type { ElementId, NodeId } from '../types/ids'
 import { snapshotIdFor } from '../types/ids'
 import { deepFreeze } from '../util/deepFreeze'
 import type {
+  ExecutionFailureView,
   FlatMapContextView,
   GathererElementView,
   GathererHistoryEntry,
@@ -248,9 +249,11 @@ interface Draft {
   perNode: Record<ElementId, Record<string, ElementStateKind>>
   latest: Record<ElementId, ElementStateKind>
   outputItems: SnapshotOutputItem[]
-  terminalResult: TerminalResultView
+  /** COLLECT_FAILEDではnull（v0.11 §6.2の6。null許容はCOLLECT_FAILEDのみ） */
+  terminalResult: TerminalResultView | null
   confirmed: boolean
-  completion: 'NONE' | 'STREAM_CONSUMED'
+  completion: 'NONE' | 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
+  executionFailure: ExecutionFailureView | null
 }
 
 interface PushInput {
@@ -264,7 +267,9 @@ interface PushInput {
   typeTransition?: string | null
   sourceContext?: SourceContextView | null
   confirmed?: boolean
-  completion?: 'NONE' | 'STREAM_CONSUMED'
+  completion?: 'NONE' | 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
+  /** COLLECT_FAILEDのみ非null。設定時はterminalResultをnullにする */
+  executionFailure?: ExecutionFailureView | null
 }
 
 class TimelineBuilder {
@@ -345,6 +350,7 @@ class TimelineBuilder {
   }
 
   push(input: PushInput): void {
+    const executionFailure = input.executionFailure ?? null
     this.drafts.push({
       kind: input.kind,
       activeNode: input.activeNode,
@@ -361,9 +367,11 @@ class TimelineBuilder {
       perNode: structuredClone(this.perNode),
       latest: structuredClone(this.latest),
       outputItems: [...this.outputItems],
-      terminalResult: structuredClone(this.terminalResult),
+      // 失敗時点までの蓄積Mapは内部蓄積状態としてのみ表示し、終端結果にはしない（v0.11 §6.2の6）
+      terminalResult: executionFailure === null ? structuredClone(this.terminalResult) : null,
       confirmed: input.confirmed ?? false,
       completion: input.completion ?? 'NONE',
+      executionFailure,
     })
   }
 
@@ -1027,6 +1035,14 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   }
   syncCollector()
 
+  /**
+   * 教材上想定された実行失敗（toMap 2引数版の重複キー。v0.11 §6.2）。
+   * 非nullになった時点で`COLLECT_FAILED`がtimelineの最終snapshotとなり、
+   * 以降のsnapshot（未処理要素のSOURCE_EMIT・RESULT_CONFIRMED・STREAM_CONSUMED）を生成しない。
+   * TypeScript例外は使わず、Collector Runtimeからの戻り値でここへ伝搬する。
+   */
+  let collectFailure: ExecutionFailureView | null = null
+
   // Phase 4 terminal runtime（toList・collect系以外の終端。§10）
   const terminalRt =
     sink.operationId === 'toList' || isCollect ? null : createTerminalRuntime(sink)
@@ -1132,7 +1148,7 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
         },
         currentText: `${name}が${sink.displayName}へ到着しました。`,
       })
-      collectorAccumulate(rt, elementId, value, (input) => {
+      const failure = collectorAccumulate(rt, elementId, value, (input) => {
         // rootがLIST variantのときだけ既存のSnapshotOutput.itemsへ追加する（非破壊の再利用）
         if (
           collectorUsesOutputItems(rt) &&
@@ -1152,6 +1168,37 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           jdkNote: input.jdkNote ?? null,
         })
       })
+      if (failure !== null) {
+        // 教材上想定された実行失敗。COLLECT_FAILEDでtimelineを終端する（v0.11 §6.2の1）
+        collectFailure = failure
+        syncCollector()
+        const bucketText =
+          failure.bucketPath.length === 0
+            ? ''
+            : `（${failure.bucketPath.map((entry) => entry.keyLabel).join(' → ')}のbucket内）`
+        b.push({
+          kind: 'COLLECT_FAILED',
+          activeNode: sink,
+          currentElementId: elementId,
+          parentElementId,
+          processing: {
+            title: '実行失敗（教材上想定された失敗）',
+            inputLabel: `重複キー ${failure.duplicateKeyLabel}${bucketText}`,
+            expression: failure.exceptionType,
+            evaluation: `既存値 ${failure.existingValueLabel} / 新しい値 ${failure.incomingValueLabel}`,
+            outcome:
+              'mergeFunctionのないtoMapは重複キーを解決できないため、collectがここで失敗します',
+          },
+          currentText: `Collectorの実行が失敗しました。キー${failure.duplicateKeyLabel}が重複し、mergeFunctionがないため解決できません。JDKで実行した場合、ここで${failure.exceptionType}が送出されます。結果は確定せず、残りの要素は評価されません。`,
+          jdkNote:
+            'Collectors.toMap(keyMapper, valueMapper)は "If the mapped keys contain duplicates (according to Object.equals(Object)), an IllegalStateException is thrown when the collection operation is performed." と定義されています。この教材では例外型のみを契約とし、例外メッセージ全文はJDK実装詳細として扱いません。',
+          confirmed: false,
+          completion: 'EXECUTION_FAILED',
+          executionFailure: failure,
+        })
+        // 上流（source・sorted放出・flatMap子送出）への追加要求を停止する
+        b.cancelAt(chain.length)
+      }
       return true
     }
 
@@ -2827,6 +2874,8 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   // sortedのbuffer flushに加え、gatherのfinisher相当（GATHER_FINISHED / 残余窓 / 最終値）も扱う
   b.clearFlatMapCtx()
   for (let i = 0; i < chain.length; i++) {
+    // COLLECT_FAILEDが終端。finish cascade（sorted flush / gather finisher）も発行しない
+    if (collectFailure !== null) break
     const node = chain[i]
     if (!node) continue
     const rt = runtimes.get(node.nodeId)
@@ -2872,8 +2921,8 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     })
     rt.phase = 'EMITTING'
     for (const entry of confirmedEntries) {
-      // 後段の短絡確定後は残りbufferを放出しない（BUFFEREDのまま保持）
-      if (b.cancelledBeyond(i)) break
+      // 後段の短絡確定後・実行失敗確定後は残りbufferを放出しない（BUFFEREDのまま保持）
+      if (collectFailure !== null || b.cancelledBeyond(i)) break
       rt.emittedCount += 1
       b.setState(entry.id, node.nodeId, 'PASSED')
       b.setLatest(entry.id, 'PROCESSING')
@@ -2898,6 +2947,10 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
   }
 
   b.clearFlatMapCtx()
+
+  // 教材上想定された実行失敗はCOLLECT_FAILEDでtimelineが終わる。
+  // Collector finish stage・RESULT_CONFIRMED・STREAM_CONSUMEDは発行しない（v0.11 §6.2の1）
+  if (collectFailure !== null) return materialize(def, b.drafts)
 
   // ---- Collector finish stage（全要素処理後の構造snapshot。§6.2・§9.1・§9.3） ----
   if (collectorRt) {
@@ -3083,6 +3136,7 @@ function materialize(def: PipelineDefinition, drafts: readonly Draft[]): Snapsho
       },
       legend,
       completion: draft.completion,
+      executionFailure: draft.executionFailure,
     }
     return deepFreeze(snapshot)
   })
@@ -3141,6 +3195,7 @@ export function createInitialSnapshot(def: PipelineDefinition): Snapshot {
         },
         legend: legendOf(def),
         completion: 'NONE',
+        executionFailure: null,
       } satisfies Snapshot)
     }
     throw e

@@ -16,6 +16,13 @@ export type PlaybackState =
   | 'PAUSED'
   | 'COMPLETED'
   | 'LIMIT_REACHED'
+  /**
+   * 教材上想定された実行失敗（`COLLECT_FAILED`到達。v0.11 §6.2の3・4、Phase 8指示 §7.2）。
+   * **`ERROR`（エンジン内部不整合のフェイルセーフ）とは区分する**。
+   * `EngineInvariantError`のcatch経路・ERROR用stopReason文言は流用しない。
+   * 失敗はStep Engineが正規のsnapshotとして返すため、例外catchでは遷移しない。
+   */
+  | 'FAILED'
   | 'ERROR'
 
 /** 自動再生間隔は1000ms固定（§12.1）。速度変更UIは作らない。 */
@@ -105,8 +112,15 @@ export class SimulationSession {
   private derivePassiveState(): PlaybackState {
     const current = this.history[this.cursor]
     if (this.cursor === 0) return 'READY'
+    // 保存済みCOLLECT_FAILEDへ再度進んだ場合も、再計算せず履歴復元でFAILEDへ戻る（v0.11 §6.2の4）
+    if (current && current.completion === 'EXECUTION_FAILED') return 'FAILED'
     if (current && current.completion === 'STREAM_CONSUMED') return 'COMPLETED'
     return 'PAUSED'
+  }
+
+  /** 現在位置が教材上想定された実行失敗（COLLECT_FAILED）のsnapshotか */
+  private atFailedSnapshot(): boolean {
+    return this.history[this.cursor]?.completion === 'EXECUTION_FAILED'
   }
 
   /**
@@ -115,15 +129,24 @@ export class SimulationSession {
    */
   private stepForwardOnce(fromAuto: boolean): void {
     if (this.playbackState === 'ERROR') return
+    // FAILEDでは進む・自動再生ともno-op（LIMIT_REACHEDと同様の停止。v0.11 §6.2の4）
+    if (this.playbackState === 'FAILED') return
     if (this.cursor < this.history.length - 1) {
       this.cursor += 1
-      if (!fromAuto) this.playbackState = this.derivePassiveState()
+      // 保存済み失敗snapshotへの再前進は再計算せず履歴から復元し、FAILEDへ戻る
+      if (this.atFailedSnapshot()) this.finishAuto('FAILED')
+      else if (!fromAuto) this.playbackState = this.derivePassiveState()
       else if (this.atConsumedEnd()) this.finishAuto('COMPLETED')
       this.notify()
       return
     }
     const current = this.history[this.cursor]
     if (!current) throw new Error(`cursor ${this.cursor} が履歴の範囲外です`)
+    if (current.completion === 'EXECUTION_FAILED') {
+      this.finishAuto('FAILED')
+      this.notify()
+      return
+    }
     if (current.completion === 'STREAM_CONSUMED') {
       this.playbackState = 'COMPLETED'
       this.cancelTimer()
@@ -148,7 +171,10 @@ export class SimulationSession {
       }
       this.history.push(next)
       this.cursor += 1
-      if (next.completion === 'STREAM_CONSUMED') {
+      if (next.completion === 'EXECUTION_FAILED') {
+        // COLLECT_FAILED到達（手動・自動再生とも）: FAILEDへ遷移し自動再生タイマーを停止する
+        this.finishAuto('FAILED')
+      } else if (next.completion === 'STREAM_CONSUMED') {
         this.finishAuto('COMPLETED')
       } else if (!fromAuto) {
         this.playbackState = this.derivePassiveState()
@@ -212,8 +238,15 @@ export class SimulationSession {
     if (
       this.playbackState === 'PLAYING' ||
       this.playbackState === 'ERROR' ||
+      // FAILEDでの自動再生開始はno-op（v0.11 §6.2の4）
+      this.playbackState === 'FAILED' ||
       this.playbackState === 'LIMIT_REACHED'
     ) {
+      return
+    }
+    if (this.atFailedSnapshot()) {
+      this.playbackState = 'FAILED'
+      this.notify()
       return
     }
     if (this.atConsumedEnd()) {

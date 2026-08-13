@@ -54,8 +54,16 @@ export const SUITES = [
     id: 'P7-O01',
     javaFile: 'OracleP7.java',
     expectedFile: 'expected-p7-from-core.json',
-    // 現行Phase（P7）だけが証跡を生成・更新する
-    writeReportPath: ['artifacts', 'phase-7', 'oracle-result.md'],
+    // Phase 8着手に伴い証跡書込みを停止した（artifacts/phase-7/oracle-result.mdは過去証跡として保持）。
+    // 照合自体は回帰として継続実行する
+    writeReportPath: null,
+  },
+  {
+    id: 'P8-O01',
+    javaFile: 'OracleP8.java',
+    expectedFile: 'expected-p8-from-core.json',
+    // 現行Phase（P8）だけが証跡を生成・更新する
+    writeReportPath: ['artifacts', 'phase-8', 'oracle-result.md'],
   },
 ]
 
@@ -91,9 +99,34 @@ export const P6_PAST_ARTIFACT_DIRS = [
   'artifacts/phase-5',
 ]
 
+/** Phase 7時点の必須suite ID（P7-O02契約をfixtureで検証し続けるために固定する） */
+export const P7_REQUIRED_SUITE_IDS = [
+  'P1-O01',
+  'P2-O01',
+  'P3-O01',
+  'P4-O01',
+  'P5-O01',
+  'P6-O01',
+  'P7-O01',
+]
+
+/** Phase 7時点の現行Phase構成（p7-review.test.tsのfixture固定化に使用する） */
+export const P7_CURRENT_PHASE_SUITE_ID = 'P7-O01'
+export const P7_CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-7/oracle-result.md'
+
+/** Phase 7時点の過去Phase証跡（当時の記載を保持する） */
+export const P7_PAST_ARTIFACT_DIRS = [
+  'artifacts/phase-1',
+  'artifacts/phase-2',
+  'artifacts/phase-3',
+  'artifacts/phase-4',
+  'artifacts/phase-5',
+  'artifacts/phase-6',
+]
+
 /** 現行Phaseのsuite（証跡を書き込む唯一のsuite） */
-export const CURRENT_PHASE_SUITE_ID = 'P7-O01'
-export const CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-7/oracle-result.md'
+export const CURRENT_PHASE_SUITE_ID = 'P8-O01'
+export const CURRENT_PHASE_REPORT_PATH = 'artifacts/phase-8/oracle-result.md'
 
 /** 実行前後で不変であることを検証する過去Phase証跡（現行Phaseは含めない） */
 export const PAST_ARTIFACT_DIRS = [
@@ -103,6 +136,7 @@ export const PAST_ARTIFACT_DIRS = [
   'artifacts/phase-4',
   'artifacts/phase-5',
   'artifacts/phase-6',
+  'artifacts/phase-7',
 ]
 
 /** Long境界値の正確な10進文字列（1桁も失わない比較の基準） */
@@ -160,7 +194,7 @@ export function allSuitesPassed(results) {
  *           実行前後のartifacts/phase-1〜3 SHA-256不変の実測結果、の3判定すべて
  */
 
-/** 現行Phaseの必須suite ID（欠落・重複はFAIL。P7-O02が検証する） */
+/** 現行Phaseの必須suite ID（欠落・重複はFAIL。P8-O02が検証する） */
 export const REQUIRED_SUITE_IDS = [
   'P1-O01',
   'P2-O01',
@@ -169,6 +203,7 @@ export const REQUIRED_SUITE_IDS = [
   'P5-O01',
   'P6-O01',
   'P7-O01',
+  'P8-O01',
 ]
 
 /**
@@ -216,14 +251,14 @@ export function evaluateOracleIds({
 }
 
 /**
- * 現行Phase必須Oracle ID（P7-O01・P7-O02）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
- * - P7-O01: 現行Phase suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
- * - P7-O02: 必須suite（P1-O01〜P7-O01）が各1件存在すること、証跡書込みが現行Phase（P7）のみで
- *           書込み先がartifacts/phase-7/oracle-result.mdだけであること、
- *           実行前後のartifacts/phase-1〜phase-6 SHA-256不変の実測結果、の3判定すべて
+ * 現行Phase必須Oracle ID（P8-O01・P8-O02）の判定。固定文字列のPASSは出力せず、すべて実結果から導出する。
+ * - P8-O01: 現行Phase suiteの照合結果（JDK 25実測値とSimulation Core期待値のJSON完全一致）
+ * - P8-O02: 必須suite（P1-O01〜P8-O01）が各1件存在すること、証跡書込みが現行Phase（P8）のみで
+ *           書込み先がartifacts/phase-8/oracle-result.mdだけであること、
+ *           実行前後のartifacts/phase-1〜phase-7 SHA-256不変の実測結果、の3判定すべて
  *
- * Phase 5 / Phase 6時点の同契約は`suites` / `requiredSuiteIds` / `currentPhase*`へ
- * fixtureを渡して検証し続ける（P5-O02 / P6-O02）。
+ * Phase 5〜7時点の同契約は`suites` / `requiredSuiteIds` / `currentPhase*`へ
+ * fixtureを渡して検証し続ける（P5-O02 / P6-O02 / P7-O02）。
  */
 export function evaluateCurrentPhaseOracleIds({
   suiteResults,
@@ -278,6 +313,17 @@ export const P7_MATCH_NOTES = [
   '組み込み4種の構成要素実装（Greedy / defaultCombiner / defaultFinisher）はOBSERVATION行として厳密比較の対象外に置く（v0.9 §10-3。JDK内部実装を断定せず観測として記録する）',
 ]
 
+/** Phase 8（Collectors.toMap実行）の照合方式の注記 */
+export const P8_MATCH_NOTES = [
+  '対象は§8.2の10ケース（standard 8 + emptySource 2）の実行結果と、partitioningBy空partitionの追加照合',
+  '順序保証のないMap（2・3引数版toMap・groupingBy）はキーの表示文字列の辞書順へ**正規化**してから照合する（返却Mapのentry反復順序はJDKの保証対象外であり照合契約にしない。正規化は比較のためだけであり、iteration order保証を意味しない）',
+  'TreeMap（4引数版）だけは実entry順（中部 → 関東 → 関西）を厳密比較する（順序自体が検証対象）',
+  'encounter order・mergeの適用順は返却Mapの反復順ではなく**結果値**で検証する（first / lastの結果差〔伊藤 / 山本〕が「(既存値, 新しい値)」の適用順を、concatの連結順〔伊藤, 渡辺, 山本〕が順次適用のencounter orderを実証する）',
+  '2引数版の重複キーは例外**型のみ**を契約として照合する（assertThrows(IllegalStateException.class, …)相当）。実測の例外メッセージはOBSERVATION行として観測記録に保存し、厳密比較の対象にしない',
+  'mergeFunctionの呼出し順はOBSERVATION行として記録し、厳密比較の対象にしない',
+  'longは3桁区切り + L表記（formatLongLiteral）へ両側で揃えて厳密照合し、numberへ変換しない。Employee要素はCoreのformatSimValueと同じ`氏名（age=NN）`表記、String値はクォート付き表記へ揃える',
+]
+
 /** Phase 6（取込境界値）の照合方式の注記 */
 export const P6_MATCH_NOTES = [
   '対象は取込相当candidate（Import Contractの前段検証を通した貼付JSON）の実行結果',
@@ -317,8 +363,8 @@ export function buildOracleIdSection({
  * 現行Phaseのoracle-result.mdへ出力する「照合ID・運用検証ID」の結果セクション。
  * evaluateCurrentPhaseOracleIdsの実判定から生成し、いずれかがFAILなら総合判定もFAILになる。
  *
- * PhaseラベルとID名は引数で受け取る（既定は現行Phase = P7）。
- * Phase 5 / Phase 6時点の契約はfixture構成を渡して同じ関数で検証し続ける（Phase 7指示 §12冒頭）。
+ * PhaseラベルとID名は引数で受け取る（既定は現行Phase = P8）。
+ * Phase 5〜7時点の契約はfixture構成を渡して同じ関数で検証し続ける（Phase 8指示 §12冒頭）。
  */
 export function buildCurrentPhaseOracleIdSection({
   evaluation,
@@ -326,12 +372,12 @@ export function buildCurrentPhaseOracleIdSection({
   regression,
   requiredSuiteIds = REQUIRED_SUITE_IDS,
   currentPhaseReportPath = CURRENT_PHASE_REPORT_PATH,
-  phaseLabel = 'P7',
-  matchIdLabel = 'P7-O01',
-  operationsIdLabel = 'P7-O02',
-  pastArtifactsLabel = 'artifacts/phase-1〜phase-6',
-  pastPhasesLabel = 'P1〜P6',
-  matchNotes = P7_MATCH_NOTES,
+  phaseLabel = 'P8',
+  matchIdLabel = 'P8-O01',
+  operationsIdLabel = 'P8-O02',
+  pastArtifactsLabel = 'artifacts/phase-1〜phase-7',
+  pastPhasesLabel = 'P1〜P7',
+  matchNotes = P8_MATCH_NOTES,
 }) {
   return [
     `## ${phaseLabel}必須Oracle IDの結果（${matchIdLabel}・${operationsIdLabel}）`,

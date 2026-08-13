@@ -15,7 +15,12 @@ import {
 import { createApp } from '../../src/ui/appInstance'
 import { gatherTemplateModes, runGather } from '../p7-helpers'
 import { FakeScheduler, makeDefinition } from '../helpers'
-import { collectFixtureJavaCode, EXECUTABLE_TEMPLATES, IMPORTABLE_TEMPLATES } from '../p6-helpers'
+import {
+  collectFixtureJavaCode,
+  IMPORTABLE_TEMPLATES,
+  PHASE7_EXECUTABLE_TEMPLATES,
+  PHASE7_TEMPLATES,
+} from '../p6-helpers'
 import { gathererToJavaExpr } from '../../src/domain/dsl/javaCode'
 
 /**
@@ -135,10 +140,17 @@ describe('P7-D20 catalog / template不変条件', () => {
     expect([...catalog.get('collect').traits]).toEqual(['TERMINAL'])
   })
 
-  it('P7-D20: template総数118 / 実行可能116 / 実行可能×modes 222である', () => {
-    expect(ALL_TEMPLATES).toHaveLength(118)
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(116)
-    const combos = EXECUTABLE_TEMPLATES.reduce((n, t) => n + t.supportedModes.length, 0)
+  /**
+   * **Phase 8指示 §12冒頭の意図的更新**: 固定値検証の対象を**Phase 7完了時点のtemplate集合**へ
+   * スコープ固定した（`ALL_TEMPLATES`から`P8_TEMPLATES`全件を除外）。
+   * 「toMap非含有」での抽出では新設`tmpl-collect-groupby-mergedemo`が残り119 / 117 / 223となり
+   * Phase 7時点集合と一致しないため、除外はtemplate ID集合で行う。
+   * Phase 8の件数検証（126 / 124 / 232）はP8-D20が担う。
+   */
+  it('P7-D20: template総数118 / 実行可能116 / 実行可能×modes 222である（Phase 7完了時点集合）', () => {
+    expect(PHASE7_TEMPLATES).toHaveLength(118)
+    expect(PHASE7_EXECUTABLE_TEMPLATES).toHaveLength(116)
+    const combos = PHASE7_EXECUTABLE_TEMPLATES.reduce((n, t) => n + t.supportedModes.length, 0)
     expect(combos).toBe(222)
     expect(P7_TEMPLATES).toHaveLength(7)
   })

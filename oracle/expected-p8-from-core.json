@@ -1,0 +1,51 @@
+{
+  "identity": [
+    "佐藤=佐藤（age=35）",
+    "田中=田中（age=29）",
+    "鈴木=鈴木（age=27）",
+    "高橋=高橋（age=42）"
+  ],
+  "identityEmpty": [],
+  "duplicateExceptionType": "IllegalStateException",
+  "duplicateKey": "関東",
+  "duplicateExistingValue": "\"伊藤\"",
+  "duplicateIncomingValue": "\"渡辺\"",
+  "mergeFirst": [
+    "中部=\"小林\"",
+    "関東=\"伊藤\"",
+    "関西=\"中村\""
+  ],
+  "mergeLast": [
+    "中部=\"小林\"",
+    "関東=\"山本\"",
+    "関西=\"中村\""
+  ],
+  "mergeConcat": [
+    "中部=\"小林\"",
+    "関東=\"伊藤, 渡辺, 山本\"",
+    "関西=\"中村\""
+  ],
+  "groupingByMergeDemo": [
+    "中部=[小林（age=30）]",
+    "関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]",
+    "関西=[中村（age=33）]"
+  ],
+  "treeMapOrdered": [
+    "中部=4_800_000L",
+    "関東=5_500_000L",
+    "関西=4_200_000L"
+  ],
+  "treeMapEmpty": [],
+  "groupedToMap": [
+    "中部={田中=4_800_000L}",
+    "関東={佐藤=5_500_000L, 高橋=7_200_000L}",
+    "関西={鈴木=4_200_000L}"
+  ],
+  "partitionFalseEmpty": [],
+  "partitionTrue": [
+    "佐藤=5_500_000L",
+    "田中=4_800_000L",
+    "鈴木=4_200_000L",
+    "高橋=7_200_000L"
+  ]
+}
