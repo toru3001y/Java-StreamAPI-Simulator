@@ -85,6 +85,13 @@ interface TeeRuntime {
   currentElementId: ElementId | null
   mergerApplied: boolean
   finalFields: { name: string; typeLabel: string; valueLabel: string }[] | null
+  /**
+   * branchのMap生成注記を発行済みか（v0.12 §3）。「初回TEE_BRANCH_ACCUMULATED」は
+   * Mapのentry有無から導出しない（adapter経由で初回要素が除外されるとMapは空のまま
+   * 次要素へ進み、注記が重複発行されるため）。独立状態として1回だけ発行する。
+   */
+  leftCreationNoted: boolean
+  rightCreationNoted: boolean
 }
 
 interface BucketRuntime {
@@ -274,6 +281,8 @@ function createNode(dsl: CollectorDsl, inputType: TypeRef, nodeKey: string): Col
         currentElementId: null,
         mergerApplied: false,
         finalFields: null,
+        leftCreationNoted: false,
+        rightCreationNoted: false,
       }
       break
     default:
@@ -571,6 +580,7 @@ function accumulateNode(
   ctx: WalkCtx,
   overrideKind: SnapshotKind | null,
   overrideBranch: 'LEFT' | 'RIGHT' | null = null,
+  creationNote: string | null = null,
 ): void {
   const dsl = node.dsl
   const name = shortLabel(value)
@@ -599,7 +609,7 @@ function accumulateNode(
       },
       // teeing branchの蓄積では、どちらのbranchの蓄積が確定したかを説明へ含める
       currentText: branchText !== null ? `${branchText}の蓄積が確定しました。${currentText}` : currentText,
-      jdkNote: jdkNote ?? null,
+      jdkNote: joinNotes(creationNote, jdkNote ?? null),
     })
   }
 
@@ -1065,12 +1075,31 @@ function accumulateNode(
         }
         setState('ACCUMULATING')
         const branchLabelIndex = ctx.pathLabels.length
+        const branchPathIndex = ctx.path.length
         pathLabelOnly(ctx, branch === 'LEFT' ? '左branch' : '右branch')
+        // branchのdownstream Map生成は初回TEE_BRANCH_ACCUMULATEDのcontextで表す（v0.11 §6.3）。
+        // 発行済み判定はMapのentry有無から導出せず、branchごとの独立状態で正確に1回にする
+        const alreadyNoted = branch === 'LEFT' ? tee.leftCreationNoted : tee.rightCreationNoted
+        const branchCreationNote = alreadyNoted ? null : teeBranchMapCreationNote(child)
+        const markNoted = (): void => {
+          if (branchCreationNote === null) return
+          if (branch === 'LEFT') tee.leftCreationNoted = true
+          else tee.rightCreationNoted = true
+        }
         if (isLeafAccumulator(child.dsl)) {
           // branch rootの蓄積更新はTEE_BRANCH_ACCUMULATEDのみ（CONTAINER_UPDATEDと二重発行しない）。
           // 確定snapshotなので、その1件が「このbranchの蓄積確定」を表す
           setState('ACCUMULATED')
-          accumulateNode(child, value, ctx, 'TEE_BRANCH_ACCUMULATED', branch)
+          accumulateNode(child, value, ctx, 'TEE_BRANCH_ACCUMULATED', branch, branchCreationNote)
+          // 失敗要素ではTEE_BRANCH_ACCUMULATEDが発行されないため、branch状態を蓄積中へ戻す（v0.11 §6.3）
+          if (ctx.failure !== null) {
+            setState('ACCUMULATING')
+            ctx.pathLabels.length = branchLabelIndex
+            ctx.path.length = branchPathIndex
+            tee.activeBranch = 'NONE'
+            return
+          }
+          markNoted()
         } else {
           // branch内部の蓄積更新は汎用Collector snapshot（この間はACCUMULATING）。
           // branch単位の確定を1件だけ発行する
@@ -1078,6 +1107,7 @@ function accumulateNode(
           // 失敗要素ではTEE_BRANCH_ACCUMULATEDを発行しない（v0.11 §6.3）
           if (ctx.failure !== null) {
             ctx.pathLabels.length = branchLabelIndex
+            ctx.path.length = branchPathIndex
             tee.activeBranch = 'NONE'
             return
           }
@@ -1093,9 +1123,13 @@ function accumulateNode(
               outcome: `${branch} branchの蓄積が確定しました`,
             },
             currentText: `${name}に対する${branch === 'LEFT' ? '左' : '右'}branchの蓄積が確定しました。`,
+            jdkNote: branchCreationNote,
           })
+          markNoted()
         }
         ctx.pathLabels.length = branchLabelIndex
+        // 左右branch間でctx.pathも復元する（右branch経路は['c0','c0.right']。v0.11 §6.2の9）
+        ctx.path.length = branchPathIndex
       }
       tee.activeBranch = 'NONE'
       return
@@ -1123,6 +1157,24 @@ function effectiveContainerNode(node: CollectorRuntimeNode | null): CollectorRun
     }
   }
   return null
+}
+
+/** 複数のjdkNoteを連結する（nullは除外。すべてnullならnull） */
+function joinNotes(...notes: readonly (string | null)[]): string | null {
+  const joined = notes.filter((n): n is string => n !== null).join('')
+  return joined === '' ? null : joined
+}
+
+/**
+ * teeing branchの実効コンテナがtoMapのとき、そのMap生成をbranch事象
+ * （初回`TEE_BRANCH_ACCUMULATED` / 1件も発行しなかったbranchの`TEE_BRANCH_FINISHED`）の
+ * contextで表す（v0.11 §6.3の親種別表teeing行。独立の`CONTAINER_CREATED`は追加しない）。
+ * 「初回」の判定はMapのentry有無ではなく`TeeRuntime.left/rightCreationNoted`が担う。
+ */
+function teeBranchMapCreationNote(child: CollectorRuntimeNode): string | null {
+  const target = effectiveContainerNode(child)
+  if (!target || target.dsl.kind !== 'toMap') return null
+  return `このbranchのMap（${mapContainerLabel(target)}）はbranch蓄積の開始と同時に用意されます（独立のCONTAINER_CREATEDは発行しません）。`
 }
 
 /**
@@ -1424,6 +1476,10 @@ function finishTeeing(node: CollectorRuntimeNode, ctx: FinishCtx): void {
   ]
   for (const [branch, child] of branches) {
     tee.activeBranch = branch
+    // TEE_BRANCH_ACCUMULATEDを1件も発行しなかったbranch（0件branch）のMap生成は
+    // TEE_BRANCH_FINISHEDのcontextで表す（v0.11 §6.3。発行済みなら重ねない）
+    const alreadyNoted = branch === 'LEFT' ? tee.leftCreationNoted : tee.rightCreationNoted
+    const creationNote = alreadyNoted ? null : teeBranchMapCreationNote(child)
     // branch root自身のCOLLECTOR_FINISHEDは発行せず、TEE_BRANCH_FINISHEDのみとする（§9.1規則4）
     finishNode(child, ctx, true)
     if (branch === 'LEFT') tee.leftState = 'FINISHED'
@@ -1439,10 +1495,12 @@ function finishTeeing(node: CollectorRuntimeNode, ctx: FinishCtx): void {
         outcome: `${formatTypeRef(child.resultType)} = ${resultLabelOf(child)}`,
       },
       currentText: `${branch === 'LEFT' ? '左' : '右'}downstreamのfinisherが適用され、${branch === 'LEFT' ? 'R1' : 'R2'}は${resultLabelOf(child)}（${formatTypeRef(child.resultType)}）に確定しました。`,
-      jdkNote:
+      jdkNote: joinNotes(
         branch === 'LEFT'
           ? '教材上の表示順は左→右です。JDKはdownstream Collector間の観測可能な呼出し順を保証しません。'
           : null,
+        creationNote,
+      ),
     })
   }
   tee.activeBranch = 'NONE'

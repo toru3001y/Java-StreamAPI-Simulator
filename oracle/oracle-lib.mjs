@@ -315,7 +315,7 @@ export const P7_MATCH_NOTES = [
 
 /** Phase 8（Collectors.toMap実行）の照合方式の注記 */
 export const P8_MATCH_NOTES = [
-  '対象は§8.2の10ケース（standard 8 + emptySource 2）の実行結果と、partitioningBy空partitionの追加照合',
+  '対象は§8.2の10ケース（standard 8 + emptySource 2）の実行結果と、partitioningBy空partitionの追加照合、およびv0.12のteeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new)（teeing branchへのtoMap配置。左branchはTreeMapのため実entry順で厳密比較）',
   '順序保証のないMap（2・3引数版toMap・groupingBy）はキーの表示文字列の辞書順へ**正規化**してから照合する（返却Mapのentry反復順序はJDKの保証対象外であり照合契約にしない。正規化は比較のためだけであり、iteration order保証を意味しない）',
   'TreeMap（4引数版）だけは実entry順（中部 → 関東 → 関西）を厳密比較する（順序自体が検証対象）',
   'encounter order・mergeの適用順は返却Mapの反復順ではなく**結果値**で検証する（first / lastの結果差〔伊藤 / 山本〕が「(既存値, 新しい値)」の適用順を、concatの連結順〔伊藤, 渡辺, 山本〕が順次適用のencounter orderを実証する）',

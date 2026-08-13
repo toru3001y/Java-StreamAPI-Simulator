@@ -168,7 +168,7 @@ describe('P6-D18 文字列エスケープ契約', () => {
     for (const key of goldenKeys) {
       expect(current[key], key).toEqual(golden[key])
     }
-    // 追加キーはPhase 7のgather template × mode（11件）とPhase 8のtemplate × mode（10件）だけ
+    // 追加キーはPhase 7のgather template × mode（11件）とPhase 8のtemplate × mode（11件）だけ
     const gatherTemplateIds = GATHER_TEMPLATES.map((t) => t.templateId)
     const addedKeys = currentKeys.filter((key) => !goldenKeys.includes(key)).sort()
     const gatherAdded = GATHER_TEMPLATES.flatMap((t) =>
@@ -178,7 +178,7 @@ describe('P6-D18 文字列エスケープ契約', () => {
       t.supportedModes.map((mode) => `${t.templateId}:${mode}`),
     )
     expect(gatherAdded).toHaveLength(11)
-    expect(p8Added).toHaveLength(10)
+    expect(p8Added).toHaveLength(11)
     expect(addedKeys).toEqual([...gatherAdded, ...p8Added].sort())
     expect(gatherTemplateIds).toHaveLength(7)
   })

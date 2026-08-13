@@ -889,12 +889,11 @@ export function resolveCollectorType(
       const branchTypes = [left.value, right.value]
       record.fields.forEach((field, i) => {
         const branch = branchTypes[i]
-        const expected = field.javaType === 'long' ? 'Long' : 'Double'
-        if (!branch || !(branch.kind === 'object' && branch.name === expected)) {
+        if (!branch || !typeRefEquals(branch, field.expected)) {
           issues.push(
             issue(
               'TYPE_MISMATCH',
-              `${record.recordName}の${field.name}（${field.javaType}）には${expected}結果のbranchが必要です: ${branch ? formatTypeRef(branch) : 'なし'}`,
+              `${record.recordName}の${field.name}（${field.javaType}）には${formatTypeRef(field.expected)}結果のbranchが必要です: ${branch ? formatTypeRef(branch) : 'なし'}`,
               `${path}.${i === 0 ? 'left' : 'right'}`,
             ),
           )

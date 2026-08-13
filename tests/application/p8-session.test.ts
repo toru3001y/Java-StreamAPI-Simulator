@@ -66,8 +66,8 @@ describe('P8-A01 シナリオ切替', () => {
 })
 
 describe('P8-A02 再生・復元', () => {
-  it('P8-A02: 全8 template × 全modeで期待終端へ到達し、snapshotCountが一致する', () => {
-    expect(P8_TEMPLATE_MODES).toHaveLength(10)
+  it('P8-A02: 全9 template × 全modeで期待終端へ到達し、snapshotCountが一致する', () => {
+    expect(P8_TEMPLATE_MODES).toHaveLength(11)
     for (const { templateId, mode } of P8_TEMPLATE_MODES) {
       const { app } = newApp()
       app.selectScenario(templateId, mode)

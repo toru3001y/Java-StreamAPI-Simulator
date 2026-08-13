@@ -71,6 +71,15 @@ function orderedEntries(templateId: string, mode: ScenarioMode): string[] {
   return entryPairs(mapResultOf(templateId, mode))
 }
 
+/** teeing merger結果record（v0.12 teeing×toMap。fieldのvalueLabelを名前で引く） */
+function recordFieldsOf(templateId: string, mode: ScenarioMode): Record<string, string> {
+  const result = lastSnapshotOf(templateId, mode).output.result
+  if (!result || result.kind !== 'RECORD') {
+    throw new Error(`RECORD結果ではありません: ${templateId}:${mode} (${result?.kind})`)
+  }
+  return Object.fromEntries(result.fields.map((f) => [f.name, f.valueLabel]))
+}
+
 /** 実行失敗ケース（例外型のみを契約とする） */
 function failureOf(templateId: string): {
   exceptionType: string
@@ -127,6 +136,7 @@ function partitioningByEmptyPartition(): { falsePartition: string[]; truePartiti
 export function buildP8ExpectedFromCore(): Record<string, unknown> {
   const failure = failureOf('tmpl-collect-tomap-duplicate')
   const partition = partitioningByEmptyPartition()
+  const teeingToMap = recordFieldsOf('tmpl-collect-teeing-tomap', 'standard')
   return {
     // ---- §8.2 #1 / #2: 2引数版・value側identity（順序保証なし → 正規化） ----
     identity: normalizedEntries('tmpl-collect-tomap-identity', 'standard'),
@@ -150,5 +160,8 @@ export function buildP8ExpectedFromCore(): Record<string, unknown> {
     // ---- 追加照合: partitioningBy配下の4引数版（要素0件のpartitionも空TreeMapが値になる） ----
     partitionFalseEmpty: partition.falsePartition,
     partitionTrue: partition.truePartition,
+    // ---- v0.12: teeing branchへのtoMap配置（左=TreeMapのため実entry順のまま・右=counting） ----
+    teeingToMapByRegion: teeingToMap['byRegion'],
+    teeingToMapCount: teeingToMap['count'],
   }
 }

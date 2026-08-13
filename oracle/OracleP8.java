@@ -28,6 +28,8 @@ import java.util.stream.Collectors;
  *  10. groupingBy(region)（同一データのgroupingBy比較。1キー多値）
  *  +   partitioningBy(e -> e.age() >= 0, toMap(name, salary, first, TreeMap::new))
  *      （要素0件のfalse partitionも空TreeMapが値になる）
+ *  +   v0.12: teeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new)
+ *      （teeing branchへのtoMap配置。左branchはTreeMapのため実entry順で厳密比較）
  *
  * 照合方式（Phase 5〜7で確立した方式の踏襲。指示§12.5）:
  *   - **順序保証のないMap**（2・3引数版toMap・groupingBy）はキーの表示文字列の**辞書順へ正規化**して
@@ -61,6 +63,9 @@ public class OracleP8 {
             LocalDate hireDate,
             Department department,
             List<String> skills) {}
+
+    /** v0.12: teeing merger record（Simulation Coreの`RegionIndex::new`と同形） */
+    record RegionIndex(Map<String, String> byRegion, long count) {}
 
     private static String jsonString(String value) {
         StringBuilder sb = new StringBuilder("\"");
@@ -234,6 +239,17 @@ public class OracleP8 {
                         e -> e.age() >= 0,
                         Collectors.toMap(Employee::name, Employee::salary, (a, b) -> a, TreeMap::new)));
 
+        // ---- v0.12: teeing branchへのtoMap配置（画面表示のcollect式と同一形） ----
+        RegionIndex regionIndex = employeesMergeDemo.stream()
+                .collect(Collectors.teeing(
+                        Collectors.toMap(Employee::region, Employee::name, (a, b) -> a, TreeMap::new),
+                        Collectors.counting(),
+                        RegionIndex::new));
+        // 左branchはTreeMapのため実entry順のまま`{k=v, …}`へ整形（CoreのresultLabelOfと同一表記）
+        String teeingToMapByRegion =
+                "{" + String.join(", ", pairs(regionIndex.byRegion(), OracleP8::stringLabel)) + "}";
+        String teeingToMapCount = Long.toString(regionIndex.count());
+
         // ---- OBSERVATION（厳密比較の対象外。JDKの保証として扱わない） ----
         System.out.println("OBSERVATION: toMap2Arg.exceptionMessage=" + duplicateExceptionMessage);
         List<String> mergeCallOrder = new ArrayList<>();
@@ -278,6 +294,8 @@ public class OracleP8 {
                 .append(jsonStrings(pairs(partitioned.get(false), OracleP8::longLiteral)));
         json.append(",\"partitionTrue\":")
                 .append(jsonStrings(pairs(partitioned.get(true), OracleP8::longLiteral)));
+        json.append(",\"teeingToMapByRegion\":").append(jsonString(teeingToMapByRegion));
+        json.append(",\"teeingToMapCount\":").append(jsonString(teeingToMapCount));
         json.append('}');
         System.out.println(json);
     }

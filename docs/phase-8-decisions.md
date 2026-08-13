@@ -252,6 +252,34 @@ merger IDを追加して到達可能にしても**未実装のまま残る**。�
 `docs/phase-8-completion-report.md` §1のとおり**未完了を維持**する）。teeing × toMapはA案を
 独立Phaseとして扱い、その際に残作業(1)〜(3)を同時に解消する。
 
+### 9.2 実施記録: A案の実施（2026-08-13、Phase 9）
+
+§9.1のA案をPhase 9（ブランチ`phase-9`、仕様v0.12差分
+`docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`）として実施した。
+
+- `TEEING_MERGER_IDS`へ`'RegionIndex::new'`（`record RegionIndex(Map<String, String> byRegion, long count)`）
+  を追加し、merger fieldの型表現を表示用Java表記（`javaType: string`）+ 検証用`expected: TypeRef`
+  （`typeRefEquals`による構造比較）へ拡張した。新mergerも2フィールドrecordとし、
+  左=fields[0] / 右=fields[1]の位置対応は変更していない。
+- 残作業(1)（`ctx.path`復元）・(2)（更新kind排他の実行検証: branch直下の成功put / merge /
+  重複キー失敗、およびbranch内部〔adapter経由〕の内部`CONTAINER_UPDATED` + branch確定の
+  別事象発行）・(3)（branch Map生成表示）を同時に解消した。(1)のPhase 5波及は実測ゼロ
+  （P5テストに右branch経路のassertなし、視覚回帰基準画像はmerger適用時点のみで画素不変）。
+- codexレビュー第1回（高-1）で、branch内部（adapter経由）の検証欠落と、生成注記の「初回」判定を
+  Mapのentry有無から導出していたことによる**注記の重複発行バグ**（filter除外でMapが空のまま
+  次要素へ進むケース）の指摘を受けた。注記の発行済み管理を`TeeRuntime`の独立フラグ
+  （`leftCreationNoted` / `rightCreationNoted`）へ変更し、adapter経由の排他列・
+  注記が全snapshot列で正確に1回であること（初回要素除外・全要素除外の両ケース）を
+  テストへ追加して解消した（v0.12 §3・§6・§7へ反映）。
+- §9.1の影響範囲見積もりのうち`snapshot.ts`のview型拡張は**不要**だった（Map値は既存の
+  `{k=v, …}`1行ラベル生成を流用し、`RECORD` variantの`valueLabel: string`のまま収まった）。
+  それ以外の7ファイル + 仕様追補 + JDK実測は見積もりどおり。
+- B案（型検証スキップ）・C案（テスト用バイパス）の却下判断は維持した。JDK 25実測（P8-O01への
+  `teeingToMapByRegion` / `teeingToMapCount`キー追加）が、RegionIndex入り生成Javaコードの
+  コンパイル可能性（B案却下理由の前提）の裏取りを兼ねる。
+
+詳細はv0.12差分の§2〜§6と`docs/phase-8-completion-report.md` §17-1の追記。
+
 ## 10. FAILED状態のstopReason（指示§7.2、v0.11 §6.2の3・4）
 
 **判断**: `PlaybackState`へ`'FAILED'`を追加し、**`stopReason`は設定しない**（nullのまま）。

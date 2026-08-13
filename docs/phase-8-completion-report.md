@@ -12,6 +12,11 @@
 lint / 型検査 / production build、E2E・視覚回帰・PC / 狭幅確認、§10の総点検、統合docxのv0.11取込——は
 すべて満たしている。
 
+> **追記（2026-08-13、Phase 9）**: 未達だったteeing branchへのtoMap配置はPhase 9
+> （仕様v0.12差分`docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`・ブランチ`phase-9`）で
+> 解消し、P8-D18 / P8-D15を含む**P8必須39 IDはすべて完全成功**となった。本節以下の判定記述は
+> Phase 8終了時点の歴史的記録としてそのまま残す。詳細は§17-1の追記と`docs/phase-8-decisions.md` §9.2。
+
 **未達の理由**（詳細は `docs/phase-8-decisions.md` §9）:
 
 `resolveCollectorType` の `teeing` 分岐は、merger record の型契約に従い
@@ -587,6 +592,16 @@ python tools/verify_spec_docx.py \
    | (1) | **左右branch間の`ctx.path`復元** | `collectorRuntime.ts` のteeing分岐は `ctx.pathLabels` の長さのみ戻し、`ctx.path` を戻していない。そのため右branchの経路は `['c0','c0.left','c0.right']` になる（テストで固定済み）。v0.11 §6.2の9が右branch失敗に期待する `['c0','c0.right']` と一致しないため、`ctx.path` の復元が必要。**ただしこの経路は Phase 5 の既存teeing snapshot（`currentPath`）契約でもあるため、変更時は既存P5テスト・基準画像への影響評価が必須** |
    | (2) | **branch直下 / branch内部（adapter経由）の更新kind排他のtoMapでの検証** | `isLeafAccumulator` + `overrideKind` の既存機構に依存しており、toMapでは一度も実行されていない。branch直下は `CONTAINER_UPDATED` → `TEE_BRANCH_ACCUMULATED` 置換、branch内部は内部 `CONTAINER_UPDATED` ＋ branch確定の別事象、失敗要素は `TEE_BRANCH_ACCUMULATED` 不発行、の3分岐を実行検証する必要がある |
    | (3) | **初回`TEE_BRANCH_ACCUMULATED` / 0件branchの`TEE_BRANCH_FINISHED`へのTreeMap生成context** | **未実装**。v0.11 §6.3の親種別表（teeing行）が要求する「branchのdownstream Map生成表示」を、これらの事象のcontextへ載せる実装が必要（現状は生成表示を持たないことをテストで固定している） |
+
+   **解消（2026-08-13追記、Phase 9）**: 本項はPhase 9（仕様v0.12差分・ブランチ`phase-9`）で
+   `docs/phase-8-decisions.md` §9.1のA案（`RegionIndex::new`の追加）とともに**すべて解消した**。
+   P8-D18はbranch直下（成功put / merge / 重複キー失敗）とbranch内部（adapter経由の内部
+   `CONTAINER_UPDATED` + branch確定の別事象発行）の排他、およびbranch生成表示（全snapshot列で
+   正確に1回）を実行検証し、P8-D15は第6配置
+   （teeing branch）の`collectorPath` / `bucketPath`配列完全一致を検証した。上記の固定テスト
+   「P8-D18(残作業の固定)」「P8-D15(未実施記録)」は実装版へ書き換えた。(1)のPhase 5波及は実測ゼロ
+   （P5テストに右branch経路のassertはなく、視覚回帰基準画像はmerger適用時点〔`currentPath = []`〕のみで
+   画素不変）。これによりP8必須39 IDはすべて完全成功となった。記録は`docs/phase-8-decisions.md` §9.2。
 2. **toMapの手動連携取込開放** — v0.11 §10-6のユーザー決定（2026-08-13）により見送り。
    開放する場合は `collectorVariants` へのtoMap variant追加とプロンプト生成のtoMap言語化が必要。
    `importable: false` 化（§7.7）は開放ではなく対象外化のための実装である。

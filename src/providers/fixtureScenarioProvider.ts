@@ -1126,6 +1126,28 @@ const P8_FIXTURES: readonly FixtureDefinition[] = [
     },
     STANDARD_EMPLOYEES,
   ),
+  // ---- teeing branchへのtoMap配置（v0.12。Phase 8持越しのP8-D18 / P8-D15第6配置） ----
+  fx(
+    'tmpl-collect-teeing-tomap',
+    'standard',
+    'collect(teeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new))標準',
+    '同じEmployee 5件が左右両方のCollectorへ渡ります。左branchのtoMapは関東3件の衝突をfirst（既存値を保持）で解決し、TreeMapのためキー昇順に並びます。期待結果はRegionIndex[byRegion={中部="小林", 関東="伊藤", 関西="中村"}, count=5]です。',
+    {
+      'slot-collector': {
+        kind: 'teeing',
+        left: {
+          kind: 'toMap',
+          keyMapper: regionKeyMapper,
+          valueMapper: nameValueMapper,
+          mergeFunctionId: 'first',
+          mapFactoryId: 'TreeMap::new',
+        },
+        right: { kind: 'counting' },
+        mergerId: 'RegionIndex::new',
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
 ]
 
 const FIXTURES: readonly FixtureDefinition[] = deepFreeze([

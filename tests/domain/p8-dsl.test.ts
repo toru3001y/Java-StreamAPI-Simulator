@@ -389,10 +389,9 @@ describe('P8-D06 配置制約（downstream / left / right・Employee入力・深
     expect(issues.some((i) => i.code === 'COLLECTOR_DEPTH')).toBe(true)
   })
 
-  it('P8-D06: teeing branchへのtoMap配置は既存merger record契約により型不整合になる（Phase 8未実装事項）', () => {
-    // TEEING_MERGER_IDSは'SalarySummary::new'（long / double）の1件だけであり、
-    // branch結果がMapのteeingは成立しない。v0.11 §8.6のleaf配置許可はDSL構造上の許可であり、
-    // 実行可能な組合せはmerger recordの型契約に従う（docs/phase-8-decisions.md §9）
+  it('P8-D06: teeing branchのtoMap配置はmerger recordの型契約に従う（v0.12でRegionIndex追加）', () => {
+    // merger recordの型契約はJava言語制約（mergerの引数型 = branch結果型）の写像であり、
+    // SalarySummary（long / double）へのtoMap配置は引き続きTYPE_MISMATCHになる
     const teeingWithToMap: unknown = {
       kind: 'teeing',
       left: toMap2(),
@@ -405,6 +404,45 @@ describe('P8-D06 配置制約（downstream / left / right・Employee入力・深
     if (!typed.ok) {
       expect(typed.issues[0]?.code).toBe('TYPE_MISMATCH')
       expect(typed.issues[0]?.path).toBe('collector.left')
+    }
+    // v0.12: RegionIndex（Map<String, String> / long）は左=toMap(region, name)・右=countingを受理する
+    const regionIndex: unknown = {
+      kind: 'teeing',
+      left: toMap2(),
+      right: { kind: 'counting' },
+      mergerId: 'RegionIndex::new',
+    }
+    expect(validateCollectorStructure(regionIndex).ok).toBe(true)
+    const regionIndexTyped = resolveCollectorType(regionIndex as CollectorDsl, TYPE_EMPLOYEE)
+    expect(regionIndexTyped.ok).toBe(true)
+    if (regionIndexTyped.ok) {
+      expect(regionIndexTyped.value).toEqual({ kind: 'object', name: 'RegionIndex' })
+    }
+    // 型はTypeRef構造で照合される: Map<String, Long>はMap<String, String>フィールドに置けない
+    const wrongValueType: unknown = {
+      kind: 'teeing',
+      left: toMap2(NAME_KEY, SALARY_VALUE),
+      right: { kind: 'counting' },
+      mergerId: 'RegionIndex::new',
+    }
+    const wrongTyped = resolveCollectorType(wrongValueType as CollectorDsl, TYPE_EMPLOYEE)
+    expect(wrongTyped.ok).toBe(false)
+    if (!wrongTyped.ok) {
+      expect(wrongTyped.issues[0]?.code).toBe('TYPE_MISMATCH')
+      expect(wrongTyped.issues[0]?.path).toBe('collector.left')
+    }
+    // 右branch（long field）へのtoMap配置も引き続きTYPE_MISMATCH
+    const toMapOnRight: unknown = {
+      kind: 'teeing',
+      left: toMap2(),
+      right: toMap2(NAME_KEY, NAME_VALUE),
+      mergerId: 'RegionIndex::new',
+    }
+    const rightTyped = resolveCollectorType(toMapOnRight as CollectorDsl, TYPE_EMPLOYEE)
+    expect(rightTyped.ok).toBe(false)
+    if (!rightTyped.ok) {
+      expect(rightTyped.issues[0]?.code).toBe('TYPE_MISMATCH')
+      expect(rightTyped.issues[0]?.path).toBe('collector.right')
     }
   })
 })

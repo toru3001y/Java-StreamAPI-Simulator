@@ -590,6 +590,10 @@ class RefResolver:
                       lambda m: prot(m.group(1)), text)
         text = re.sub(r'(?:Draft\s+)?v0\.8\s*(§\d+(?:\.\d+)*)',
                       lambda m: prot(m.group(1)), text)
+        if self.chapter >= 29:
+            # 第29章（v0.12）から導入。第26〜28章の出力を変えないため章番号で限定する
+            text = re.sub(r'v0\.11\s*§(\d+(?:\.\d+)*)',
+                          lambda m: prot('§28.' + m.group(1)), text)
         text = re.sub(r'v0\.10\s*§(\d+(?:\.\d+)*)',
                       lambda m: prot('§27.' + m.group(1)), text)
         text = re.sub(r'v0\.9\s*§(\d+(?:\.\d+)*)',
@@ -670,6 +674,12 @@ EXC_V11 = [
      _prot('§3.2') + '（初版に含めないもの）への追加: ' + _prot('§28.2.2')),
     ('§9.1（Collector DSL許可構造）への追加: §8',
      _prot('§9.1') + '（Collector DSL許可構造）への追加: ' + _prot('§28.8')),
+]
+
+EXC_V12 = [
+    # リポジトリ文書（phase-8-decisions.md）内の節番号であり、本書の節ではない
+    ('`docs/phase-8-decisions.md` §9.1のA案の実施',
+     '`docs/phase-8-decisions.md` ' + _prot('§9.1') + 'のA案の実施'),
 ]
 
 # v0.10 §1.2 対応表：第1列は v0.8 の箇所を無印で挙げている
@@ -1118,7 +1128,7 @@ def apply_v11_pointers(s):
 
 # ---------------------------------------------------------------- メタデータ更新
 
-def apply_meta(s, version_label, date_label, has_v10, has_v11=False):
+def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=False):
     """本書自身の版を表す記述を更新し、読み方の凡例を冒頭へ置く。
 
     ここで書き換えるのは「この文書は何版か」を述べている箇所だけである。
@@ -1139,7 +1149,16 @@ def apply_meta(s, version_label, date_label, has_v10, has_v11=False):
     s.replace_text('Draft v0.8 終了', '%s 終了' % version_label)
 
     # 冒頭の読み方（統合版を単独で読むための全体凡例）
-    if has_v11:
+    if has_v12:
+        # v0.12はv0.8本文への注記を追加しない（変更は第28章の規定の実装確定と第29章の追加のみ）
+        # ため、注記の凡例はv0.11までのまま、差分名と章対応だけを広げる
+        diff_names = ('、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）、'
+                      'v0.12（teeing × toMap差分）')
+        vers = 'v0.9・v0.10・v0.11'
+        notes = '【v0.9による追加】【v0.10による変更】【v0.11による追加】'
+        chapters = '第26章〜第28章'
+        chapter_map = '第26章（v0.9）・第27章（v0.10）・第28章（v0.11）・第29章（v0.12）'
+    elif has_v11:
         diff_names = '、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）'
         vers = 'v0.9・v0.10・v0.11'
         notes = '【v0.9による追加】【v0.10による変更】【v0.11による追加】'
@@ -1256,6 +1275,17 @@ PREFACE_28 = [
     '当該文書内の節番号であり本書の節ではない。',
 ]
 
+PREFACE_29 = [
+    '本章は、v0.12差分文書（`docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`）の'
+    '全文を章立てで収録したものである。第1〜25章および付録A〜Fの本文はDraft v0.8から変更しておらず、'
+    '本章への参照行のみを追加している。',
+    '本章の記述で「本書」とあるのは本章（v0.12差分）を、「v0.8」とあるのは本書の第1〜25章および'
+    '付録A〜F、「v0.9」とあるのは第26章、「v0.10」とあるのは第27章、「v0.11」とあるのは第28章を指す。'
+    '本章内の節を指す参照は§29.x、v0.9〜v0.11の節を指す参照は§26.x〜§28.x、v0.8本文の節を指す参照は'
+    '§1〜§25および付録の記号で表記している。なお本章内の`docs/phase-8-decisions.md`等のリポジトリ文書への'
+    '§参照は、当該文書内の節番号であり本書の節ではない。',
+]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -1263,6 +1293,7 @@ def main():
     ap.add_argument('--v09', required=True)
     ap.add_argument('--v10')
     ap.add_argument('--v11')
+    ap.add_argument('--v12')
     ap.add_argument('--out', required=True)
     ap.add_argument('--version-label', default=None)
     ap.add_argument('--date-label', default='2026-08-12')
@@ -1270,7 +1301,10 @@ def main():
 
     if args.v11 and not args.v10:
         raise SystemExit('--v11 には --v10 が必要です（v0.11はv0.10までの統合を前提とする）')
+    if args.v12 and not args.v11:
+        raise SystemExit('--v12 には --v11 が必要です（v0.12はv0.11までの統合を前提とする）')
     version_label = args.version_label or (
+        'Draft v0.12' if args.v12 else
         'Draft v0.11' if args.v11 else 'Draft v0.10' if args.v10 else 'Draft v0.9')
 
     base_bytes = open(args.base, 'rb').read()
@@ -1287,13 +1321,14 @@ def main():
     report = {}
 
     # A: メタデータ（章追加より前に行う。章本文がv0.8の版表記を引用するため）
-    apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11))
+    apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11), bool(args.v12))
     report['A メタデータ'] = 7
 
     # 目次
     s.insert_rows_before('>A〜F</w:t>', [['26', 'v0.9差分：Stream.gather / Gatherers']]
                          + ([['27', 'v0.10差分：Phase 6 手動連携']] if args.v10 else [])
-                         + ([['28', 'v0.11差分：Collectors.toMap']] if args.v11 else []))
+                         + ([['28', 'v0.11差分：Collectors.toMap']] if args.v11 else [])
+                         + ([['29', 'v0.12差分：teeing × toMap']] if args.v12 else []))
     report['A 目次'] = 1
 
     # §1.1 改訂点
@@ -1307,6 +1342,10 @@ def main():
         rev_rows.append(['v0.11', '`Collectors.toMap`（2・3・4引数）を教材対象へ追加し、'
                                   'Phase 8を新設（第28章）。実行失敗契約（正常完了しない'
                                   'Pipelineの教材化）をsnapshot契約へ追加'])
+    if args.v12:
+        rev_rows.append(['v0.12', 'teeing branchへのtoMap配置を解消するmerger record'
+                                  '（RegionIndex）を追加（第29章）。Phase 8持越しの'
+                                  'P8-D18 / P8-D15第6配置を完了'])
     s.append_rows('教材Pipeline最大ノード数ガイドラインの運用方針', rev_rows)
     report['A §1.1改訂点'] = 1
 
@@ -1353,6 +1392,17 @@ def main():
         unused = [c for c, _ in EXC_V11 if c not in r11.used]
         if unused:
             raise AssertionError('v0.11の未適用例外: %r' % unused)
+
+    if args.v12:
+        md12 = open(args.v12, encoding='utf-8').read()
+        r12 = RefResolver(29, EXC_V12)
+        x29, bid = build_chapter(parse_markdown(md12), 29,
+                                 'v0.12差分：teeing × toMap', r12, nums, bid, PREFACE_29)
+        s.insert_chapter_before('付録A. 実装対象メソッド一覧', x29)
+        report['C 第29章'] = 1
+        unused = [c for c, _ in EXC_V12 if c not in r12.used]
+        if unused:
+            raise AssertionError('v0.12の未適用例外: %r' % unused)
 
     numbering = extend_numbering(numbering, nums.created)
     core = re.sub(r'(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)',
