@@ -323,6 +323,9 @@ export const P8_MATCH_NOTES = [
   '2引数版の重複キーは例外**型のみ**を契約として照合する（assertThrows(IllegalStateException.class, …)相当）。実測の例外メッセージはOBSERVATION行として観測記録に保存し、厳密比較の対象にしない',
   'mergeFunctionの呼出し順はOBSERVATION行として記録し、厳密比較の対象にしない',
   'longは3桁区切り + L表記（formatLongLiteral）へ両側で揃えて厳密照合し、numberへ変換しない。Employee要素はCoreのformatSimValueと同じ`氏名（age=NN）`表記、String値はクォート付き表記へ揃える',
+  'v0.14のunmodifiable系は結果3キー（unmodifiableList / unmodifiableSet / unmodifiableMapMergeFirst）とUnsupportedOperationException契約3キー（uoeOnListAdd / uoeOnSetAdd / uoeOnMapPut）を追加した。unmodifiableListはencounter orderのまま照合し、Set / Mapは表示文字列の辞書順へ正規化する（返却コンテナのiteration orderは契約にしない）',
+  'v0.14のUOE契約は返却されたList / Set / Mapへ変更操作（add / add / put）を実行し、送出された例外の**型名のみ**を照合する。例外が送出されなかった場合はNO_EXCEPTION(...)形式の文字列で必ず値化して見逃しを防ぐ。例外メッセージと返却実装クラス名（ImmutableCollections.*等）はOBSERVATION行として観測記録に残し、厳密比較の対象にしない（JDK内部実装を断定しない）',
+  'v0.14のUOE契約3キーはSimulation Core側が収集後の変更操作を実行しないため（v0.14 §3.4）、Core導出値ではなくv0.14 §3.1の公式仕様を根拠とする固定リテラルを期待値へ置いている（結果3キーはCore実走行から導出）。この区分はtests/p8-oracle-expected.tsのコメントで明示している',
 ]
 
 /** Phase 6（取込境界値）の照合方式の注記 */

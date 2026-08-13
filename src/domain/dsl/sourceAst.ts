@@ -18,8 +18,14 @@ export interface IterateOperator {
   readonly step: number
 }
 
+/**
+ * 3引数iterateのpredicate operator（単一定義源）。
+ * v0.14 §4のproducer導出が「識別可能unionの実軸」としてこの集合を参照する。
+ */
+export const ITERATE_PREDICATE_OPERATORS = ['LTE', 'LT'] as const
+
 export interface IteratePredicate {
-  readonly operator: 'LTE' | 'LT'
+  readonly operator: (typeof ITERATE_PREDICATE_OPERATORS)[number]
   readonly value: number
 }
 

@@ -7,9 +7,12 @@ import {
   TO_MAP_MERGE_META,
   TO_MAP_NO_MAP_FACTORY_LABEL,
   TO_MAP_NO_MERGE_LABEL,
+  TO_UNMOD_MAP_NO_MAP_FACTORY_LABEL,
+  isUnmodifiableCollectorKind,
   joiningArity,
   numericKindPrimitive,
   toMapArity,
+  toUnmodifiableMapArity,
 } from '../dsl/collectorAst'
 import type { ClassifierDsl, ToMapMergeId, ToMapValueDsl } from '../dsl/collectorAst'
 import type { MapperDsl } from '../dsl/mapperAst'
@@ -35,6 +38,7 @@ import type { TypeRef } from '../types/typeRef'
 import { formatTypeRef } from '../types/typeRef'
 import type { ElementId, NodeId } from '../types/ids'
 import { distinctKeyOf } from './distinctKey'
+import { notifyCollectorBoundary } from './boundaryTap'
 import type {
   CollectorAccumulationView,
   CollectorBucketView,
@@ -190,10 +194,48 @@ function nodeContainerLabel(dsl: CollectorDsl): string {
       return dsl.mapFactoryId === null
         ? 'Map'
         : COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName
+    // Phase 11: unmodifiable系は蓄積ラベルと結果ラベルを分離する（v0.14 §3.3）。
+    // ここは**蓄積ラベル**であり、finisher適用前のすべての表示（CONTAINER_UPDATED・蓄積view・
+    // 重複キー検出等）で使う。結果ラベルは`resultContainerLabelOf`が持つ
+    case 'toUnmodifiableList':
+      return 'List（蓄積中）'
+    case 'toUnmodifiableSet':
+      return 'Set（蓄積中）'
+    case 'toUnmodifiableMap':
+      return 'Map（蓄積中）'
     default:
       return ''
   }
 }
+
+/**
+ * unmodifiable系Collectorの**結果ラベル**（v0.14 §3.3）。
+ * 使用箇所は結果側の発行点（`COLLECTOR_FINISHED`のafter側・終端結果view・
+ * `TEE_BRANCH_FINISHED`の確定表示）に限る。既存Collectorはこの関数を通らない。
+ */
+function resultContainerLabelOf(dsl: CollectorDsl): string | null {
+  switch (dsl.kind) {
+    case 'toUnmodifiableList':
+      return 'List（unmodifiable）'
+    case 'toUnmodifiableSet':
+      return 'Set（unmodifiable）'
+    case 'toUnmodifiableMap':
+      return 'Map（unmodifiable）'
+    default:
+      return null
+  }
+}
+
+/**
+ * 「蓄積中」ラベルが教材モデル上の状態表示であることの注記（v0.14 §3.3）。
+ * JDK内部の具体的な中間コンテナ型・finisher実装を断定するものではない。
+ */
+const UNMODIFIABLE_ACCUMULATING_NOTE =
+  '「蓄積中」はunmodifiableへの確定前であることを示す教材モデル上の状態表示です。JDK内部の中間コンテナ型やfinisher実装を断定するものではありません。'
+
+/** unmodifiable系Collectorの結果が不変であることの注記（`RESULT_CONFIRMED`用。v0.14 §3.3） */
+const UNMODIFIABLE_RESULT_NOTE =
+  '返却されたコンテナはunmodifiableであり、変更操作（add / remove / put等）はUnsupportedOperationExceptionを送出します。実測はOracleで確認しています。'
 
 function createNode(dsl: CollectorDsl, inputType: TypeRef, nodeKey: string): CollectorRuntimeNode {
   const resolved = resolveCollectorType(dsl, inputType)
@@ -516,10 +558,17 @@ const TO_MAP_ENCOUNTER_ORDER_NOTE =
 const TO_MAP_MERGE_ARG_ORDER_NOTE =
   'mergeFunctionの引数順は（Map内の既存値, 新しい値）です。根拠はtoMapのmergeFunctionが「as supplied to Map.merge(Object, Object, BiFunction)」と定義されていることです。'
 
-/** toMapのvalueMapperを評価する（identityは要素そのもの。fieldAccessは既存mapper評価を流用） */
-function evaluateToMapValue(dsl: ToMapValueDsl, value: SimValue): SimValue {
-  if (dsl.kind === 'identity') return value
-  return evaluateMapper({ kind: 'fieldAccess', field: dsl.field } as MapperDsl, value)
+/**
+ * toMapのvalueMapperを評価する（identityは要素そのもの。fieldAccessは既存mapper評価を流用）。
+ * exportはv0.14 §4の評価器単位の列挙評価のため（実装・呼出し経路は変更していない）。
+ */
+export function evaluateToMapValue(dsl: ToMapValueDsl, value: SimValue): SimValue {
+  const result =
+    dsl.kind === 'identity'
+      ? value
+      : evaluateMapper({ kind: 'fieldAccess', field: dsl.field } as MapperDsl, value)
+  notifyCollectorBoundary(result, 'valueResult')
+  return result
 }
 
 /**
@@ -538,7 +587,21 @@ function boxedNumberOf(value: SimValue, kind: 'boxedInt' | 'boxedLong' | 'boxedD
  * sum系の加算は素朴な`+`（`Integer.sum` / `Long.sum` / `Double.sum`の「as per the + operator」）。
  * 実行値域はfixture契約でラップ・safe integer超過が発生しない範囲に限定される（v0.13 §3）。
  */
-function applyToMapMerge(mergeId: ToMapMergeId, existing: SimValue, incoming: SimValue): SimValue {
+export function applyToMapMerge(
+  mergeId: ToMapMergeId,
+  existing: SimValue,
+  incoming: SimValue,
+): SimValue {
+  const merged = applyToMapMergeInner(mergeId, existing, incoming)
+  notifyCollectorBoundary(merged, 'mergeResult')
+  return merged
+}
+
+function applyToMapMergeInner(
+  mergeId: ToMapMergeId,
+  existing: SimValue,
+  incoming: SimValue,
+): SimValue {
   switch (mergeId) {
     case 'first':
       return existing
@@ -610,6 +673,8 @@ function accumulateNode(
   creationNote: string | null = null,
 ): void {
   const dsl = node.dsl
+  // 値の境界観測（テスト専用seam。本番ではフックnullでコスト0。v0.14 §4）
+  notifyCollectorBoundary(value, 'accumulateInput')
   const name = shortLabel(value)
   const branchText = overrideBranch === 'LEFT' ? '左branch' : overrideBranch === 'RIGHT' ? '右branch' : null
   const emitAccumulated = (
@@ -643,19 +708,30 @@ function accumulateNode(
   switch (dsl.kind) {
     case 'toList':
     case 'toSet':
-    case 'toCollection': {
+    case 'toCollection':
+    // Phase 11: unmodifiable系の蓄積は既存toList / toSetと同一の意味論（v0.14 §2.3）。
+    // 表示上の差は蓄積ラベル（`node.containerLabel`）だけで生じる
+    case 'toUnmodifiableList':
+    case 'toUnmodifiableSet': {
       enter(ctx, node, node.containerLabel)
       const key = distinctKeyOf(value, ctx.elementId)
       const label = formatSimValue(value)
-      if (dsl.kind === 'toSet' && node.elementKeys.has(key)) {
+      const accumulatingNote = isUnmodifiableCollectorKind(dsl.kind)
+        ? UNMODIFIABLE_ACCUMULATING_NOTE
+        : null
+      const isSetLike = dsl.kind === 'toSet' || dsl.kind === 'toUnmodifiableSet'
+      if (isSetLike && node.elementKeys.has(key)) {
         // 重複は追加されず状態が変化しない（既存要素のelementIdは置換しない。§9.5）
         node.changedByLast = false
         emitAccumulated(
           `${name} → ${node.containerLabel}`,
           `${node.containerLabel}に同値の要素が既に存在します`,
           `追加しても変化しません（size=${node.elements.length}）`,
-          `${name}はSetへ追加されますが、同値の要素が既にあるため状態は変化しません（size=${node.elements.length}）。`,
-          'Setは重複を保持しません。最初に受理した要素が残るという表示規約は教材上の規約であり、JDKのSet内部動作やiteration order保証ではありません。',
+          `${name}は${node.containerLabel}へ追加されますが、同値の要素が既にあるため状態は変化しません（size=${node.elements.length}）。`,
+          joinNotes(
+            'Setは重複を保持しません。最初に受理した要素が残るという表示規約は教材上の規約であり、JDKのSet内部動作やiteration order保証ではありません。',
+            accumulatingNote,
+          ),
         )
         return
       }
@@ -667,6 +743,7 @@ function accumulateNode(
         `${node.containerLabel}へ追加します`,
         `${node.containerLabel}のsizeが${node.elements.length}になりました`,
         `${name}が${node.containerLabel}へ追加されました（size=${node.elements.length}）。`,
+        accumulatingNote,
       )
       return
     }
@@ -970,8 +1047,13 @@ function accumulateNode(
       return
     }
     // ---- Phase 8: toMap（v0.11 §6.3、指示§8.1） ----
-    case 'toMap': {
-      enter(ctx, node, 'toMap')
+    // Phase 11: toUnmodifiableMapは蓄積・キー評価・値評価・重複キー検出・merge適用の
+    // snapshot列をそのまま使う（新しいSnapshotKindは追加しない。v0.14 §2.3）
+    case 'toMap':
+    case 'toUnmodifiableMap': {
+      enter(ctx, node, dsl.kind)
+      // 重複キー検出の説明で参照するCollector表示名（実行失敗の主語がkindごとに異なるため）
+      const collectorDisplayName = dsl.kind === 'toMap' ? 'toMap' : 'toUnmodifiableMap'
       const key = classifierKey(dsl.keyMapper, value)
       // 1. キー評価の確定（groupingBy専用のCLASSIFIER_EVALUATEDは再利用しない）
       ctx.emit({
@@ -1036,7 +1118,7 @@ function accumulateNode(
         },
         currentText:
           mergeId === null
-            ? `キー${key.label}が重複しました。既存値は${existingLabel}、新しい値は${mappedLabel}です。2引数版のtoMapにはmergeFunctionがないため、ここで実行が失敗します。`
+            ? `キー${key.label}が重複しました。既存値は${existingLabel}、新しい値は${mappedLabel}です。2引数版の${collectorDisplayName}にはmergeFunctionがないため、ここで実行が失敗します。`
             : `キー${key.label}が重複しました。既存値は${existingLabel}、新しい値は${mappedLabel}です。mergeFunctionで衝突を解決します。`,
         jdkNote: TO_MAP_MERGE_ARG_ORDER_NOTE,
       })
@@ -1200,8 +1282,13 @@ function joinNotes(...notes: readonly (string | null)[]): string | null {
  */
 function teeBranchMapCreationNote(child: CollectorRuntimeNode): string | null {
   const target = effectiveContainerNode(child)
-  if (!target || target.dsl.kind !== 'toMap') return null
+  if (!target || !isToMapFamilyKind(target.dsl.kind)) return null
   return `このbranchのMap（${mapContainerLabel(target)}）はbranch蓄積の開始と同時に用意されます（独立のCONTAINER_CREATEDは発行しません）。`
+}
+
+/** Map蓄積を行うtoMapファミリー（toMap / toUnmodifiableMap）か（v0.14 §2.3） */
+function isToMapFamilyKind(kind: CollectorDsl['kind']): boolean {
+  return kind === 'toMap' || kind === 'toUnmodifiableMap'
 }
 
 /**
@@ -1210,7 +1297,7 @@ function teeBranchMapCreationNote(child: CollectorRuntimeNode): string | null {
  */
 function downstreamMapCreationNote(node: CollectorRuntimeNode | null): string | null {
   const target = effectiveContainerNode(node)
-  if (!target || target.dsl.kind !== 'toMap') return null
+  if (!target || !isToMapFamilyKind(target.dsl.kind)) return null
   return `このbucketのdownstream Map（${mapContainerLabel(target)}）はbucket生成と同時に用意されます（独立のCONTAINER_CREATEDは発行しません）。`
 }
 
@@ -1224,22 +1311,34 @@ function bucketDownstreamCreationNote(node: CollectorRuntimeNode, createdNow: bo
   return downstreamNote === null ? base : `${base}${downstreamNote}`
 }
 
-function classifierKey(classifier: ClassifierDsl, value: SimValue): { ref: string; label: string } {
+/**
+ * classifier / keyMapperの評価（groupingBy・toMapファミリー共用）。
+ * exportはv0.14 §4の評価器単位の列挙評価のため（実装・呼出し経路は変更していない）。
+ */
+export function classifierKey(
+  classifier: ClassifierDsl,
+  value: SimValue,
+): { ref: string; label: string; value: SimValue } {
   assertNotCompositeList(value, 'Collectorのclassifier評価')
   const employee = employeeOf(value)
   switch (classifier.kind) {
     case 'employeeField': {
       const raw = classifier.field === 'region' ? employee.region : employee.name
-      return { ref: `str:${raw}`, label: raw }
+      const keyValue: SimValue = { kind: 'string', value: raw }
+      notifyCollectorBoundary(keyValue, 'keyResult')
+      return { ref: `str:${raw}`, label: raw, value: keyValue }
     }
     case 'employeeDepartment': {
       const dept: SimValue = { kind: 'department', value: employee.department }
-      return { ref: distinctKeyOf(dept), label: formatSimValue(dept) }
+      notifyCollectorBoundary(dept, 'keyResult')
+      return { ref: distinctKeyOf(dept), label: formatSimValue(dept), value: dept }
     }
     case 'departmentField': {
       const raw =
         classifier.field === 'name' ? employee.department.name : employee.department.division
-      return { ref: `str:${raw}`, label: raw }
+      const keyValue: SimValue = { kind: 'string', value: raw }
+      notifyCollectorBoundary(keyValue, 'keyResult')
+      return { ref: `str:${raw}`, label: raw, value: keyValue }
     }
   }
 }
@@ -1340,6 +1439,11 @@ function emitsFinisher(dsl: CollectorDsl): boolean {
     case 'maxBy':
     case 'reducing':
     case 'collectingAndThen':
+    // Phase 11: unmodifiable系は「蓄積は蓄積中コンテナ、結果は不変コンテナ」という
+    // 表示上の変換があるため発行対象とする（v0.14 §3.2。既存Collectorの発行有無は不変）
+    case 'toUnmodifiableList':
+    case 'toUnmodifiableSet':
+    case 'toUnmodifiableMap':
       return true
     default:
       return false
@@ -1364,6 +1468,12 @@ function beforeFinisherLabel(node: CollectorRuntimeNode): string {
       return node.acc ? formatSimValue(node.acc) : 'accumulatorなし'
     case 'collectingAndThen':
       return node.downstream ? resultLabelOf(node.downstream) : '—'
+    // Phase 11: 適用前は蓄積ラベル付きの値表示（値・TypeRefは適用後と同一であり、
+    // 前後の識別はコンテナラベルの遷移で行う。v0.14 §3.2）
+    case 'toUnmodifiableList':
+    case 'toUnmodifiableSet':
+    case 'toUnmodifiableMap':
+      return `${node.containerLabel}${resultLabelOf(node)}`
     default:
       return accumulationSummary(node)
   }
@@ -1410,9 +1520,24 @@ function finisherLabel(node: CollectorRuntimeNode): string {
       return 'accumulator → Optional'
     case 'collectingAndThen':
       return dsl.finisherId
+    // Phase 11: JDK内部実装を断定しないため、Javaコード表記ではなく意味ラベルとする（v0.14 §3.2）
+    case 'toUnmodifiableList':
+    case 'toUnmodifiableSet':
+    case 'toUnmodifiableMap':
+      return 'unmodifiableへのラップ'
     default:
       return ''
   }
+}
+
+/**
+ * finisher適用後の表示ラベル（finisher snapshotの「後」表示）。
+ * unmodifiable系は結果ラベルを前置し、`List（蓄積中）[…] → List（unmodifiable）[…]`の
+ * 遷移としてコンテナラベルの変化を示す（v0.14 §3.2）。他kindは従来どおり結果値のみ。
+ */
+function finisherAfterLabel(node: CollectorRuntimeNode): string {
+  const resultLabel = resultContainerLabelOf(node.dsl)
+  return resultLabel === null ? resultLabelOf(node) : `${resultLabel}${resultLabelOf(node)}`
 }
 
 /** bucketの確定処理順（§9.1規則7）。教材上の決定的順序であり、JDKのiteration order保証ではない。 */
@@ -1472,7 +1597,7 @@ function finishNode(node: CollectorRuntimeNode, ctx: FinishCtx, suppressOwn: boo
   }
   node.finisherBefore = beforeFinisherLabel(node)
   node.finished = true
-  node.finisherAfter = resultLabelOf(node)
+  node.finisherAfter = finisherAfterLabel(node)
   if (!emitsFinisher(dsl) || suppressOwn) return
   const parentNote =
     ctx.bucketNote !== null ? ` ${ctx.bucketNote}` : ''
@@ -1511,17 +1636,23 @@ function finishTeeing(node: CollectorRuntimeNode, ctx: FinishCtx): void {
     finishNode(child, ctx, true)
     if (branch === 'LEFT') tee.leftState = 'FINISHED'
     else tee.rightState = 'FINISHED'
+    // Phase 11: branch直下がunmodifiable系のときは、COLLECTOR_FINISHEDを発行しない代わりに
+    // このbranch確定表示で蓄積ラベル → 結果ラベルの遷移を示す（v0.14 §3.2の配置別発行契約）
+    const branchBefore = isUnmodifiableCollectorKind(child.dsl.kind)
+      ? (child.finisherBefore ?? accumulationSummary(child))
+      : accumulationSummary(child)
+    const branchResult = finisherAfterLabel(child)
     ctx.emit({
       kind: 'TEE_BRANCH_FINISHED',
       currentElementId: null,
       processing: {
         title: `teeing branch finisher適用（${branch}）`,
-        inputLabel: accumulationSummary(child),
+        inputLabel: branchBefore,
         expression: child.label,
-        evaluation: `${branch === 'LEFT' ? 'R1' : 'R2'} = ${resultLabelOf(child)}`,
-        outcome: `${formatTypeRef(child.resultType)} = ${resultLabelOf(child)}`,
+        evaluation: `${branch === 'LEFT' ? 'R1' : 'R2'} = ${branchResult}`,
+        outcome: `${formatTypeRef(child.resultType)} = ${branchResult}`,
       },
-      currentText: `${branch === 'LEFT' ? '左' : '右'}downstreamのfinisherが適用され、${branch === 'LEFT' ? 'R1' : 'R2'}は${resultLabelOf(child)}（${formatTypeRef(child.resultType)}）に確定しました。`,
+      currentText: `${branch === 'LEFT' ? '左' : '右'}downstreamのfinisherが適用され、${branch === 'LEFT' ? 'R1' : 'R2'}は${branchResult}（${formatTypeRef(child.resultType)}）に確定しました。`,
       jdkNote: joinNotes(
         branch === 'LEFT'
           ? '教材上の表示順は左→右です。JDKはdownstream Collector間の観測可能な呼出し順を保証しません。'
@@ -1602,6 +1733,8 @@ function accumulationView(node: CollectorRuntimeNode): CollectorAccumulationView
     case 'toList':
     case 'toSet':
     case 'toCollection':
+    case 'toUnmodifiableList':
+    case 'toUnmodifiableSet':
       return {
         kind: 'ELEMENTS',
         containerLabel: node.containerLabel,
@@ -1654,6 +1787,7 @@ function accumulationView(node: CollectorRuntimeNode): CollectorAccumulationView
     case 'partitioningBy':
       return { kind: 'MAP', containerLabel: mapContainerLabel(node), size: node.buckets.length }
     case 'toMap':
+    case 'toUnmodifiableMap':
       return {
         kind: 'TO_MAP',
         containerLabel: mapContainerLabel(node),
@@ -1683,6 +1817,8 @@ function mapContainerLabel(node: CollectorRuntimeNode): string {
   if (dsl.kind === 'toMap' && dsl.mapFactoryId !== null) {
     return COLLECTOR_MAP_FACTORY_META[dsl.mapFactoryId].containerName
   }
+  // Phase 11: toUnmodifiableMapの蓄積ラベルは`Map（蓄積中）`（v0.14 §3.3）
+  if (dsl.kind === 'toUnmodifiableMap') return node.containerLabel
   return 'Map'
 }
 
@@ -1700,15 +1836,20 @@ function mapIsJdkOrdered(node: CollectorRuntimeNode): boolean {
 /** toMapノードの構造4行view（v0.11 §5、指示§7.5-4）。省略行は意味論表示の確定文言を持つ */
 function toMapView(node: CollectorRuntimeNode): CollectorToMapView | null {
   const dsl = node.dsl
-  if (dsl.kind !== 'toMap') return null
+  // Phase 11: toUnmodifiableMapも常設4行を流用する。mapFactory行はJavaにoverloadが
+  // 存在しないことの意味論表示とする（v0.14 §3.3）
+  if (dsl.kind !== 'toMap' && dsl.kind !== 'toUnmodifiableMap') return null
   const mergeMeta = dsl.mergeFunctionId === null ? null : TO_MAP_MERGE_META[dsl.mergeFunctionId]
   return {
     keyMapperLabel: classifierToJavaExpr(dsl.keyMapper),
     valueMapperLabel: toMapValueToJavaExpr(dsl.valueMapper),
     mergeFunctionLabel: mergeMeta === null ? TO_MAP_NO_MERGE_LABEL : mergeMeta.javaExpr,
     mergeMeaningLabel: mergeMeta === null ? null : mergeMeta.meaningLabel,
-    mapFactoryLabel: dsl.mapFactoryId ?? TO_MAP_NO_MAP_FACTORY_LABEL,
-    arity: toMapArity(dsl),
+    mapFactoryLabel:
+      dsl.kind === 'toUnmodifiableMap'
+        ? TO_UNMOD_MAP_NO_MAP_FACTORY_LABEL
+        : (dsl.mapFactoryId ?? TO_MAP_NO_MAP_FACTORY_LABEL),
+    arity: dsl.kind === 'toUnmodifiableMap' ? toUnmodifiableMapArity(dsl) : toMapArity(dsl),
   }
 }
 
@@ -1718,8 +1859,10 @@ function resultLabelOf(node: CollectorRuntimeNode): string {
   switch (dsl.kind) {
     case 'toList':
     case 'toCollection':
+    case 'toUnmodifiableList':
       return `[${node.elements.map((e) => shortLabelOfEntry(e)).join(', ')}]`
     case 'toSet':
+    case 'toUnmodifiableSet':
       return `[${node.elements.map((e) => shortLabelOfEntry(e)).join(', ')}]`
     case 'joining': {
       const prefix = dsl.prefix?.value ?? ''
@@ -1769,7 +1912,8 @@ function resultLabelOf(node: CollectorRuntimeNode): string {
       if (!fields) return `${record.recordName}（merger未適用）`
       return `${record.recordName}[${fields.map((f) => `${f.name}=${f.valueLabel}`).join(', ')}]`
     }
-    case 'toMap': {
+    case 'toMap':
+    case 'toUnmodifiableMap': {
       const entries = orderedToMapEntries(node).map(
         (entry) => `${entry.keyLabel}=${formatSimValue(entry.value)}`,
       )
@@ -1910,6 +2054,30 @@ function nodeResultView(node: CollectorRuntimeNode, isRoot: boolean): TerminalRe
         displayOrderNote: DISPLAY_ORDER_NOTE,
         elementIdNote: SET_ELEMENT_ID_NOTE,
       }
+    // Phase 11: root配置のtoUnmodifiableListも既存toListのroot特例（LIST view）には乗せず、
+    // ラベルを構造で持てるCOLLECTION viewで表示する（v0.14 §3.3。toCollectionと同じ経路）
+    case 'toUnmodifiableList':
+      return {
+        kind: 'COLLECTION',
+        containerLabel: resultContainerLabelOf(dsl) ?? node.containerLabel,
+        elementTypeLabel: formatTypeRef(node.inputType),
+        size: node.elements.length,
+        items: node.elements.map((e) => ({ id: e.id, label: e.label })),
+        displayOrderNote: null,
+        elementIdNote: null,
+      }
+    // 表示順・要素ID注記は既存Setと同一（DisplayOrderProjection。unordered Collectorである点も
+    // toSetと同じ意味論。v0.14 §3.3）。違いはコンテナラベルの不変性表示だけ
+    case 'toUnmodifiableSet':
+      return {
+        kind: 'COLLECTION',
+        containerLabel: resultContainerLabelOf(dsl) ?? node.containerLabel,
+        elementTypeLabel: formatTypeRef(node.inputType),
+        size: node.elements.length,
+        items: node.elements.map((e) => ({ id: e.id, label: e.label })),
+        displayOrderNote: DISPLAY_ORDER_NOTE,
+        elementIdNote: SET_ELEMENT_ID_NOTE,
+      }
     case 'joining':
       return {
         kind: 'SCALAR',
@@ -2000,7 +2168,8 @@ function nodeResultView(node: CollectorRuntimeNode, isRoot: boolean): TerminalRe
         fields: fields.map((f) => ({ name: f.name, typeLabel: f.typeLabel, valueLabel: f.valueLabel })),
       }
     }
-    case 'toMap': {
+    case 'toMap':
+    case 'toUnmodifiableMap': {
       // 既存MAP variantを再利用する（値は1件のスカラー相当。groupingByのようなList値ではない）
       const jdkOrdered = mapIsJdkOrdered(node)
       const valueTypeLabel = toMapValueTypeLabel(node)
@@ -2016,7 +2185,7 @@ function nodeResultView(node: CollectorRuntimeNode, isRoot: boolean): TerminalRe
       const resultType = node.resultType
       return {
         kind: 'MAP',
-        containerLabel: mapContainerLabel(node),
+        containerLabel: resultContainerLabelOf(dsl) ?? mapContainerLabel(node),
         keyTypeLabel: resultType.kind === 'map' ? formatTypeRef(resultType.keyType) : '',
         valueTypeLabel,
         size: entries.length,
@@ -2037,6 +2206,45 @@ export function collectorResultView(rt: CollectorRuntime): TerminalResultView {
 /** rootがLIST variant（SnapshotOutput.itemsを使う）かどうか */
 export function collectorUsesOutputItems(rt: CollectorRuntime): boolean {
   return rt.op === 'collectTriple' || rt.root.dsl.kind === 'toList'
+}
+
+/**
+ * 実効rootがunmodifiable系のとき、`RESULT_CONFIRMED`へ付す不変性注記を返す（v0.14 §3.3）。
+ * 該当しなければnull（既存文言は不変）。
+ */
+export function collectorUnmodifiableResultNote(rt: CollectorRuntime): string | null {
+  if (rt.op === 'collectTriple') return null
+  const effective = effectiveContainerNode(rt.root)
+  if (!effective || !isUnmodifiableCollectorKind(effective.dsl.kind)) return null
+  return UNMODIFIABLE_RESULT_NOTE
+}
+
+/**
+ * `ExecutionFailureView.collectorPath`が指すノードのcollector kindを返す（v0.14 §2.3）。
+ * `COLLECT_FAILED`の説明文言をkindで分岐するために使う（failure viewの構造は変更しない）。
+ */
+export function collectorKindAtPath(
+  rt: CollectorRuntime,
+  path: readonly string[],
+): CollectorDsl['kind'] | null {
+  const targetKey = path[path.length - 1]
+  if (targetKey === undefined) return null
+  const found = findNodeByKey(rt.root, targetKey)
+  return found?.dsl.kind ?? null
+}
+
+function findNodeByKey(node: CollectorRuntimeNode, nodeKey: string): CollectorRuntimeNode | null {
+  if (node.nodeKey === nodeKey) return node
+  for (const child of [node.downstream, node.left, node.right]) {
+    if (!child) continue
+    const found = findNodeByKey(child, nodeKey)
+    if (found) return found
+  }
+  for (const bucket of node.buckets) {
+    const found = findNodeByKey(bucket.node, nodeKey)
+    if (found) return found
+  }
+  return null
 }
 
 /**

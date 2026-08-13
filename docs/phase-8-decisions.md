@@ -482,3 +482,179 @@ v0.11 §2.2で将来拡張とされた数値加算merge（`Long::sum`等）を�
 https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/15 。
 PR #15は2026-08-13にmainへマージされた（merge commit **`8e68d75`**）。これによりPhase 8完了報告
 §17の持越し事項のうち機能追加を要するもの（teeing×toMap・数値加算merge）はすべて解消となった。
+
+## 18. unmodifiable系Collectorの実装（2026-08-14、Phase 11 / v0.14）
+
+v0.11 §2.2で「将来のunmodifiable系一括Phaseへ持越す」とされた`Collectors.toUnmodifiableList` /
+`toUnmodifiableSet` / `toUnmodifiableMap`を、Phase 11（ブランチ`phase-11`、仕様v0.14差分
+`docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md`）として一括実装した。
+仕様書はcodexレビュー第5回で承認済み（高0・中0・低0）。
+
+### 18.1 設計判断
+
+- **蓄積ラベルと結果ラベルの静的分離**（v0.14 §3.3）: 単一ラベルの状態切替ではなく、発行点ごとに
+  使うラベルを静的に定めた。蓄積側は既存`nodeContainerLabel` / `mapContainerLabel`へcaseを足して
+  `List（蓄積中）`等を返し、結果側は新関数`resultContainerLabelOf`を結果発行点
+  （`nodeResultView`・`finisherAfterLabel`・`TEE_BRANCH_FINISHED`）でのみ使う。
+  snapshotはemit時に確定viewを捕捉し「戻る」は再計算なしで復元する契約のため、状態切替方式は
+  発行タイミングへの依存を生む。分離なら各発行点のラベルが静的に定まり機械検証も一意になる。
+- **finisher発行契約は既存機構がそのまま実現する**: `emitsFinisher`へ3 kindを足すだけで、
+  通常root（1件）/ bucketごと（`finishWithBucketContext`）/ teeing branch直下の抑止
+  （`finishTeeing`の`finishNode(child, ctx, true)`）/ branch内部nested（再帰）の4配置が
+  v0.14 §3.2の表どおりに成立した。追加実装はゼロで、P11-D09が発行kind・順序・回数・
+  二重発行なしを機械検証している。
+- **finisherの表示ラベルは意味ラベル**（v0.14 §3.2）: JDK内部実装を断定しないため
+  Javaコード表記（`List::copyOf`等）ではなく**`unmodifiableへのラップ`**を確定文言とした。
+  既存jdkNote（「表示上の変換があるときだけfinisher snapshotを発行します。JDKが当該Collectorで
+  finisherを実行するかどうかの主張ではありません」）をそのまま適用する。
+- **`DUPLICATE_KEY_DETECTED`の説明文言もkind分岐した**: v0.14 §2.3は`COLLECT_FAILED`の説明分岐
+  のみを明示するが、重複キー検出の`currentText`は「2引数版の**toMap**には…」と主語を名指しする
+  ため、toUnmodifiableMapでそのまま流すと誤記になる。`collectorDisplayName`で分岐し、
+  既存toMapの出力は1バイトも変えていない（P11-D11が両方を固定）。
+  `ExecutionFailureView`の`kind` / `exceptionType`はtoMapファミリー共用のまま構造変更なし。
+- **window Gathererの完了状態に第三状態`INVARIANT_BLOCKED`を新設した**（v0.14 §4-2b・§4-3を改訂）:
+  `windowFixed` / `windowSliding`が生成する合成List値は`assertNotCompositeList`によりCollectorへ
+  **構造的に到達できない**（Phase 7の教材不変条件「gatherの下流はtoList / findFirstのみ」）。
+  一方で改訂前の§4-2bは「登録済みの各producerをCollector境界まで到達させる検証を行う——
+  windowFixed・windowSlidingを明示的に含める」と規定しており、**仕様として実行不能な要求**だった。
+  当初実装は「放出点を最終観測点とみなす」解釈で`VALUE_REACHED`を記録したが、
+  §4-3の定義（「Collector境界へ到達し」）を満たしておらず、codex実装レビューで高指摘となった。
+  - **仕様側を改訂**して整合させた。`VALUE_REACHED`の定義は「実際にCollector境界へ到達した
+    producer」に限定したまま、`INVARIANT_BLOCKED`（値生成と意味値の全件検査は完了したが、
+    既存の構造的不変条件によりCollector境界への到達が禁止される）を追加し、期待状態の対応表を
+    「`empty`系→`ZERO_EMISSION`、window系→`INVARIANT_BLOCKED`、それ以外→`VALUE_REACHED`」とした。
+  - window系の検証内容自体は変えていない（gather放出点での全窓値の再帰検査 +
+    `collectorAccumulate`への直接供給が`EngineInvariantError`で遮断される負例）。
+  - **事前拒否される構成（UNBOUNDED_SOURCE等）とは区別する**: window → collectは
+    Pipeline検証を**通過**し、実行時に`EngineInvariantError`となる（実測で確認）。
+    したがって既存の「有効経路に含まれない」条項では説明できず、第三状態が必要だった。
+- **テスト専用seamの新設**（`src/domain/engine/boundaryTap.ts`）: 非null不変条件の境界観測は
+  null-guardedなモジュールフックで行う。本番実行ではフックがnullのままでコスト0であり、
+  観測は読み取りに限り値・snapshot列・表示へ影響しない。あわせて`classifierKey` /
+  `evaluateToMapValue` / `applyToMapMerge` / `boxValue`を**実装を変えずにexport化**した
+  （評価器単位の列挙評価のため）。`classifierKey`は返却へ`value: SimValue`を追加したが、
+  既存の`ref` / `label`の値・利用箇所は不変。
+- **producer登録集合は機械導出**（v0.14 §4-3）: 手作業の一覧を置かず、
+  (i) OperationCatalog全46 operationの全域分類（未分類1件でthrow）、
+  (ii) 識別可能unionの実軸の互換直積（`arrayPrimitive(int)`と`(double)`は別producer）、
+  (iii) collector内部評価器のclosed DSL定数、から導出する。導出元へ仮想operationId / 仮想kindを
+  注入した複製で導出が失敗することを負例メタテストで確認している（文字列検索ではなく導出の実行）。
+- **分類結果とproducer展開を双方向で突き合わせる**（codex実装レビュー中指摘への対応）:
+  当初実装は`classifyOperations()`を**例外送出の副作用のためだけ**に呼び、戻り値の
+  `valueProducing`を捨てていた。producer展開は`expand*`関数の固定連結でoperationIdとの接続が
+  なく、「OperationCatalogにも分類表にも`VALUE_PRODUCING`として登録したが、producer展開を
+  書き忘れた」場合を検出できなかった（v0.14 §4-3が要求する「カタログにもテストにも登録し
+  忘れた場合を含めて機械的に失敗する」を満たしていない実装上の欠落。**仕様変更は不要**）。
+  各`Producer`へ起点`operationId`を持たせ（collector内部評価器は`null`で区分）、
+  「値生成として分類されたoperationの集合」と「producer展開がカバーしたoperationの集合」の
+  **双方向完全一致**を`deriveProducers`で検証する形へ改めた。
+  `sourceOperationIdOf` / `mapToPrimitiveOperationId` / `flatMapToPrimitiveOperationId`は
+  reachテスト側の重複定義を廃してhelper側の単一定義源へ寄せた。
+- **`ITERATE_PREDICATE_OPERATORS`を`sourceAst.ts`へ加算的に追加**した。iterate3のpredicate
+  operator（`LTE` / `LT`）が型注釈にしか存在せず、producer導出の実軸として参照できる
+  単一定義源がなかったため。`IteratePredicate.operator`の型はこの定数から導出する形へ変えており、
+  受理・拒否範囲は不変。
+- **`SIM_VALUE_KINDS`を`value.ts`へ追加**した（値variant網羅性の単一定義源）。
+  `satisfies readonly SimValue['kind'][]`と型レベルの網羅assertにより、`SimValue`へvariantを
+  足してここへ足し忘れるとコンパイルエラー、意味値検査器へ足し忘れるとP11-D16が失敗する。
+
+### 18.2 テスト命名の線引き
+
+Phase 9 / 10は新規テストファイルを作らずp8-\*へ追記したが、Phase 11は**ハイブリッド**とした。
+
+- **p11-\*を新設**: `p11-dsl` / `p11-engine` / `p11-catalog` / `p11-nonnull-catalog` /
+  `p11-nonnull-reach`（tests/domain）、`p11-app.test.tsx`（tests/react）、
+  `tests/p11-helpers.ts` / `tests/p11-nonnull-helpers.ts`。理由は(1) unmodifiable系はtoMapの
+  拡張ではなく新kind族（Phase 7→p7・Phase 8→p8の前例と同型）、(2) §4の非null検証は
+  OperationCatalog全域を走る横断機構でありp8の名に収まらない、(3) p8-engine.test.tsは既に
+  大型でPhase 9 / 10の追記済み。describe IDは`P11-D01`〜`P11-D17` / `P11-R01`〜`P11-R04`。
+- **p8-\*へ追記**: oracle同期（v0.14 §5.3が「P8-O01への追加」と明記）、template総数等の
+  ハードコード値、対象外注記の削除に伴うP8-R04の書換え。
+
+### 18.3 既存テストのassert更新（v0.14 §6が許容する範囲）
+
+- 件数: `ALL_TEMPLATES` 130→**133** / 実行可能 128→**131** / mode組合せ 236→**241** /
+  `P8_TEMPLATES` 12→**15** / `P8_TEMPLATE_MODES` 14→**19**（standard 15・emptySource 4）。
+- **P8-D21の等式を和集合形へ書き換えた**: 従来の
+  「`TO_MAP_TEMPLATES` = `P8_TEMPLATE_IDS` − groupby比較template」はunmodifiable系3件が
+  `P8_TEMPLATES`へ加わったことで成立しない。「P8 template群の取込対象外 = toMap含有 ∪
+  unmodifiable含有」の**和集合等式 + 両者の排他**へ書き換え、意味（導出がtemplate定義由来である
+  こと）は保っている。
+- **`IMPORTABLE_TEMPLATES`（tests/p6-helpers.ts）の除外条件へunmodifiable系を追加**した。
+  Phase 8がtoMapで行った更新と同型で、`EXECUTABLE_TEMPLATES`の意味・値は変更していない。
+  これによりP6-D01〜D03 / P6-A03 / P7-D21 / P8-D21の「非対象外templateは全てimportable」
+  assertが従来の意味のまま通る。
+- **P8-R04の書換え**（§6が明示的に許可する唯一のP8 UI書換え）: 対象外注記からtoUnmodifiableMap項が
+  消えたため、「対象外注記は`TO_MAP_OUT_OF_SCOPE_NOTES`の2件だけである」ことを検証する形へ変えた。
+- P8-A04 / P8-R05は取込対象外である点は同じで、理由文言だけがkindごとに分かれる形へ更新した。
+
+### 18.4 実施記録
+
+- 新template 3件: `tmpl-collect-tounmod-list`（standard / emptySource）/
+  `tmpl-collect-tounmod-set`（同）/ `tmpl-collect-tounmod-map`（standard）。
+  titleは40 / 42 / 47文字で既存最長（toMap identity template・62文字）以下に抑えた
+  （P11-D13が「新titleの長さ ≤ 既存最長」を機械検証する）。fixtureは既存dataset
+  （employees / employeesMergeDemo）を流用し、新規datasetは追加していない。
+- 2引数版の重複キーは意味論がtoMap 2引数版と同一のため**専用templateを設けず**、
+  `tmpl-collect-tomap-duplicate`への参照注記で扱った（ユーザー決定。v0.14 §5.1）。
+  local collectorテスト（P11-D11）では実行失敗経路を機械検証している。
+- snapshot件数: list standard 16 / list empty 4 / set standard 28 / set empty 4 /
+  map standard 33。空入力は`INITIAL → COLLECTOR_FINISHED → RESULT_CONFIRMED → STREAM_CONSUMED`
+  の4件で、蓄積snapshot 0件からの確定がラベル遷移で識別できる。
+- oracle: P8-O01へ結果3キー（`unmodifiableList` / `unmodifiableSet` /
+  `unmodifiableMapMergeFirst`）とUOE契約3キー（`uoeOnListAdd` / `uoeOnSetAdd` / `uoeOnMapPut`）を
+  追加し、JDK 25実測（Docker gradle:9.6.1-jdk25）と完全一致（PASS）。UOE 3キーはCoreが変更操作を
+  実行しないため**v0.14 §3.1の公式仕様を根拠とする固定リテラル**であり、この区分を
+  `tests/p8-oracle-expected.ts`のコメントと`P8_MATCH_NOTES`で明示した。実測の返却実装クラスは
+  `ListN` / `SetN` / `MapN`、UOEのメッセージは`null`で、いずれもOBSERVATION行に留めている。
+- 統合docx: `build_spec_docx.py` / `verify_spec_docx.py`へ`--v14`（第31章）対応を追加し、
+  v0.14.docxを生成・verify合格（第31章: 見出し18 / 表行30 / リスト80がmdと一致、§参照の未解決0件）。
+- **外部文書への§参照判定を単一定義源へ集約した**（docx側codexレビュー第1回の中指摘への対応）:
+  ビルダーは`EXC_V*`で外部文書（完了報告・判断記録・実装指示書）の§参照を章番号読み替えから
+  保護していたが、verify側の除外条件は`'decisions.md' in ctx or ctx.endswith('Phase 5 ')`の
+  2条件だけで、`EXC_V14`が保護した6件は**内部参照として集計**されていた（本書内に偶然§17・§9.1が
+  存在するため「未解決なし」で合格していた）。`build_spec_docx.py`へ
+  `EXTERNAL_DOC_REF_PREFIXES` / `is_external_doc_ref()`を新設して双方が参照する構造とし、
+  verifyは内部参照（137種 / 延べ527件）と外部参照（8種 / 延べ19件）を分けて集計・出力する。
+  あわせてビルダーへ`assert_external_refs_protected()`を追加し、外部参照が
+  「`EXC_V*`で保護」「§11〜§25（`RefResolver`の素通し範囲）」のいずれでもない場合は
+  ビルドを停止する。回帰テストは`tools/test_spec_docx_refs.py`（8観点）。
+  - **保護済み判定は参照の出現位置で行う**（docx側レビュー第2回の中指摘への対応）。
+    当初は「同じ節番号を含む例外文脈が文書のどこかにあるか」で判定していたため、
+    保護済み`Phase 5実装指示書§9.1`と未登録`Phase 5指示§9.1`が併存すると後者を
+    見逃し、`§31.9.1`へ誤変換されたまま通過した（実測で再現）。`exception_spans()`で
+    例外文脈の占有区間を求め、参照がその区間に収まる場合だけ保護済みとする形へ改めた。
+  - verify側の§参照分類・実在照合は`collect_valid_sections()` /
+    `classify_section_refs()` / `unresolved_section_refs()`としてテスト可能に分離した
+    （出力・合否判定は不変）。「存在しない内部参照でverifyが失敗する」ことを、
+    分類結果ではなく**合否判定に使う関数そのもの**で検証するため。
+  - 調査で判明: 過去章の`Phase 8完了報告§17`がEXC未登録でも誤変換されていなかったのは、
+    §17が`§11〜§25`の素通し範囲に入るためであり、偶然の一致ではなく構造上の理由だった。
+  v0.13参照の`§30.x`変換は章番号`>= 31`ガードで第26〜30章の出力を不変に保つ。Phase 5実装指示書・
+  Phase 8完了報告への§参照は`EXC_V14`で本書の節番号への読み替えから除外した。
+- **codex実装レビュー（2026-08-14）: 第1〜3回が承認不可、第4回で承認**。指摘はすべて
+  §4非null機械検証の**保証の強度**に関するもので、Collector本体の実装（DSL・finisher・
+  ラベル分離・template・取込・Oracle）への指摘は全回を通じて0件だった。
+
+  | 回 | 判定 | 指摘と対応 |
+  |---|---|---|
+  | 第1回 | 承認不可（高1・中1） | **高**: window Gathererの`VALUE_REACHED`判定が§4-3の定義と矛盾 → 仕様側を改訂し第三状態`INVARIANT_BLOCKED`を新設（§18.1）。v0.14 §4-2b・§4-3・§6を同時に改訂し第31章docxを再ビルド・verify合格。**中**: 値生成operationの分類結果がproducer導出へ接続されていない（`classifyOperations()`の戻り値を捨てていた）→ 起点operationIdによる双方向一致検証を追加（仕様変更は不要） |
+  | 第2回 | 承認不可（中1・低2） | **中**: `operationId`のカバー集合と到達実行がsource系以外で接続されていない（mapper / boxed / gatherは固定値をハードコード）→ 検証対象nodeのoperationIdを`producer.operationId`から取得し、構造assertと3集合一致assertを追加。**低2**: 完了状態の説明が旧2状態のまま／docxリスト件数が旧値 |
+  | 第3回 | 承認不可（中1・低1） | **中**: 構造assertが検証対象nodeを識別せず、前処理nodeが同じoperationIdを持つ場合に偽陽性となる → `targetNodeId`でnodeを特定してからoperationIdを照合する形へ変更し、台帳記録を実行成功後へ移動、producer単位の台帳照合を追加。**低1**: 依頼書の参照先不整合（→ 連番ファイル運用の廃止で構造的に解消） |
+  | 第4回 | **承認**（高0・中0・低0） | 追加指摘なし |
+
+  - 修正の実効性は毎回**ミューテーションテスト**で確認した——(a) `expandBoxedProducers`を
+    導出から外すと「値生成として分類済みですがproducer展開が未定義のoperationです: boxed」で失敗、
+    (b) window producerを`VALUE_REACHED`へ戻すと期待状態不一致で失敗、
+    (c) 構造assertを「任意nodeのoperationId一致」へ戻すと前処理node衝突の負例が失敗、
+    (d) 台帳記録をdefinition構築前へ移すと失敗実行の非記録テストが失敗。
+  - **学び**: 「機械検証を書いた」だけでは保証にならず、**その検証自体が壊れたときに落ちるか**を
+    ミューテーションで確かめる必要がある。第2・3回の指摘はいずれも「assertは通るが保証が
+    成立していない」型で、通常のテスト実行では発見できなかった。
+  - **依頼書の運用**（ユーザー指示 2026-08-14）: 回ごとに連番ファイル（`_r2.md`等）を作らず、
+    1トピック1ファイルを毎回上書き更新し、回数はタイトルに書く。連番運用は
+    「現行の参照先はどれか」の不整合を生み、第3回でその整合自体が指摘対象になった。
+- 検証: Vitest **885**（+89）/ typecheck / Playwright E2E **93件**成功。
+  視覚回帰基準画像（`e2e/__screenshots__`）の更新**ゼロ**（43枚のまま）。E2E実行により現行Phase証跡
+  `artifacts/phase-8/`のキャプチャ12枚が再生成された（対象外注記の削除を反映。寸法・レイアウトは
+  不変で、capture-helperが現行Phaseの証跡を上書きする既存運用どおり）。

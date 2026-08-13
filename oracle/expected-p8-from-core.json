@@ -64,5 +64,24 @@
     "中部=3.7",
     "関東=12.4",
     "関西=4.0"
-  ]
+  ],
+  "unmodifiableList": [
+    "佐藤（age=35）",
+    "鈴木（age=27）",
+    "高橋（age=42）",
+    "田中（age=29）"
+  ],
+  "unmodifiableSet": [
+    "\"中部\"",
+    "\"関東\"",
+    "\"関西\""
+  ],
+  "unmodifiableMapMergeFirst": [
+    "中部=\"小林\"",
+    "関東=\"伊藤\"",
+    "関西=\"中村\""
+  ],
+  "uoeOnListAdd": "UnsupportedOperationException",
+  "uoeOnSetAdd": "UnsupportedOperationException",
+  "uoeOnMapPut": "UnsupportedOperationException"
 }

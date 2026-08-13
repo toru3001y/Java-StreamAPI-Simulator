@@ -6,16 +6,17 @@
   1. v0.8 docx がバイト単位で不変であること
   2. ZIP/XML整合（全part存在・XMLとしてパース可能・styleとnumIdが定義済み）
   3. 差分の限定（v0.8の本文要素が削除されていないこと・変更要素が想定どおりであること）
-  4. 転記の網羅性（差分mdの全ブロックが第26〜30章に存在すること）
-  5. §参照の健全性（全参照が実在する見出しを指すこと。リポジトリ文書への§参照は文脈除外）
+  4. 転記の網羅性（差分mdの全ブロックが第26〜31章に存在すること）
+  5. §参照の健全性（全参照が実在する見出しを指すこと。リポジトリ文書への§参照は
+     build_spec_docx.is_external_doc_ref による共通判定で除外し、内部／外部を分けて集計する）
 
 使い方:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
       --v09 <v0.9.md> [--v10 <v0.10.md>] [--v11 <v0.11.md>] [--v12 <v0.12.md>] \
-      [--v13 <v0.13.md>] [--dump <章本文の書き出し先>]
+      [--v13 <v0.13.md>] [--v14 <v0.14.md>] [--dump <章本文の書き出し先>]
 
-  後段の差分には手前の差分が必要（ビルダーと同じ依存関係。--v13 には --v12、--v12 には
-  --v11、--v11 には --v10。省略すると該当章の転記検証が抜けたまま合格し得る）。
+  後段の差分には手前の差分が必要（ビルダーと同じ依存関係。--v14 には --v13、--v13 には --v12、
+  --v12 には --v11、--v11 には --v10。省略すると該当章の転記検証が抜けたまま合格し得る）。
 """
 
 import argparse
@@ -29,7 +30,8 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
 from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10, EXC_V11,
-                             EXC_V12, EXC_V13, V10_MAPPING_HEADER, tokenize_inline)
+                             EXC_V12, EXC_V13, EXC_V14, V10_MAPPING_HEADER,
+                             is_external_doc_ref, tokenize_inline)
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 FAILS = []
@@ -111,6 +113,46 @@ def strip_md(s):
     return ''.join(seg for seg, _, _ in tokenize_inline(s))
 
 
+def collect_valid_sections(texts):
+    """本文の見出しから、実在する節・章番号の集合を作る。"""
+    valid = set()
+    for rec in texts:
+        if rec[0] != 'p' or not rec[2].startswith('Heading'):
+            continue
+        t = rec[1]
+        # 「12.3 Snapshot構造」形式（節）と「12. 状態モデル」形式（章）の両方を拾う
+        m = re.match(r'^(\d+(?:\.\d+)+)\s', t)
+        if m:
+            valid.add(m.group(1))
+        m = re.match(r'^(\d+)\.\s', t)
+        if m:
+            valid.add(m.group(1))
+    return valid
+
+
+def classify_section_refs(alltext):
+    """本文中の§参照を内部参照 / 外部文書参照へ振り分ける。
+
+    リポジトリ文書（完了報告・判断記録・実装指示書）への§参照は本書の節番号ではない。
+    判定はビルダーと**同じ単一定義源**（build_spec_docx.is_external_doc_ref）を使う。
+    個別のendswith条件をverify側に持つと、ビルダーのEXC_V*と乖離して
+    「保護はされているが内部参照として集計される」状態になる。
+    """
+    refs, external = {}, {}
+    for m in re.finditer(r'§(\d+(?:\.\d+)*)', alltext):
+        ctx = alltext[max(0, m.start() - 40):m.start()]
+        target = external if is_external_doc_ref(ctx) else refs
+        target.setdefault(m.group(1), 0)
+        target[m.group(1)] += 1
+    return refs, external
+
+
+def unresolved_section_refs(alltext, valid):
+    """実在する見出しを指さない内部§参照（未解決参照）を返す。"""
+    refs, _ = classify_section_refs(alltext)
+    return sorted(r for r in refs if r not in valid)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--base', required=True)
@@ -120,6 +162,7 @@ def main():
     ap.add_argument('--v11')
     ap.add_argument('--v12')
     ap.add_argument('--v13')
+    ap.add_argument('--v14')
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
@@ -130,6 +173,8 @@ def main():
         raise SystemExit('--v12 には --v11 が必要です（省略すると第28章の転記検証が抜ける）')
     if args.v13 and not args.v12:
         raise SystemExit('--v13 には --v12 が必要です（省略すると第29章の転記検証が抜ける）')
+    if args.v14 and not args.v13:
+        raise SystemExit('--v14 には --v13 が必要です（省略すると第30章の転記検証が抜ける）')
 
     if args.v10:
         # §20 Phase表へのPhase 7行追加はapply_v10_pointers（--v10指定時）だけが行う。
@@ -220,14 +265,15 @@ def main():
     ch_start = {}
     for idx, rec in enumerate(texts):
         if rec[0] == 'p' and rec[2] == 'Heading1':
-            if re.match(r'^(26|27|28|29|30)\. ', rec[1]):
+            if re.match(r'^(26|27|28|29|30|31)\. ', rec[1]):
                 ch_start[rec[1][:2]] = idx
             elif rec[1].startswith('付録A'):
                 ch_start['付録'] = idx
-    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11, '29': EXC_V12, '30': EXC_V13}
-    next_ch = {'26': '27', '27': '28', '28': '29', '29': '30', '30': None}
+    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11, '29': EXC_V12, '30': EXC_V13,
+               '31': EXC_V14}
+    next_ch = {'26': '27', '27': '28', '28': '29', '29': '30', '30': '31', '31': None}
     for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11), ('29', args.v12),
-                       ('30', args.v13)):
+                       ('30', args.v13), ('31', args.v14)):
         if not mdpath:
             continue
         start = ch_start[ch]
@@ -292,31 +338,17 @@ def main():
             print('      欠落[%s] %s' % (kind, s))
 
     print('\n=== 5. §参照の健全性 ===')
-    valid = set()
-    for rec in texts:
-        if rec[0] != 'p' or not rec[2].startswith('Heading'):
-            continue
-        t = rec[1]
-        # 「12.3 Snapshot構造」形式（節）と「12. 状態モデル」形式（章）の両方を拾う
-        m = re.match(r'^(\d+(?:\.\d+)+)\s', t)
-        if m:
-            valid.add(m.group(1))
-        m = re.match(r'^(\d+)\.\s', t)
-        if m:
-            valid.add(m.group(1))
+    valid = collect_valid_sections(texts)
     alltext = '\n'.join(t[1] if t[0] == 'p' else
                         '\n'.join('|'.join(r) for r in t[1]) for t in texts)
-    refs = {}
-    for m in re.finditer(r'§(\d+(?:\.\d+)*)', alltext):
-        # リポジトリ文書（docs/phase-5-decisions.md等）への§参照は本書の節番号ではない
-        ctx = alltext[max(0, m.start() - 30):m.start()]
-        if 'decisions.md' in ctx or ctx.endswith('Phase 5 '):
-            continue
-        refs.setdefault(m.group(1), 0)
-        refs[m.group(1)] += 1
-    bad = sorted(r for r in refs if r not in valid)
+    refs, external = classify_section_refs(alltext)
+    bad = unresolved_section_refs(alltext, valid)
     check(not bad, '全§参照が実在する見出しを指す（未解決: %s）' % (bad or 'なし'))
-    print('  参照された節: %d種 / 延べ %d件' % (len(refs), sum(refs.values())))
+    print('  内部参照（検証対象）: %d種 / 延べ %d件' % (len(refs), sum(refs.values())))
+    print('  外部文書参照（除外）: %d種 / 延べ %d件%s'
+          % (len(external), sum(external.values()),
+             ('（' + ' / '.join('§%s×%d' % (k, v) for k, v in sorted(external.items())) + '）')
+             if external else ''))
     check('v0.8 §' not in alltext, '「v0.8 §」表記が残っていない')
 
     if args.dump:

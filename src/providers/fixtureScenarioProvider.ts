@@ -1199,6 +1199,60 @@ const P8_FIXTURES: readonly FixtureDefinition[] = [
     },
     MERGE_DEMO_EMPLOYEES,
   ),
+  // ---- Phase 11: unmodifiable系3 template（v0.14 §5.1） ----
+  fx(
+    'tmpl-collect-tounmod-list',
+    'standard',
+    'collect(toUnmodifiableList())標準',
+    'Employee 4件をencounter orderのままunmodifiable Listへ収集します。蓄積中はList（蓄積中）と表示され、finisher適用でList（unmodifiable）へ確定します。期待結果はList<Employee> 4件です。',
+    { 'slot-collector': { kind: 'toUnmodifiableList' } },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tounmod-list',
+    'emptySource',
+    'collect(toUnmodifiableList())空ソース',
+    '入力0件のため蓄積snapshotは発行されず、finisherで空のunmodifiable Listが確定します。',
+    { 'slot-collector': { kind: 'toUnmodifiableList' } },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tounmod-set',
+    'standard',
+    'collect(map + toUnmodifiableSet())標準（関東の2件目で無変化）',
+    'regionへ変換してtoUnmodifiableSet()へ収集します。期待結果は{関東, 関西, 中部}の3件で、高橋（関東）の追加ではSetが変化しません。既存のtoSet()教材との違いは不変性だけです。',
+    {
+      'slot-mapper-1': { kind: 'fieldAccess', field: 'region' },
+      'slot-collector': { kind: 'toUnmodifiableSet' },
+    },
+    STANDARD_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tounmod-set',
+    'emptySource',
+    'collect(toUnmodifiableSet())空ソース',
+    '入力0件のため蓄積snapshotは発行されず、finisherで空のunmodifiable Setが確定します。',
+    {
+      'slot-mapper-1': { kind: 'fieldAccess', field: 'region' },
+      'slot-collector': { kind: 'toUnmodifiableSet' },
+    },
+    EMPTY_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tounmod-map',
+    'standard',
+    'collect(toUnmodifiableMap(region, name, first))標準',
+    '「collect（toMap + mergeFunction: first）」と同一データ・同一keyMapper・同一mergeで実行します。蓄積とmergeの過程は完全に同じで、違いは結果Mapが不変であることとmapFactory版のoverloadが存在しないことだけです。期待結果は{関東=伊藤, 関西=中村, 中部=小林}です。',
+    {
+      'slot-collector': {
+        kind: 'toUnmodifiableMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: nameValueMapper,
+        mergeFunctionId: 'first',
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
 ]
 
 const FIXTURES: readonly FixtureDefinition[] = deepFreeze([

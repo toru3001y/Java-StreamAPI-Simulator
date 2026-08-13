@@ -84,6 +84,11 @@ const COLLECTOR_ALLOWED_KEYS: Readonly<Record<string, readonly string[]>> = {
   teeing: ['kind', 'left', 'right', 'mergerId'],
   // Phase 8: toMapは5キー厳密（引数省略はoptional keyではなく明示nullで表す。v0.11 §8）
   toMap: ['kind', 'keyMapper', 'valueMapper', 'mergeFunctionId', 'mapFactoryId'],
+  // Phase 11: unmodifiable系（v0.14 §2.2）。toUnmodifiableMapは`mapFactoryId`キーを許可集合に
+  // 含めない（JavaにmapFactory版overloadが存在しないため、存在すれば構造検証で拒否する）
+  toUnmodifiableList: ['kind'],
+  toUnmodifiableSet: ['kind'],
+  toUnmodifiableMap: ['kind', 'keyMapper', 'valueMapper', 'mergeFunctionId'],
 }
 
 /** ToMapValueDslのvariantごとの許可キー集合（closed schema。指示§7.3-1） */
@@ -572,6 +577,28 @@ export function validateCollectorStructure(
     }
   }
 
+  // ---- Phase 11: toUnmodifiableMap（v0.14 §2.2） ----
+  // keyMapper / valueMapper / mergeFunctionIdの検証は既存toMapの検証を変更なしで流用する。
+  // mapFactoryIdキーの拒否はclosed schema（COLLECTOR_ALLOWED_KEYS）が担う。
+  if (kind === 'toUnmodifiableMap') {
+    issues.push(...delegateIssues(validateClassifierStructure(obj['keyMapper'], `${path}.keyMapper`)))
+    issues.push(
+      ...delegateIssues(validateToMapValueStructure(obj['valueMapper'], `${path}.valueMapper`)),
+    )
+    const mergeFunctionId = obj['mergeFunctionId']
+    if (mergeFunctionId !== null) {
+      if (!(TO_MAP_MERGE_IDS as readonly string[]).includes(String(mergeFunctionId))) {
+        issues.push(
+          issue(
+            'WHITELIST_KIND',
+            `許可されていないtoMapのmergeFunction IDです: ${String(mergeFunctionId)}（許可: ${TO_MAP_MERGE_IDS.join(' / ')}）`,
+            `${path}.mergeFunctionId`,
+          ),
+        )
+      }
+    }
+  }
+
   if (kind === 'teeing') {
     if (!(TEEING_MERGER_IDS as readonly string[]).includes(String(obj['mergerId']))) {
       issues.push(
@@ -879,6 +906,34 @@ export function resolveCollectorType(
         }
       }
       if (issues.length > 0) return fail(issues)
+      return ok(mapOf(keyType.value, valueType.value))
+    }
+    // ---- Phase 11: unmodifiable系（v0.14 §2.1） ----
+    // 結果型のTypeRefは既存のList<T> / Set<T> / Map<K, U>のまま（不変性の軸をTypeRefへ
+    // 追加しない。不変性はコンテナラベルで表示する。v0.14 §2.1・§3.3）
+    case 'toUnmodifiableList':
+      return ok(listOf(inputType))
+    case 'toUnmodifiableSet':
+      return ok(setOf(inputType))
+    case 'toUnmodifiableMap': {
+      // 入力要素型がEmployeeであるslotに限られる制約はtoMapと同一（v0.14 §2.2、v0.11 §8.6）
+      const keyType = resolveClassifierKeyType(dsl.keyMapper, inputType, `${path}.keyMapper`)
+      if (!keyType.ok) return keyType
+      const valueType = resolveToMapValueType(dsl.valueMapper, inputType, `${path}.valueMapper`)
+      if (!valueType.ok) return valueType
+      if (dsl.mergeFunctionId !== null) {
+        const meta = TO_MAP_MERGE_META[dsl.mergeFunctionId]
+        const required = meta?.requiredValueWrapper ?? null
+        if (required !== null && !isWrapperOfName(valueType.value, required)) {
+          return fail([
+            issue(
+              'TYPE_MISMATCH',
+              `mergeFunction ${dsl.mergeFunctionId}（${meta.javaExpr}）は${required}値にのみ適用できます: ${formatTypeRef(valueType.value)}`,
+              `${path}.mergeFunctionId`,
+            ),
+          ])
+        }
+      }
       return ok(mapOf(keyType.value, valueType.value))
     }
     case 'teeing': {

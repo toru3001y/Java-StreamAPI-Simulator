@@ -17,6 +17,7 @@ import {
   COLLECT_TRIPLE_ID_COMBINATIONS,
   COMPARABLE_CLASSIFIER_KINDS,
   TEEING_MERGER_IDS,
+  isUnmodifiableCollectorKind,
   numericKindPrimitive,
 } from '../domain/dsl/collectorAst'
 import { EMPLOYEE_COMPARATOR_FIELDS } from '../domain/dsl/comparatorAst'
@@ -1440,6 +1441,25 @@ export function hasToMapCollectorSlot(template: PipelineTemplate): boolean {
 export const TO_MAP_NOT_IMPORTABLE_REASON =
   'toMapを含むtemplateは手動連携の取込対象外です。固定サンプル（fixture）で実行してください。'
 
+/**
+ * collector slotの許可kindにunmodifiable系を含むtemplateか（v0.14 §5.2）。
+ *
+ * 防御は2段: (1) `collectorVariants`へunmodifiable系variantを追加しないため、仮に取込へ
+ * 到達しても前段のContract検証が「未定義kind」として拒否する、(2) 本判定による
+ * template単位の取込無効化。gather / toMapと同型の扱い。
+ */
+export function hasUnmodifiableCollectorSlot(template: PipelineTemplate): boolean {
+  return template.parameterSlots.some(
+    (slot) =>
+      slot.kind === 'collector' &&
+      slot.allowedCollectorKinds.some((kind) => isUnmodifiableCollectorKind(kind)),
+  )
+}
+
+/** unmodifiable系templateを取込対象外とする理由（v0.14 §5.2） */
+export const UNMODIFIABLE_NOT_IMPORTABLE_REASON =
+  'unmodifiable系Collector（toUnmodifiableList / toUnmodifiableSet / toUnmodifiableMap）を含むtemplateは手動連携の取込対象外です。固定サンプル（fixture）で実行してください。'
+
 /** templateがEmployee dataset（collection source）を使うか */
 export function usesEmployeeDataset(template: PipelineTemplate): boolean {
   const definition = template.sourceDefinition
@@ -1476,11 +1496,14 @@ export function buildTemplateContract(template: PipelineTemplate): TemplateContr
   const gatherExcluded = hasGatherNode(template)
   // Phase 8指示 §7.7-1: collector slotの許可kindに'toMap'を含むtemplateも取込対象外とする
   const toMapExcluded = hasToMapCollectorSlot(template)
+  // v0.14 §5.2: unmodifiable系Collectorを含むtemplateも取込対象外とする
+  const unmodifiableExcluded = hasUnmodifiableCollectorSlot(template)
   return {
     templateId: template.templateId,
     templateVersion: template.version,
     supportedModes: template.supportedModes,
-    importable: template.executable !== false && !gatherExcluded && !toMapExcluded,
+    importable:
+      template.executable !== false && !gatherExcluded && !toMapExcluded && !unmodifiableExcluded,
     disabledReason:
       template.executable === false
         ? (template.disabledReason ?? null)
@@ -1488,7 +1511,9 @@ export function buildTemplateContract(template: PipelineTemplate): TemplateContr
           ? GATHER_NOT_IMPORTABLE_REASON
           : toMapExcluded
             ? TO_MAP_NOT_IMPORTABLE_REASON
-            : null,
+            : unmodifiableExcluded
+              ? UNMODIFIABLE_NOT_IMPORTABLE_REASON
+              : null,
     datasetPolicy,
     topLevelKeys: TOP_LEVEL_KEYS.filter((key) => key !== 'dataset' || datasetPolicy === 'required'),
     topLevelTypes: TOP_LEVEL_TYPES,

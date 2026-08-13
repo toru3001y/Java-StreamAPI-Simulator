@@ -608,6 +608,30 @@ python tools/verify_spec_docx.py \
 3. **`Collectors.toUnmodifiableMap` 系** — nullキー / null値の禁止と不変Mapの可視化という別論点を伴うため、
    `toUnmodifiableList` / `toUnmodifiableSet` / finisher可視化 / `UnsupportedOperationException` の
    Oracle確認とあわせて将来の「unmodifiable系一括Phase」へ持越す（v0.11 §2.2）。
+
+   **解消（2026-08-14追記、Phase 11）**: 本項はPhase 11（仕様v0.14差分
+   `docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md`・ブランチ`phase-11`）で
+   **一括して解消した**。v0.11 §2.2が一括Phaseの内容として挙げた4点はすべて実装している。
+
+   | # | 持越し時の論点 | Phase 11での解消内容 |
+   |---|---|---|
+   | (1) | `toUnmodifiableList` / `toUnmodifiableSet`を含む一括追加 | 3 kindをleaf Collectorとして追加（v0.14 §2.1）。closed schemaは`mapFactoryId`キーを許可集合に含めず、存在すれば構造検証で拒否する（Javaにmap Factory版overloadが存在しないため）。keyMapper / valueMapper / merge 6種の検証は既存toMapを変更なしで流用 |
+   | (2) | finisher可視化 | 3 kindを`COLLECTOR_FINISHED`の発行対象へ追加（Phase 5発行表の加算的拡張。v0.14 §3.2）。蓄積ラベル`List（蓄積中）`→ 結果ラベル`List（unmodifiable）`のコンテナラベル遷移で変換を示す。配置別の発行契約（通常root 1件 / bucketごと / teeing branch直下は`TEE_BRANCH_FINISHED`のみ / branch内部nestedは別事象 / 二重発行なし）と、finisher前後で**値とTypeRefが不変**であることをP11-D08・P11-D09が機械検証する |
+   | (3) | 変更操作が`UnsupportedOperationException`になることのOracle確認 | 画面上では実演せず（v0.14 §3.4のユーザー決定）、JDK 25実測で担保した。P8-O01へUOE契約3キー（`uoeOnListAdd` / `uoeOnSetAdd` / `uoeOnMapPut`）を追加し完全一致（PASS）。例外が送出されない場合は`NO_EXCEPTION(...)`形式で値化して見逃しを防ぐ。実測の返却実装クラス（`ListN` / `SetN` / `MapN`）と例外メッセージはOBSERVATION行に留め、JDK内部実装は断定しない |
+   | (4) | nullキー・null値禁止の扱い | NPEは実行対象外のまま（v0.11 §2.2の判断を維持）とし、その前提となる**非null不変条件**を明文化して3層の機械検証を新設した（v0.14 §4）。producer登録集合はOperationCatalog全46 operationの全域分類と識別可能union実軸の互換直積から**機械導出**し、値生成operation集合とproducer展開のカバー集合の**双方向一致**を検証する。全producerが`VALUE_REACHED` / `ZERO_EMISSION` / `INVARIANT_BLOCKED`のいずれかで検証済み・未実行0件であることをassertする（`INVARIANT_BLOCKED`はwindow系のみ。合成List値がPhase 7の構造的不変条件によりCollector境界へ到達できないため、gather放出点の全窓値検査と`EngineInvariantError`による遮断の負例で検証する）。導出元への仮想operation / kind注入で登録差分が検出されることを負例メタテストで確認している |
+
+   あわせて教材template 3件（`tmpl-collect-tounmod-list` / `-set` / `-map`）を追加し、既存教材
+   （toList / `Stream.toList()` / toSet / toMap merge first）との対比導線をjdkNotesへ付した。
+   2引数版の重複キーは意味論がtoMap 2引数版と同一のため専用templateを設けず、
+   `tmpl-collect-tomap-duplicate`への参照注記で扱っている（ユーザー決定）。
+   `TO_MAP_OUT_OF_SCOPE_NOTES`からtoUnmodifiableMap項を削除し、P8-R04を書き換えた
+   （残る対象外注記はtoConcurrentMapとkey側identityの2件）。
+   検証はVitest 885 / Playwright 93 / oracle PASS / docx verify合格（第31章）で、
+   視覚回帰基準画像の更新はゼロ。記録は`docs/phase-8-decisions.md` §18。
+   codex実装レビューは第1〜3回が承認不可、**第4回で承認**（高0・中0・低0）。指摘はすべて
+   §4非null機械検証の保証の強度に関するもので、Collector本体の実装への指摘は全回0件だった。
+   第1回の高指摘を受けてv0.14 §4-2b / §4-3 / §6を改訂し、producer完了状態へ
+   `INVARIANT_BLOCKED`を追加している（経緯と各回の対応は`docs/phase-8-decisions.md` §18.1・§18.4）。
 4. **数値加算merge（`Long::sum` 等）** — オーバーフロー・safe integer範囲・doubleの丸めを整理したうえで
    型付きの数値mergeファミリーとして設計する必要があるため持越す（v0.11 §2.2）。
 

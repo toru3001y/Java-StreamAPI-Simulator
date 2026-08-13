@@ -25,6 +25,7 @@ import {
   EXECUTABLE_TEMPLATES,
   IMPORTABLE_TEMPLATES,
   TO_MAP_TEMPLATES,
+  UNMODIFIABLE_TEMPLATES,
   collectFixtureJavaCode,
 } from '../p6-helpers'
 import { P8_TEMPLATE_MODES, lastOf, toMap2, toMap3, toMap4 } from '../p8-helpers'
@@ -52,10 +53,17 @@ const EXPECTED_SNAPSHOT_COUNTS: Readonly<Record<string, number>> = {
   'tmpl-collect-tomap-merge-sumint:standard': 32,
   'tmpl-collect-tomap-merge-sumlong:standard': 32,
   'tmpl-collect-tomap-merge-sumdouble:standard': 32,
+  // unmodifiable系（v0.14。蓄積列は既存toList / toSet / toMapと同形で、末尾へ
+  // COLLECTOR_FINISHEDが1件加わる。空入力は蓄積0件 + COLLECTOR_FINISHED。v0.14 §3.2）
+  'tmpl-collect-tounmod-list:standard': 16,
+  'tmpl-collect-tounmod-list:emptySource': 4,
+  'tmpl-collect-tounmod-set:standard': 28,
+  'tmpl-collect-tounmod-set:emptySource': 4,
+  'tmpl-collect-tounmod-map:standard': 33,
 }
 
 describe('P8-D19 Javaコード表示', () => {
-  it('P8-D19: 12 templateのcollect式が構文的に正当で実データと一致する', () => {
+  it('P8-D19: 15 templateのcollect式が構文的に正当で実データと一致する', () => {
     const expected: Record<string, string> = {
       'tmpl-collect-teeing-tomap':
         '        .collect(Collectors.teeing(Collectors.toMap(Employee::region, Employee::name, (a, b) -> a, TreeMap::new), Collectors.counting(), RegionIndex::new));',
@@ -81,6 +89,11 @@ describe('P8-D19 Javaコード表示', () => {
         '        .collect(Collectors.toMap(Employee::region, Employee::salary, (a, b) -> a, TreeMap::new));',
       'tmpl-collect-tomap-grouped':
         '        .collect(Collectors.groupingBy(Employee::region, Collectors.toMap(Employee::name, Employee::salary)));',
+      // unmodifiable系（v0.14 §2.1）
+      'tmpl-collect-tounmod-list': '        .collect(Collectors.toUnmodifiableList());',
+      'tmpl-collect-tounmod-set': '        .collect(Collectors.toUnmodifiableSet());',
+      'tmpl-collect-tounmod-map':
+        '        .collect(Collectors.toUnmodifiableMap(Employee::region, Employee::name, (a, b) -> a));',
     }
     for (const template of P8_TEMPLATES) {
       const def = makeDefinition(template.templateId, 'standard')
@@ -159,15 +172,16 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: template総数130 / 実行可能128 / 実行可能×modes 236である', () => {
-    expect(ALL_TEMPLATES).toHaveLength(130)
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(128)
+  // v0.14（Phase 11）でunmodifiable系3 template（standard 3 + emptySource 2 = 5 mode）を追加した
+  it('P8-D20: template総数133 / 実行可能131 / 実行可能×modes 241である', () => {
+    expect(ALL_TEMPLATES).toHaveLength(133)
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(131)
     const combos = EXECUTABLE_TEMPLATES.reduce((n, t) => n + t.supportedModes.length, 0)
-    expect(combos).toBe(236)
-    expect(P8_TEMPLATES).toHaveLength(12)
-    expect(P8_TEMPLATE_MODES).toHaveLength(14)
-    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(12)
-    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'emptySource')).toHaveLength(2)
+    expect(combos).toBe(241)
+    expect(P8_TEMPLATES).toHaveLength(15)
+    expect(P8_TEMPLATE_MODES).toHaveLength(19)
+    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(15)
+    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'emptySource')).toHaveLength(4)
   })
 
   it('P8-D20: midEmptyは全Phase 8 templateで非対応である', () => {
@@ -176,7 +190,7 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: 全Phase 8 template × modeにfixtureが存在する（14件）', () => {
+  it('P8-D20: 全Phase 8 template × modeにfixtureが存在する（19件）', () => {
     const provider = new FixtureScenarioProvider()
     const allowedTemplateIds = ALL_TEMPLATES.map((t) => t.templateId)
     for (const { templateId, mode } of P8_TEMPLATE_MODES) {
@@ -194,7 +208,7 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: toMap全ケースのsnapshotCount実測が§8.2の計と一致し、予算内である', () => {
+  it('P8-D20: toMap / unmodifiable全ケースのsnapshotCount実測が計と一致し、予算内である', () => {
     for (const { templateId, mode } of P8_TEMPLATE_MODES) {
       const key = `${templateId}:${mode}`
       const def = makeDefinition(templateId, mode)
@@ -331,8 +345,14 @@ describe('P8-D21 取込対象外（§7.7）', () => {
       expect(contract.disabledReason).toContain('toMap')
       expect(contract.disabledReason).toContain('取込対象外')
     }
-    // 導出はtemplate定義（slot許可kind）由来であり、新規template属性を追加していない
-    expect(TO_MAP_TEMPLATES.map((t) => t.templateId).sort()).toEqual(
+    // 導出はtemplate定義（slot許可kind）由来であり、新規template属性を追加していない。
+    // v0.14（Phase 11）でunmodifiable系3 templateがP8_TEMPLATESへ加わったため、
+    // 「P8 template群の取込対象外 = toMap含有 ∪ unmodifiable含有」の和集合等式で表す
+    // （両者は排他であり、残る1件はgroupby比較templateのみ）
+    const toMapIds = TO_MAP_TEMPLATES.map((t) => t.templateId)
+    const unmodifiableIds = UNMODIFIABLE_TEMPLATES.map((t) => t.templateId)
+    expect(toMapIds.filter((id) => unmodifiableIds.includes(id))).toEqual([])
+    expect([...toMapIds, ...unmodifiableIds].sort()).toEqual(
       P8_TEMPLATE_IDS.filter((id) => id !== 'tmpl-collect-groupby-mergedemo').sort(),
     )
   })
@@ -428,9 +448,9 @@ describe('P8-D22 expectedCompletion総点検（P6-D22の後継常設）', () => 
     }),
   )
 
-  it('P8-D22: 全実行可能template（128件）× mode（236組合せ）を走査している', () => {
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(128)
-    expect(rows).toHaveLength(236)
+  it('P8-D22: 全実行可能template（131件）× mode（241組合せ）を走査している', () => {
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(131)
+    expect(rows).toHaveLength(241)
   })
 
   it('P8-D22: 全組合せがexpectedCompletionどおりの終端へ到達する', () => {

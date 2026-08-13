@@ -6,7 +6,11 @@ import { DSL_VERSION } from '../src/domain/dsl/ast'
 import type { Scenario } from '../src/domain/scenario/scenario'
 import type { PipelineTemplate } from '../src/domain/template/pipelineTemplate'
 import { CandidateImportService } from '../src/application/candidateImport'
-import { hasGatherNode, hasToMapCollectorSlot } from '../src/application/importContract'
+import {
+  hasGatherNode,
+  hasToMapCollectorSlot,
+  hasUnmodifiableCollectorSlot,
+} from '../src/application/importContract'
 import { P8_TEMPLATE_IDS } from '../src/domain/template/templatesP8'
 
 /** Phase 6テスト共通helper */
@@ -23,11 +27,12 @@ export const EXECUTABLE_TEMPLATES: readonly PipelineTemplate[] = ALL_TEMPLATES.f
  * のため、Import Contractの走査対象からは外す。
  * Phase 8では同じ理由でtoMapを含むtemplate（collector slotの許可kindに`'toMap'`を含む）も
  * 走査対象から外す（Phase 8指示 §7.7-1、v0.11 §10-6のユーザー決定）。
+ * Phase 11ではunmodifiable系Collectorを含むtemplateも同じ理由で外す（v0.14 §5.2）。
  * `EXECUTABLE_TEMPLATES`の意味・値は変更していない。
- * gather / toMap templateの取込拒否検証はP7-D21 / P8-D21が担う。
+ * gather / toMap / unmodifiable templateの取込拒否検証はP7-D21 / P8-D21 / P11-D09が担う。
  */
 export const IMPORTABLE_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter(
-  (t) => !hasGatherNode(t) && !hasToMapCollectorSlot(t),
+  (t) => !hasGatherNode(t) && !hasToMapCollectorSlot(t) && !hasUnmodifiableCollectorSlot(t),
 )
 
 /** 取込対象外（gatherノードを含む）の実行可能template */
@@ -38,6 +43,11 @@ export const GATHER_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATE
 /** 取込対象外（collector slotの許可kindに'toMap'を含む）の実行可能template（Phase 8） */
 export const TO_MAP_TEMPLATES: readonly PipelineTemplate[] =
   EXECUTABLE_TEMPLATES.filter(hasToMapCollectorSlot)
+
+/** 取込対象外（collector slotの許可kindがunmodifiable系）の実行可能template（Phase 11） */
+export const UNMODIFIABLE_TEMPLATES: readonly PipelineTemplate[] = EXECUTABLE_TEMPLATES.filter(
+  hasUnmodifiableCollectorSlot,
+)
 
 /**
  * Phase 7完了時点のtemplate集合（Phase 8指示 §12冒頭）。
