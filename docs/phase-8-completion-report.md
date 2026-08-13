@@ -705,7 +705,8 @@ python tools/verify_spec_docx.py \
 ブランチは `phase-8` のまま、HEADは作業開始時と同じ `251fa03` である。
 
 > **その後の扱い**: 本報告の作成後、**ユーザーの明示指示（2026-08-13）を受けて**
-> commit・push・PR作成を実施した。詳細は **§20**。`main`へのmergeは実施していない。
+> commit・push・PR作成を実施し、**PR #10 は同日 `main` へmergeされた**
+> （merge commit `a887203`）。詳細は **§20**。
 > 上記の `git diff --stat` / `git status --short` は **commit直前**の実測記録であり、
 > そのまま残している。
 
@@ -725,8 +726,8 @@ python tools/verify_spec_docx.py \
 ## 20. commit / push / PRの実施内容
 
 Phase 8実装中は commit / push / PR / merge を行わなかった（§18）。
-本報告の作成後、**ユーザーの明示指示（2026-08-13）を受けて**、次のとおり commit と push、
-PR作成を実施した。**`main`へのmergeは実施していない**（指示に含まれていないため）。
+本報告の作成後、**ユーザーの明示指示（2026-08-13）を受けて** commit・push・PR作成を実施し、
+**PR #10 は同日 `main` へmergeされた**（merge commit `a887203`）。
 
 ### commit列
 
@@ -736,12 +737,17 @@ PR作成を実施した。**`main`へのmergeは実施していない**（指示
 | `251fa03` | （Phase 8着手前）codexレビュー結果ファイルの `.gitignore` 追加。**作業開始時のHEAD** |
 | `7b185de` | Phase 8本体（**71ファイル**）。`src` / `tests` / `e2e`（specとP8基準画像8枚）/ `oracle` / `artifacts/phase-8`（17件）/ `README.md` |
 | `33b5b72` | Phase 8完了報告と判断記録（`docs/phase-8-completion-report.md` / `docs/phase-8-decisions.md`。判断記録 §9.1 を含む） |
-| （本commit） | 本節の新設と、§18を実施済みへ更新 |
+| `e492169` | 本節の新設と、§18を実施済みへ更新 |
+| `a887203` | PR #10 のmerge commit（`main`） |
+| （本commit） | 本節へmerge commitを確定記載（別ブランチ `chore/phase-8-merge-record` 経由） |
 
 Pull Request: **#10** https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/10
-（base `main` / head `phase-8`。**merge未実施**）
+（base `main` / head `phase-8`。merge commit `a887203`）
 
-push先: `origin/phase-8`（新規ブランチ。`251fa03..33b5b72`）
+push先: `origin/phase-8`（新規ブランチ。`251fa03..e492169`）
+
+`phase-8` ブランチはmerge後も削除していない（工程別ブランチを残す既存運用に従う。
+`phase-1`〜`phase-7` も同様に残置されている）。
 
 ### 完了判定への影響
 
