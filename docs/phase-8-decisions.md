@@ -480,3 +480,5 @@ v0.11 §2.2で将来拡張とされた数値加算merge（`Long::sum`等）を�
 
 **確定記録**: 実装コミットは`phase-10`ブランチの`77f39ce`、Pull Requestは
 https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/15 。
+PR #15は2026-08-13にmainへマージされた（merge commit **`8e68d75`**）。これによりPhase 8完了報告
+§17の持越し事項のうち機能追加を要するもの（teeing×toMap・数値加算merge）はすべて解消となった。
