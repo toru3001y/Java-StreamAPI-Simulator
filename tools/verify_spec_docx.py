@@ -28,7 +28,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
 from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10, EXC_V11,
-                             V10_MAPPING_HEADER, tokenize_inline)
+                             EXC_V12, V10_MAPPING_HEADER, tokenize_inline)
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 FAILS = []
@@ -117,12 +117,15 @@ def main():
     ap.add_argument('--v09', required=True)
     ap.add_argument('--v10')
     ap.add_argument('--v11')
+    ap.add_argument('--v12')
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
 
     if args.v11 and not args.v10:
         raise SystemExit('--v11 には --v10 が必要です（省略すると第27章の転記検証が抜ける）')
+    if args.v12 and not args.v11:
+        raise SystemExit('--v12 には --v11 が必要です（省略すると第28章の転記検証が抜ける）')
 
     if args.v10:
         # §20 Phase表へのPhase 7行追加はapply_v10_pointers（--v10指定時）だけが行う。
@@ -213,13 +216,13 @@ def main():
     ch_start = {}
     for idx, rec in enumerate(texts):
         if rec[0] == 'p' and rec[2] == 'Heading1':
-            if re.match(r'^(26|27|28)\. ', rec[1]):
+            if re.match(r'^(26|27|28|29)\. ', rec[1]):
                 ch_start[rec[1][:2]] = idx
             elif rec[1].startswith('付録A'):
                 ch_start['付録'] = idx
-    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11}
-    next_ch = {'26': '27', '27': '28', '28': None}
-    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11)):
+    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11, '29': EXC_V12}
+    next_ch = {'26': '27', '27': '28', '28': '29', '29': None}
+    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11), ('29', args.v12)):
         if not mdpath:
             continue
         start = ch_start[ch]

@@ -16,11 +16,15 @@ import {
   failureOf,
   findToMapNode,
   kindElementPairs,
+  lastOf,
   runLocalCollector,
   snapshotsOf,
   toMap2,
+  toMap4,
   toMapEntryPairs,
 } from '../p8-helpers'
+import { findTeeingView, localCollectTemplate } from '../p5-helpers'
+import { makeCustomDefinition } from '../p3-helpers'
 
 /**
  * P8-D13〜P8-D18: ExecutionFailureViewの配置別検証・出力契約・決定性 / 復元・teeing排他
@@ -120,13 +124,12 @@ describe('P8-D14 ExecutionFailureView: bucket系（単段 / 多段groupingBy）'
 })
 
 /**
- * **P8-D15は Phase 8 部分実装ID である。**
- * partitioningBy配置・adapter系経由の2配置は契約どおり検証しているが、
- * **teeing branch配置の`collectorPath` / `bucketPath`検証は実施できていない**
- * （merger record型契約によりteeing × toMapが構築不能。docs/phase-8-decisions.md §9）。
- * 本IDを「成功」として数えてはならない。
+ * P8-D15: v0.11 §6.2の9が要求する6配置のうちpartitioningBy・adapter系・teeing branchを
+ * 検証する（root / 単段 / 多段groupingByはP8-D13 / P8-D14）。
+ * teeing branch配置はPhase 8ではmerger record型契約により構築不能だったが、
+ * v0.12の`RegionIndex::new`追加で検証可能になった（docs/phase-8-decisions.md §9.1 A案）。
  */
-describe('P8-D15 ExecutionFailureView: その他配置（partitioningBy / adapter系は成功・teeingは未実施）', () => {
+describe('P8-D15 ExecutionFailureView: その他配置（partitioningBy / adapter系 / teeing branch）', () => {
   it('P8-D15: partitioningByのbucketPathはpartitionキー1要素である', () => {
     const { snapshots } = runLocalCollector(
       'tmpl-p8-local-fail-partition',
@@ -174,37 +177,62 @@ describe('P8-D15 ExecutionFailureView: その他配置（partitioningBy / adapte
     expect(failure.bucketPath).toEqual([])
   })
 
-  it('P8-D15(未実施記録): teeing branch配置のExecutionFailureView検証は実施できていない', () => {
-    // teeingのbranch結果型は merger record（SalarySummary: long / double）に拘束されるため、
-    // Map結果のbranchはresolveCollectorTypeでTYPE_MISMATCHとなりStep Engineへ到達しない。
-    // **これはP8-D15のteeing要件を満たすものではなく、満たせない理由の機械的な固定である。**
-    // v0.11 §6.2の9が要求する6配置のうち teeing branch の1配置が未検証のまま残る
-    // （§17停止条件として報告済み。docs/phase-8-decisions.md §9）
-    for (const [label, dsl] of [
-      [
-        'left',
-        {
-          kind: 'teeing',
-          left: toMap2(),
-          right: { kind: 'averagingLong', field: 'salary' },
-          mergerId: 'SalarySummary::new',
-        },
-      ],
-      [
-        'right',
-        {
-          kind: 'teeing',
-          left: { kind: 'counting' },
-          right: toMap2(),
-          mergerId: 'SalarySummary::new',
-        },
-      ],
-    ] as const) {
-      expect(validateCollectorStructure(dsl).ok, label).toBe(true)
-      const typed = resolveCollectorType(dsl as CollectorDsl, TYPE_EMPLOYEE)
-      expect(typed.ok, label).toBe(false)
-      if (!typed.ok) expect(typed.issues[0]?.code, label).toBe('TYPE_MISMATCH')
-    }
+  it('P8-D15: teeing branch配置（第6配置）はcollectorPath = [c0, c0.left]・bucketPath空である', () => {
+    const { snapshots } = runLocalCollector(
+      'tmpl-p9-local-fail-teeing',
+      ['teeing', 'toMap', 'counting'],
+      {
+        kind: 'teeing',
+        left: toMap2(),
+        right: { kind: 'counting' },
+        mergerId: 'RegionIndex::new',
+      },
+      MERGE_DEMO_EMPLOYEES,
+    )
+    const failure = failureOf(snapshots)
+    expect(failure).toEqual({
+      kind: 'DUPLICATE_TO_MAP_KEY',
+      exceptionType: 'IllegalStateException',
+      collectorPath: ['c0', 'c0.left'],
+      bucketPath: [],
+      duplicateKeyLabel: '関東',
+      duplicateKeyRef: 'str:関東',
+      existingValueLabel: '"伊藤"',
+      incomingValueLabel: '"渡辺"',
+    })
+    // collectorPathは同一snapshotのcurrentPathと同じ値・規約である（P8-D13と同じ整合）
+    const last = snapshots[snapshots.length - 1]!
+    expect(failure.collectorPath).toEqual(collectorCtxOf(last).currentPath)
+    // 失敗要素（渡辺）のTEE_BRANCH_ACCUMULATEDは不発行で、右branchは未処理のまま終端する（v0.11 §6.3）
+    const pairs = kindElementPairs(
+      snapshots.filter((s) =>
+        [
+          'TO_MAP_KEY_EVALUATED',
+          'TO_MAP_VALUE_EVALUATED',
+          'DUPLICATE_KEY_DETECTED',
+          'MERGE_FUNCTION_APPLIED',
+          'TEE_BRANCH_ACCUMULATED',
+          'TEE_BRANCH_FINISHED',
+          'TEE_MERGER_APPLIED',
+          'CONTAINER_UPDATED',
+        ].includes(s.kind),
+      ),
+    )
+    expect(pairs).toEqual([
+      'TO_MAP_KEY_EVALUATED(emp-101)',
+      'TO_MAP_VALUE_EVALUATED(emp-101)',
+      'TEE_BRANCH_ACCUMULATED(emp-101)',
+      'TEE_BRANCH_ACCUMULATED(emp-101)',
+      'TO_MAP_KEY_EVALUATED(emp-102)',
+      'TO_MAP_VALUE_EVALUATED(emp-102)',
+      'DUPLICATE_KEY_DETECTED(emp-102)',
+    ])
+    // 失敗したbranchの状態はACCUMULATEDのまま残さない（蓄積確定は起きていない）
+    const tee = findTeeingView(collectorCtxOf(last).root)
+    expect(tee).not.toBeNull()
+    expect(tee?.activeBranch).toBe('NONE')
+    expect(tee?.leftState).toBe('ACCUMULATING')
+    expect(tee?.rightState).toBe('ACCUMULATED')
   })
 })
 
@@ -325,24 +353,16 @@ describe('P8-D17 決定性・復元', () => {
 })
 
 /**
- * **P8-D18は Phase 8 未実装ID である。**
- *
- * 指示§8.1-5・§12.1 P8-D18は teeing branch直下 / branch内部への toMap 配置の実行と列検証
- * （更新kindの排他・4引数版のTreeMap生成context）を要求するが、teeingのbranch結果型は
- * merger record（`SalarySummary(long employeeCount, double averageSalary)`）に拘束され、
- * `TEEING_MERGER_IDS`は`'SalarySummary::new'`の1件のみである。Map結果のbranchは
- * `resolveCollectorType`で必ず拒否されるため、**実行して列を検証する手段が存在しない**。
- * §11「既存ホワイトリストの変更をしない」方針（ユーザー決定2026-08-13）に従い、
- * merger IDを追加せず本IDは未実装のままとする（docs/phase-8-decisions.md §9）。
- *
- * 以下のテストは**P8-D18の契約を満たすものではない**。制約そのものを記録として固定し、
- * toMap追加が既存teeingへ副作用を与えていないことを回帰確認するだけである。
- * 必須ID成功の根拠として数えてはならない。
+ * P8-D18: teeing branch直下 / branch内部（adapter経由）のtoMap配置における
+ * 更新kindの排他（v0.11 §6.3）とbranchのMap生成表示（親種別表teeing行）を検証する。
+ * Phase 8ではmerger record型契約（SalarySummary 1件のみ）により構築不能だったが、
+ * v0.12でMap<String, String>を受ける`RegionIndex::new`を追加し到達可能になった
+ * （docs/phase-8-decisions.md §9.1 A案の実施）。
  */
-describe('P8-D18 teeing排他・branch生成表示（Phase 8未実装。以下は制約の記録と既存teeingの回帰のみ）', () => {
-  it('P8-D18(未実装記録): teeing branchへのtoMap配置は型検証で拒否され、Step Engineへ到達しない', () => {
-    // 左右どちらのbranchへ置いても resolveCollectorType が TYPE_MISMATCH を返す。
-    // これはP8-D18の契約検証ではなく、契約を検証できない理由の機械的な固定である
+describe('P8-D18 teeing排他・branch生成表示（v0.12 RegionIndex::newで到達可能）', () => {
+  it('P8-D18: merger record型契約 — SalarySummaryへのtoMapは拒否・RegionIndexは受理', () => {
+    // merger recordの型契約はJava言語制約（mergerの引数型 = branch結果型）の写像であり、
+    // SalarySummary（long / double）へのtoMap配置は引き続き左右どちらもTYPE_MISMATCHになる
     for (const [label, dsl, path] of [
       [
         'left',
@@ -374,12 +394,24 @@ describe('P8-D18 teeing排他・branch生成表示（Phase 8未実装。以下�
         expect(typed.issues[0]?.path, label).toBe(path)
       }
     }
-    // merger whitelistが1件のみであることが制約の直接原因である
-    expect([...TEEING_MERGER_IDS]).toEqual(['SalarySummary::new'])
+    // v0.12: merger whitelistへMap<String, String>を受けるRegionIndexを追加した
+    expect([...TEEING_MERGER_IDS]).toEqual(['SalarySummary::new', 'RegionIndex::new'])
     expect(TEEING_MERGER_RECORDS['SalarySummary::new'].fields.map((f) => f.javaType)).toEqual([
       'long',
       'double',
     ])
+    expect(TEEING_MERGER_RECORDS['RegionIndex::new'].fields.map((f) => f.javaType)).toEqual([
+      'Map<String, String>',
+      'long',
+    ])
+    const regionIndex: unknown = {
+      kind: 'teeing',
+      left: toMap4('first'),
+      right: { kind: 'counting' },
+      mergerId: 'RegionIndex::new',
+    }
+    expect(validateCollectorStructure(regionIndex).ok).toBe(true)
+    expect(resolveCollectorType(regionIndex as CollectorDsl, TYPE_EMPLOYEE).ok).toBe(true)
   })
 
   it('P8-D18(回帰): 既存teeing templateのsnapshot列がPhase 8で変化していない', () => {
@@ -393,39 +425,252 @@ describe('P8-D18 teeing排他・branch生成表示（Phase 8未実装。以下�
     expect(kinds.filter((k) => k === 'TEE_MERGER_APPLIED')).toHaveLength(1)
   })
 
-  it('P8-D18(残作業の固定): merger ID追加時に必要となる未対応箇所が現存することを記録する', () => {
-    // 将来 Map結果を受け取れる merger record を追加してteeing × toMapを到達可能にする場合、
-    // 次の3点が未対応のまま残っている（docs/phase-8-decisions.md §9・完了報告§17）。
-    //
-    // (1) teeing走査で ctx.path を左右branch間で復元していない
-    //     （collectorRuntime.ts の teeing 分岐は ctx.pathLabels のみ長さを戻す）。
-    //     右branchで失敗すると collectorPath が ['c0','c0.left','c0.right'] になり、
-    //     v0.11 §6.2の9が期待する ['c0','c0.right'] と一致しない。
-    //     現行の currentPath は Phase 5 の既存teeing snapshot契約であるため、
-    //     Phase 8では変更していない（既存列を変えないことを優先）。
-    //     ここでは既存挙動を固定し、将来の変更が無自覚に起きないようにする。
-    const teeingSnapshots = runAllSnapshots(makeDefinition('tmpl-collect-teeing', 'standard'))
-    const rightBranchPaths = teeingSnapshots
+  it('P8-D18: branch直下toMapの更新kind排他 — 成功put / mergeの全列でCONTAINER_UPDATED不発行', () => {
+    // v0.11 §6.3: branch直下の蓄積更新はTEE_BRANCH_ACCUMULATEDへ置換される。
+    // 成功put（101 / 104 / 105）とmerge（102 / 103）の両分岐を同一実行で通過する
+    const snapshots = snapshotsOf('tmpl-collect-teeing-tomap')
+    const filtered = snapshots.filter((s) =>
+      [
+        'TO_MAP_KEY_EVALUATED',
+        'TO_MAP_VALUE_EVALUATED',
+        'DUPLICATE_KEY_DETECTED',
+        'MERGE_FUNCTION_APPLIED',
+        'TEE_BRANCH_ACCUMULATED',
+        'TEE_BRANCH_FINISHED',
+        'TEE_MERGER_APPLIED',
+        'CONTAINER_UPDATED',
+        'CONTAINER_CREATED',
+      ].includes(s.kind),
+    )
+    const uniquePut = (id: string) => [
+      `TO_MAP_KEY_EVALUATED(${id})`,
+      `TO_MAP_VALUE_EVALUATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+    ]
+    const mergedPut = (id: string) => [
+      `TO_MAP_KEY_EVALUATED(${id})`,
+      `TO_MAP_VALUE_EVALUATED(${id})`,
+      `DUPLICATE_KEY_DETECTED(${id})`,
+      `MERGE_FUNCTION_APPLIED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+    ]
+    expect(kindElementPairs(filtered)).toEqual([
+      ...uniquePut('emp-101'),
+      ...mergedPut('emp-102'),
+      ...mergedPut('emp-103'),
+      ...uniquePut('emp-104'),
+      ...uniquePut('emp-105'),
+      'TEE_BRANCH_FINISHED',
+      'TEE_BRANCH_FINISHED',
+      'TEE_MERGER_APPLIED',
+    ])
+  })
+
+  it('P8-D18: branch経路の復元とMap生成表示（初回TEE_BRANCH_ACCUMULATED / 0件branch）', () => {
+    const snapshots = snapshotsOf('tmpl-collect-teeing-tomap')
+    const accumulated = snapshots.filter((s) => s.kind === 'TEE_BRANCH_ACCUMULATED')
+    expect(accumulated).toHaveLength(MERGE_DEMO_EMPLOYEES.length * 2)
+    // 要素ごとにLEFT → RIGHTの順で発行され、右branch経路へ左branchのkeyが残らない（v0.11 §6.2の9）
+    accumulated.forEach((snapshot, i) => {
+      expect(collectorCtxOf(snapshot).currentPath, `#${i}`).toEqual(
+        i % 2 === 0 ? ['c0', 'c0.left'] : ['c0', 'c0.right'],
+      )
+    })
+    // 既存teeing template（P5）の右branch経路も['c0', 'c0.right']へ復元される
+    const p5RightPaths = runAllSnapshots(makeDefinition('tmpl-collect-teeing', 'standard'))
       .filter((s) => s.kind === 'TEE_BRANCH_ACCUMULATED')
       .map((s) => collectorCtxOf(s).currentPath)
       .filter((p) => p.includes('c0.right'))
-    expect(rightBranchPaths.length).toBeGreaterThan(0)
-    for (const path of rightBranchPaths) {
-      // 右branch処理時に左branchのnode keyが経路へ残る（既存挙動。要変更点(1)）
-      expect(path).toEqual(['c0', 'c0.left', 'c0.right'])
+    expect(p5RightPaths.length).toBeGreaterThan(0)
+    for (const path of p5RightPaths) expect(path).toEqual(['c0', 'c0.right'])
+    // branchのTreeMap生成は初回TEE_BRANCH_ACCUMULATED（LEFT）のcontextだけが表す（v0.11 §6.3親種別表）
+    const notes = accumulated.map((s) => s.explanation.jdkNote ?? '')
+    expect(notes[0]).toContain('このbranchのMap（TreeMap）はbranch蓄積の開始と同時に用意されます')
+    for (const [i, note] of notes.entries()) {
+      if (i === 0) continue
+      expect(note, `#${i}`).not.toContain('用意されます')
     }
-    //
-    // (2) branch直下 / branch内部（adapter経由）の更新kind排他は isLeafAccumulator と
-    //     overrideKind の既存機構に依存しており、toMapでの実行検証ができていない。
-    //
-    // (3) 初回 TEE_BRANCH_ACCUMULATED / 0件branchの TEE_BRANCH_FINISHED のcontextへ
-    //     4引数版toMapのTreeMap生成表示を載せる実装は**未着手**である。
-    //     現行の TEE_BRANCH_FINISHED は生成表示を持たないことを固定する
-    const finished = teeingSnapshots.filter((s) => s.kind === 'TEE_BRANCH_FINISHED')
+    // 全snapshot列を通しても生成注記は正確に1回
+    expect(
+      snapshots.filter((s) => (s.explanation.jdkNote ?? '').includes('用意されます')),
+    ).toHaveLength(1)
+    // 1件も蓄積しなかったbranchの生成表示はTEE_BRANCH_FINISHEDのcontextで表す（v0.11 §6.3）
+    const emptySnapshots = runAllSnapshots(
+      makeCustomDefinition(
+        {
+          ...localCollectTemplate('tmpl-p9-local-teeing-empty', ['teeing', 'toMap', 'counting']),
+          supportedModes: ['emptySource'],
+        },
+        {
+          'slot-collector': {
+            kind: 'teeing',
+            left: toMap4('first'),
+            right: { kind: 'counting' },
+            mergerId: 'RegionIndex::new',
+          },
+        },
+        'emptySource',
+        [],
+        'tmpl-p9-local-teeing-empty:r1',
+      ),
+    )
+    const finished = emptySnapshots.filter((s) => s.kind === 'TEE_BRANCH_FINISHED')
     expect(finished).toHaveLength(2)
-    for (const snapshot of finished) {
-      expect(snapshot.explanation.jdkNote ?? '').not.toContain('TreeMap')
-      expect(snapshot.processing?.evaluation ?? '').not.toContain('TreeMap')
+    expect(finished[0]!.explanation.jdkNote ?? '').toContain(
+      'このbranchのMap（TreeMap）はbranch蓄積の開始と同時に用意されます',
+    )
+    // 右branch（counting）はMapを持たないため生成表示なし
+    expect(finished[1]!.explanation.jdkNote ?? '').not.toContain('用意されます')
+    // 0件でもmergerは適用され、空TreeMapと0件が確定する
+    const emptyLast = emptySnapshots[emptySnapshots.length - 1]!
+    const emptyResult = emptyLast.output.result
+    expect(emptyResult?.kind).toBe('RECORD')
+    if (emptyResult?.kind === 'RECORD') {
+      expect(emptyResult.recordName).toBe('RegionIndex')
+      expect(emptyResult.fields).toEqual([
+        { name: 'byRegion', typeLabel: 'Map<String, String>', valueLabel: '{}' },
+        { name: 'count', typeLabel: 'long', valueLabel: '0' },
+      ])
+    }
+  })
+
+  it('P8-D18: branch内部（adapter経由） — 内部CONTAINER_UPDATED + branch確定の別事象、生成注記は全列で1回', () => {
+    // teeing(filtering(age >= 33, toMap(region, name, first, TreeMap::new)), counting(), RegionIndex::new)。
+    // 初回要素（伊藤 age=31）はfilteringで除外され、Mapは空のままbranch確定が発行される。
+    // 生成注記が初回TEE_BRANCH_ACCUMULATEDの1回だけであること（Map entry有無からの導出では
+    // 次要素へ重複発行される）を固定する
+    const { snapshots } = runLocalCollector(
+      'tmpl-p9-local-teeing-adapter',
+      ['teeing', 'filtering', 'toMap', 'counting'],
+      {
+        kind: 'teeing',
+        left: {
+          kind: 'filtering',
+          predicate: {
+            kind: 'fieldCompare',
+            field: 'age',
+            operator: 'GTE',
+            value: { type: 'int', value: 33 },
+          },
+          downstream: toMap4('first'),
+        },
+        right: { kind: 'counting' },
+        mergerId: 'RegionIndex::new',
+      },
+      MERGE_DEMO_EMPLOYEES,
+    )
+    const pairs = kindElementPairs(
+      snapshots.filter((s) =>
+        [
+          'TO_MAP_KEY_EVALUATED',
+          'TO_MAP_VALUE_EVALUATED',
+          'DUPLICATE_KEY_DETECTED',
+          'MERGE_FUNCTION_APPLIED',
+          'CONTAINER_UPDATED',
+          'TEE_BRANCH_ACCUMULATED',
+          'TEE_BRANCH_FINISHED',
+          'TEE_MERGER_APPLIED',
+        ].includes(s.kind),
+      ),
+    )
+    // 通過要素: 内部更新はCONTAINER_UPDATEDどおり発行し、branch確定TEE_BRANCH_ACCUMULATEDを
+    // 別事象として1件発行する（v0.11 §6.3のbranch内部規則）
+    const passed = (id: string) => [
+      `TO_MAP_KEY_EVALUATED(${id})`,
+      `TO_MAP_VALUE_EVALUATED(${id})`,
+      `CONTAINER_UPDATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+    ]
+    // 除外要素: 内部更新なしでもbranch確定は発行される
+    const excluded = (id: string) => [
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+      `TEE_BRANCH_ACCUMULATED(${id})`,
+    ]
+    expect(pairs).toEqual([
+      ...excluded('emp-101'),
+      ...passed('emp-102'),
+      ...excluded('emp-103'),
+      ...passed('emp-104'),
+      ...excluded('emp-105'),
+      'TEE_BRANCH_FINISHED',
+      'TEE_BRANCH_FINISHED',
+      'TEE_MERGER_APPLIED',
+    ])
+    // 生成注記は初回TEE_BRANCH_ACCUMULATED（除外された伊藤のbranch確定）に正確に1回
+    const noted = snapshots.filter((s) => (s.explanation.jdkNote ?? '').includes('用意されます'))
+    expect(noted).toHaveLength(1)
+    const firstAccumulated = snapshots.find((s) => s.kind === 'TEE_BRANCH_ACCUMULATED')!
+    expect(noted[0]!.snapshotId).toBe(firstAccumulated.snapshotId)
+    expect(noted[0]!.explanation.jdkNote).toContain('このbranchのMap（TreeMap）')
+    // 最終結果: filteringを通過した2件のみがMapへ、countingはteeingへ来た全5件を数える
+    const last = snapshots[snapshots.length - 1]!
+    const result = last.output.result
+    expect(result?.kind).toBe('RECORD')
+    if (result?.kind === 'RECORD') {
+      expect(result.fields).toEqual([
+        {
+          name: 'byRegion',
+          typeLabel: 'Map<String, String>',
+          valueLabel: '{関東="渡辺", 関西="中村"}',
+        },
+        { name: 'count', typeLabel: 'long', valueLabel: '5' },
+      ])
+    }
+  })
+
+  it('P8-D18: 全要素除外branchでも生成注記は初回TEE_BRANCH_ACCUMULATEDの1回だけ（TEE_BRANCH_FINISHEDへ重ねない）', () => {
+    const { snapshots } = runLocalCollector(
+      'tmpl-p9-local-teeing-adapter-empty',
+      ['teeing', 'filtering', 'toMap', 'counting'],
+      {
+        kind: 'teeing',
+        left: {
+          kind: 'filtering',
+          predicate: {
+            kind: 'fieldCompare',
+            field: 'age',
+            operator: 'GTE',
+            value: { type: 'int', value: 200 },
+          },
+          downstream: toMap4('first'),
+        },
+        right: { kind: 'counting' },
+        mergerId: 'RegionIndex::new',
+      },
+      MERGE_DEMO_EMPLOYEES,
+    )
+    // branch確定（TEE_BRANCH_ACCUMULATED）は発行済みのため、TEE_BRANCH_FINISHEDへ注記を重ねない
+    const noted = snapshots.filter((s) => (s.explanation.jdkNote ?? '').includes('用意されます'))
+    expect(noted).toHaveLength(1)
+    expect(noted[0]!.kind).toBe('TEE_BRANCH_ACCUMULATED')
+    for (const snapshot of snapshots.filter((s) => s.kind === 'TEE_BRANCH_FINISHED')) {
+      expect(snapshot.explanation.jdkNote ?? '').not.toContain('用意されます')
+    }
+    // 全件除外でも結果は空TreeMapと全件count
+    const last = snapshots[snapshots.length - 1]!
+    expect(last.output.result?.kind).toBe('RECORD')
+    if (last.output.result?.kind === 'RECORD') {
+      expect(last.output.result.fields.map((f) => f.valueLabel)).toEqual(['{}', '5'])
+    }
+  })
+
+  it('P8-D18: merger適用結果 — RegionIndexがMap値（TreeMap実entry順）と件数を保持する', () => {
+    const last = lastOf('tmpl-collect-teeing-tomap')
+    const result = last.output.result
+    expect(result?.kind).toBe('RECORD')
+    if (result?.kind === 'RECORD') {
+      expect(result.recordName).toBe('RegionIndex')
+      expect(result.fields).toEqual([
+        {
+          name: 'byRegion',
+          typeLabel: 'Map<String, String>',
+          valueLabel: '{中部="小林", 関東="伊藤", 関西="中村"}',
+        },
+        { name: 'count', typeLabel: 'long', valueLabel: '5' },
+      ])
     }
   })
 })

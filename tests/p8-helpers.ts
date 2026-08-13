@@ -19,7 +19,7 @@ import { localCollectTemplate } from './p5-helpers'
 
 export type CollectorContext = Extract<OperationContextView, { kind: 'collector' }>
 
-/** P8 template × supportedModeの全組合せ（10件。指示§8.2の10ケースと1対1） */
+/** P8 template × supportedModeの全組合せ（11件。指示§8.2の10ケース + v0.12 teeing×toMap） */
 export const P8_TEMPLATE_MODES: readonly { templateId: string; mode: ScenarioMode }[] =
   P8_TEMPLATES.flatMap((t) => t.supportedModes.map((mode) => ({ templateId: t.templateId, mode })))
 

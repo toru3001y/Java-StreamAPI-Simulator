@@ -22,8 +22,8 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
     expect(JSON.stringify(built)).toBe(JSON.stringify(expected))
   })
 
-  it('P8-O01(sync): §8.2の10ケースがすべて照合対象に含まれる', () => {
-    expect(P8_TEMPLATE_MODES).toHaveLength(10)
+  it('P8-O01(sync): §8.2の10ケース + v0.12 teeing×toMapがすべて照合対象に含まれる', () => {
+    expect(P8_TEMPLATE_MODES).toHaveLength(11)
     for (const key of [
       'identity',
       'identityEmpty',
@@ -39,6 +39,9 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
     }
     // #3（実行失敗）は配列ではなく例外型として保持する
     expect(expected['duplicateExceptionType']).toBe('IllegalStateException')
+    // v0.12 teeing×toMap: merger recordのfield値（左=TreeMapの実entry順・右=counting）
+    expect(expected['teeingToMapByRegion']).toBe('{中部="小林", 関東="伊藤", 関西="中村"}')
+    expect(expected['teeingToMapCount']).toBe('5')
   })
 
   it('P8-O01(sync): 例外契約は型のみで、メッセージ全文を含まない', () => {

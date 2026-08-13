@@ -13,6 +13,7 @@ import type { ComparatorDsl } from './comparatorAst'
 import type { DslPredicate } from './ast'
 import type { MapperDsl } from './mapperAst'
 import type { ReductionDsl } from './terminalAst'
+import { mapOf, TYPE_STRING, type TypeRef } from '../types/typeRef'
 
 /** joiningのdelimiter / prefix / suffix（型付きString定数。指示§7.1） */
 export interface StringConstDsl {
@@ -162,11 +163,15 @@ export const TO_MAP_NO_MERGE_LABEL = 'なし（重複キーでIllegalStateExcept
 /** mapFactory省略（2・3引数版）の意味論表示（v0.11 §5、指示§7.5-4） */
 export const TO_MAP_NO_MAP_FACTORY_LABEL = 'なし（Map実装型は無保証）'
 
-/** teeingのmerger ID（許可済み結果record構造。Draft v0.8 §9.1 Teeing merger） */
-export const TEEING_MERGER_IDS = ['SalarySummary::new'] as const
+/** teeingのmerger ID（許可済み結果record構造。Draft v0.8 §9.1 Teeing merger、v0.12 §2） */
+export const TEEING_MERGER_IDS = ['SalarySummary::new', 'RegionIndex::new'] as const
 export type TeeingMergerId = (typeof TEEING_MERGER_IDS)[number]
 
-/** teeing mergerが生成するrecordの構造（教材データ定義。指示§8.2） */
+/**
+ * teeing mergerが生成するrecordの構造（教材データ定義。指示§8.2、v0.12 §2）。
+ * `javaType`はrecord定義行へそのまま出すJava表記、`expected`は型検証用のTypeRef。
+ * fields[0]がleft branch、fields[1]がright branchの結果を受ける（2フィールド固定）。
+ */
 export const TEEING_MERGER_RECORDS: Readonly<
   Record<
     TeeingMergerId,
@@ -174,7 +179,8 @@ export const TEEING_MERGER_RECORDS: Readonly<
       readonly recordName: string
       readonly fields: readonly {
         readonly name: string
-        readonly javaType: 'long' | 'double'
+        readonly javaType: string
+        readonly expected: TypeRef
       }[]
     }
   >
@@ -182,8 +188,15 @@ export const TEEING_MERGER_RECORDS: Readonly<
   'SalarySummary::new': {
     recordName: 'SalarySummary',
     fields: [
-      { name: 'employeeCount', javaType: 'long' },
-      { name: 'averageSalary', javaType: 'double' },
+      { name: 'employeeCount', javaType: 'long', expected: { kind: 'object', name: 'Long' } },
+      { name: 'averageSalary', javaType: 'double', expected: { kind: 'object', name: 'Double' } },
+    ],
+  },
+  'RegionIndex::new': {
+    recordName: 'RegionIndex',
+    fields: [
+      { name: 'byRegion', javaType: 'Map<String, String>', expected: mapOf(TYPE_STRING, TYPE_STRING) },
+      { name: 'count', javaType: 'long', expected: { kind: 'object', name: 'Long' } },
     ],
   },
 }

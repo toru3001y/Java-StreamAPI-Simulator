@@ -46,11 +46,15 @@ const EXPECTED_SNAPSHOT_COUNTS: Readonly<Record<string, number>> = {
   'tmpl-collect-tomap-treemap:standard': 26,
   'tmpl-collect-tomap-treemap:emptySource': 4,
   'tmpl-collect-tomap-grouped:standard': 31,
+  // teeing×toMap（v0.12。Phase 8持越しのP8-D18 / P8-D15第6配置）
+  'tmpl-collect-teeing-tomap:standard': 40,
 }
 
 describe('P8-D19 Javaコード表示', () => {
-  it('P8-D19: 8 templateのcollect式が構文的に正当で実データと一致する', () => {
+  it('P8-D19: 9 templateのcollect式が構文的に正当で実データと一致する', () => {
     const expected: Record<string, string> = {
+      'tmpl-collect-teeing-tomap':
+        '        .collect(Collectors.teeing(Collectors.toMap(Employee::region, Employee::name, (a, b) -> a, TreeMap::new), Collectors.counting(), RegionIndex::new));',
       'tmpl-collect-tomap-identity':
         '        .collect(Collectors.toMap(Employee::name, Function.identity()));',
       'tmpl-collect-tomap-duplicate':
@@ -75,6 +79,11 @@ describe('P8-D19 Javaコード表示', () => {
       // Javaコード・Java式はASCII構文（Unicode矢印を混入させない）
       expect(sinkLine?.text, template.templateId).not.toContain('→')
     }
+    // Map fieldを持つmerger recordの宣言行がジェネリクス型込みで生成される（v0.12 §2）
+    const teeingToMap = makeDefinition('tmpl-collect-teeing-tomap', 'standard')
+    expect(teeingToMap.javaCode.map((l) => l.text).join('\n')).toContain(
+      'record RegionIndex(Map<String, String> byRegion, long count) {}',
+    )
   })
 
   it('P8-D19: source行・宣言行がcollectionIdと一致する（既存employeesの表示は不変）', () => {
@@ -137,14 +146,14 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: template総数126 / 実行可能124 / 実行可能×modes 232である', () => {
-    expect(ALL_TEMPLATES).toHaveLength(126)
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(124)
+  it('P8-D20: template総数127 / 実行可能125 / 実行可能×modes 233である', () => {
+    expect(ALL_TEMPLATES).toHaveLength(127)
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(125)
     const combos = EXECUTABLE_TEMPLATES.reduce((n, t) => n + t.supportedModes.length, 0)
-    expect(combos).toBe(232)
-    expect(P8_TEMPLATES).toHaveLength(8)
-    expect(P8_TEMPLATE_MODES).toHaveLength(10)
-    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(8)
+    expect(combos).toBe(233)
+    expect(P8_TEMPLATES).toHaveLength(9)
+    expect(P8_TEMPLATE_MODES).toHaveLength(11)
+    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(9)
     expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'emptySource')).toHaveLength(2)
   })
 
@@ -297,8 +306,8 @@ describe('P8-D20 catalog / template / source不変条件', () => {
 })
 
 describe('P8-D21 取込対象外（§7.7）', () => {
-  it('P8-D21: toMapを含む7 templateがimportable: falseで理由文言を持つ', () => {
-    expect(TO_MAP_TEMPLATES).toHaveLength(7)
+  it('P8-D21: toMapを含む8 templateがimportable: falseで理由文言を持つ', () => {
+    expect(TO_MAP_TEMPLATES).toHaveLength(8)
     for (const template of TO_MAP_TEMPLATES) {
       const contract = buildTemplateContract(template)
       expect(contract.importable, template.templateId).toBe(false)
@@ -403,9 +412,9 @@ describe('P8-D22 expectedCompletion総点検（P6-D22の後継常設）', () => 
     }),
   )
 
-  it('P8-D22: 全実行可能template（124件）× mode（232組合せ）を走査している', () => {
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(124)
-    expect(rows).toHaveLength(232)
+  it('P8-D22: 全実行可能template（125件）× mode（233組合せ）を走査している', () => {
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(125)
+    expect(rows).toHaveLength(233)
   })
 
   it('P8-D22: 全組合せがexpectedCompletionどおりの終端へ到達する', () => {

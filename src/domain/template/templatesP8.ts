@@ -1,4 +1,4 @@
-import type { ParameterSlot, PipelineTemplate, PipelineTemplateNode } from './pipelineTemplate'
+import type { ParameterSlot, PipelineTemplate, PipelineTemplateNode, SnapshotBudget } from './pipelineTemplate'
 import { OP_COLLECT, OP_SOURCE_COLLECTION_STREAM } from '../catalog/operations'
 
 /**
@@ -110,6 +110,7 @@ function p8Template(input: {
   readonly supportedModes: PipelineTemplate['supportedModes']
   readonly jdkNotes: readonly string[]
   readonly expectedCompletion?: 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
+  readonly snapshotBudget?: SnapshotBudget
 }): PipelineTemplate {
   return {
     templateId: input.templateId,
@@ -123,7 +124,7 @@ function p8Template(input: {
     allowedDslProfile: { predicateKinds: [] },
     supportedModes: input.supportedModes,
     jdkNotes: input.jdkNotes,
-    snapshotBudget: TO_MAP_BUDGET,
+    snapshotBudget: input.snapshotBudget ?? TO_MAP_BUDGET,
     ...(input.expectedCompletion ? { expectedCompletion: input.expectedCompletion } : {}),
   }
 }
@@ -269,6 +270,29 @@ export const TO_MAP_GROUPED_TEMPLATE = p8Template({
   ],
 })
 
+/**
+ * 9. teeing branchへのtoMap配置（v0.12 §2。Phase 8持越しのP8-D18 / P8-D15第6配置）。
+ *    左branchのtoMap蓄積は`TEE_BRANCH_ACCUMULATED`へ置換され、mergerはMap<String, String>を受ける。
+ *    teeing×toMapはsnapshot件数が多いため予算を個別に広げる（実件数はテストで厳密検証）。
+ */
+export const TEEING_TO_MAP_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-teeing-tomap',
+  // タイトルは既存最長（toMap identity template）以下に抑える。長いoptionは
+  // 教材Pipeline selectの内在幅を広げ、全collectorページの視覚回帰基準画像へ波及する
+  title: 'collect（teeing(toMap(region, name), counting(), RegionIndex)）',
+  source: MERGE_DEMO_SOURCE,
+  allowedCollectorKinds: ['teeing', 'toMap', 'counting'],
+  supportedModes: ['standard'],
+  snapshotBudget: { limit: 500, estimatedMax: 80 },
+  jdkNotes: [
+    NOTE_TO_MAP_BASE,
+    'teeingは同じ要素を左右両方のdownstream Collectorへ渡す。branch直下に置いたtoMapの蓄積更新は、通常のCONTAINER_UPDATEDではなくTEE_BRANCH_ACCUMULATEDとして表示される（同一更新へ二重発行しない）。',
+    'mergerはR1（Map<String, String>）とR2（Long）を受けてrecord RegionIndexを生成する。mergerの引数型はbranchの結果型と一致しなければコンパイルできない。',
+    NOTE_MERGE_ARG_ORDER,
+    ...TO_MAP_OUT_OF_SCOPE_NOTES,
+  ],
+})
+
 export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   TO_MAP_IDENTITY_TEMPLATE,
   TO_MAP_DUPLICATE_TEMPLATE,
@@ -278,6 +302,7 @@ export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   GROUPING_BY_MERGE_DEMO_TEMPLATE,
   TO_MAP_TREEMAP_TEMPLATE,
   TO_MAP_GROUPED_TEMPLATE,
+  TEEING_TO_MAP_TEMPLATE,
 ]
 
 /** Phase 8で追加したtemplate ID（既存走査母集団をPhase 7完了時点へ固定する際の除外集合） */
