@@ -84,13 +84,32 @@ const NOTE_MERGE_ARG_ORDER =
 const NOTE_FIRST_LAST_MEANING =
   'first（既存値を保持 / 先勝ち）・last（新しい値で置換 / 後勝ち）の「先 / 後」は、現在の決定的な逐次実行における入力順を指す。'
 
-/** 対象外機能の補助説明（v0.11 §2.2。UNIMPLEMENTED_OPERATIONS機構は使わない。指示§9） */
+/**
+ * 対象外機能の補助説明（v0.11 §2.2。UNIMPLEMENTED_OPERATIONS機構は使わない。指示§9）。
+ * 数値加算merge（Long::sum等）はv0.13で実装済みとなったため対象外リストから削除した（v0.13 §4）。
+ */
 export const TO_MAP_OUT_OF_SCOPE_NOTES: readonly string[] = [
   'Collectors.toConcurrentMap系はunordered Collectorであり、並列実行での性能最適化が存在意義である。決定的な逐次Step Engineでは意味論を正確に可視化できないため、この教材では実行対象外とする（説明のみ）。',
   'Collectors.toUnmodifiableMap系はnullキー・null値を禁止し（いずれかのmapping functionがnullを返すとNullPointerException）、変更不可能なMapを返す。toUnmodifiableList / toUnmodifiableSetとあわせて将来のPhaseで一括して扱うため、この教材では実行対象外とする（説明のみ）。',
-  '数値加算merge（Long::sum等）は、オーバーフロー・safe integer範囲・doubleの丸めを整理したうえで型付きの数値mergeファミリーとして設計する必要があるため、この教材のmergeFunctionホワイトリスト（first / last / concat）には含めない（説明のみ）。',
   'key側のFunction.identity()（Employee自身をキーにする形）は、recordのequalsによるキー等価とTreeMap不可（EmployeeはComparableではない）という別論点を伴うため、この教材ではvalue側identityのみを実行する（key側は説明のみ）。',
 ]
+
+// ---- 数値加算merge（sum系）の意味論注記（v0.13 §3。sum系3 templateのみに付す） ----
+
+const NOTE_SUM_MERGE_FAMILY =
+  'sum系merge（Integer::sum / Long::sum / Double::sum）は+演算子による素朴な加算であり（"Adds two ... values together as per the + operator."）、値型Uが一致する場合のみ適用できる（sumIntはInteger、sumLongはLong、sumDoubleはDouble）。'
+
+const NOTE_SUM_INT_WRAP =
+  'Javaのint加算はオーバーフロー時に例外を送出せず、2の補数の下位ビットへラップする（JLS §15.18.2）。この教材の実行値域はラップが発生しない範囲に限定しており、オーバーフローを主題とする教材は対象外のままである。'
+
+const NOTE_SUM_LONG_SAFE =
+  'この教材で扱うlongの値・合計はJavaScriptのsafe integer範囲（±2^53−1）に限定される。Javaのlong加算のラップやLong.MAX_VALUE境界はこの教材では扱わない。'
+
+const NOTE_SUM_DOUBLE_ROUNDING =
+  'Double.sumはIEEE 754の加算そのもの（補償付き加算ではない）。10進小数の2進表現誤差により、合計は12.399999999999999のような表示になり得る。補償付き加算を使うCollectors.summingDoubleとは計算方法が異なる。'
+
+const NOTE_COMPARE_SUM_GROUPING_BY =
+  '同じデータを「collect（groupingBy(Employee::region)）— toMapとの対比」で実行すると、groupingByは同じキーの値をListへ蓄積する。toMap+数値mergeは同じキーの値を1つの合計値へ畳み込む。'
 
 /** merge対比・実行失敗・groupingBy比較の4+1 templateを相互参照させる文言（v0.11 §8.6追補） */
 const NOTE_COMPARE_GROUPING_BY =
@@ -293,6 +312,59 @@ export const TEEING_TO_MAP_TEMPLATE = p8Template({
   ],
 })
 
+/**
+ * 10〜12. 数値加算merge 3種（v0.13 §4）。merge系templateと同一データ・同一keyMapperで、
+ * age（Integer）/ salary（Long）/ evaluation（Double）の地域別合計を1実行あたり2回のmerge
+ * （関東3件衝突）で観測する。titleは既存最長（toMap identity template）以下に抑える（v0.12 §5と同じ制約）。
+ */
+export const TO_MAP_MERGE_SUM_INT_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tomap-merge-sumint',
+  title: 'collect（toMap + Integer::sum — ageの地域別合計）',
+  source: MERGE_DEMO_SOURCE,
+  allowedCollectorKinds: ['toMap'],
+  supportedModes: ['standard'],
+  jdkNotes: [
+    NOTE_TO_MAP_BASE,
+    NOTE_SUM_MERGE_FAMILY,
+    NOTE_SUM_INT_WRAP,
+    NOTE_MERGE_ARG_ORDER,
+    NOTE_COMPARE_SUM_GROUPING_BY,
+    ...TO_MAP_OUT_OF_SCOPE_NOTES,
+  ],
+})
+
+export const TO_MAP_MERGE_SUM_LONG_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tomap-merge-sumlong',
+  title: 'collect（toMap + Long::sum — salaryの地域別合計）',
+  source: MERGE_DEMO_SOURCE,
+  allowedCollectorKinds: ['toMap'],
+  supportedModes: ['standard'],
+  jdkNotes: [
+    NOTE_TO_MAP_BASE,
+    NOTE_SUM_MERGE_FAMILY,
+    NOTE_SUM_LONG_SAFE,
+    NOTE_MERGE_ARG_ORDER,
+    NOTE_COMPARE_SUM_GROUPING_BY,
+    ...TO_MAP_OUT_OF_SCOPE_NOTES,
+  ],
+})
+
+export const TO_MAP_MERGE_SUM_DOUBLE_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tomap-merge-sumdouble',
+  title: 'collect（toMap + Double::sum — evaluationの地域別合計）',
+  source: MERGE_DEMO_SOURCE,
+  allowedCollectorKinds: ['toMap'],
+  supportedModes: ['standard'],
+  jdkNotes: [
+    NOTE_TO_MAP_BASE,
+    NOTE_SUM_MERGE_FAMILY,
+    NOTE_SUM_DOUBLE_ROUNDING,
+    NOTE_MERGE_ARG_ORDER,
+    NOTE_COMPARE_SUM_GROUPING_BY,
+    ...TO_MAP_OUT_OF_SCOPE_NOTES,
+  ],
+})
+
 export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   TO_MAP_IDENTITY_TEMPLATE,
   TO_MAP_DUPLICATE_TEMPLATE,
@@ -303,6 +375,9 @@ export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   TO_MAP_TREEMAP_TEMPLATE,
   TO_MAP_GROUPED_TEMPLATE,
   TEEING_TO_MAP_TEMPLATE,
+  TO_MAP_MERGE_SUM_INT_TEMPLATE,
+  TO_MAP_MERGE_SUM_LONG_TEMPLATE,
+  TO_MAP_MERGE_SUM_DOUBLE_TEMPLATE,
 ]
 
 /** Phase 8で追加したtemplate ID（既存走査母集団をPhase 7完了時点へ固定する際の除外集合） */

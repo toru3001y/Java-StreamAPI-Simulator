@@ -523,8 +523,20 @@ function evaluateToMapValue(dsl: ToMapValueDsl, value: SimValue): SimValue {
 }
 
 /**
- * mergeFunctionの適用（v0.11 §8.4）。第1引数がMap内の既存値、第2引数が新しい値。
- * 許可3種はいずれもnullを返さないため、`Map.merge`のnull削除意味論は発生しない（v0.11 §2.2）。
+ * sum系mergeの数値取り出し（v0.13 §2）。型検証（requiredValueWrapper）で事前に弾いている前提で、
+ * 期待するboxed数値kind以外はthrowする（`stringOf`と同じ防衛方針）。
+ */
+function boxedNumberOf(value: SimValue, kind: 'boxedInt' | 'boxedLong' | 'boxedDouble'): number {
+  assertNotCompositeList(value, 'Collectorの数値取得')
+  if (value.kind !== kind) throw new Error(`${kind}要素が必要です`)
+  return value.value
+}
+
+/**
+ * mergeFunctionの適用（v0.11 §8.4、sum系はv0.13 §2）。第1引数がMap内の既存値、第2引数が新しい値。
+ * 許可IDはいずれもnullを返さないため、`Map.merge`のnull削除意味論は発生しない（v0.11 §2.2）。
+ * sum系の加算は素朴な`+`（`Integer.sum` / `Long.sum` / `Double.sum`の「as per the + operator」）。
+ * 実行値域はfixture契約でラップ・safe integer超過が発生しない範囲に限定される（v0.13 §3）。
  */
 function applyToMapMerge(mergeId: ToMapMergeId, existing: SimValue, incoming: SimValue): SimValue {
   switch (mergeId) {
@@ -534,6 +546,21 @@ function applyToMapMerge(mergeId: ToMapMergeId, existing: SimValue, incoming: Si
       return incoming
     case 'concat':
       return { kind: 'string', value: `${stringOf(existing)}, ${stringOf(incoming)}` }
+    case 'sumInt':
+      return {
+        kind: 'boxedInt',
+        value: boxedNumberOf(existing, 'boxedInt') + boxedNumberOf(incoming, 'boxedInt'),
+      }
+    case 'sumLong':
+      return {
+        kind: 'boxedLong',
+        value: boxedNumberOf(existing, 'boxedLong') + boxedNumberOf(incoming, 'boxedLong'),
+      }
+    case 'sumDouble':
+      return {
+        kind: 'boxedDouble',
+        value: boxedNumberOf(existing, 'boxedDouble') + boxedNumberOf(incoming, 'boxedDouble'),
+      }
   }
 }
 

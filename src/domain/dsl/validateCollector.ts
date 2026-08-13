@@ -5,6 +5,7 @@ import type {
   ClassifierDsl,
   CollectTripleDsl,
   CollectorDsl,
+  ToMapMergeValueWrapper,
   ToMapValueDsl,
 } from './collectorAst'
 import {
@@ -635,6 +636,11 @@ function isNumericWrapper(t: TypeRef): boolean {
   return t.kind === 'object' && (t.name === 'Integer' || t.name === 'Long' || t.name === 'Double')
 }
 
+/** mergeFunctionの値型制約（String / Integer / Long / Double）との一致判定（v0.13 §2.2） */
+function isWrapperOfName(t: TypeRef, name: ToMapMergeValueWrapper): boolean {
+  return t.kind === 'object' && t.name === name
+}
+
 /**
  * natural orderで比較できる要素型か（`compareNatural`が受け付ける型と一致させる）。
  * String / LocalDate / 数値wrapper / primitive数値のみ。Employee・Departmentは不可。
@@ -847,12 +853,13 @@ export function resolveCollectorType(
       const issues: ValidationIssue[] = []
       if (dsl.mergeFunctionId !== null) {
         const meta = TO_MAP_MERGE_META[dsl.mergeFunctionId]
-        // concatは値型U = Stringのときのみ受理する（v0.11 §8.4）
-        if (meta?.requiresString && !isStringType(valueType.value)) {
+        // 値型Uの制約: concatはString、sum系は各数値wrapperのときのみ受理する（v0.11 §8.4、v0.13 §2.2）
+        const required = meta?.requiredValueWrapper ?? null
+        if (required !== null && !isWrapperOfName(valueType.value, required)) {
           issues.push(
             issue(
               'TYPE_MISMATCH',
-              `mergeFunction ${dsl.mergeFunctionId}（${meta.javaExpr}）はString値にのみ適用できます: ${formatTypeRef(valueType.value)}`,
+              `mergeFunction ${dsl.mergeFunctionId}（${meta.javaExpr}）は${required}値にのみ適用できます: ${formatTypeRef(valueType.value)}`,
               `${path}.mergeFunctionId`,
             ),
           )

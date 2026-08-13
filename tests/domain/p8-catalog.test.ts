@@ -48,13 +48,23 @@ const EXPECTED_SNAPSHOT_COUNTS: Readonly<Record<string, number>> = {
   'tmpl-collect-tomap-grouped:standard': 31,
   // teeing×toMap（v0.12。Phase 8持越しのP8-D18 / P8-D15第6配置）
   'tmpl-collect-teeing-tomap:standard': 40,
+  // 数値加算merge（v0.13。snapshot構造はmerge-first / last / concatと同形）
+  'tmpl-collect-tomap-merge-sumint:standard': 32,
+  'tmpl-collect-tomap-merge-sumlong:standard': 32,
+  'tmpl-collect-tomap-merge-sumdouble:standard': 32,
 }
 
 describe('P8-D19 Javaコード表示', () => {
-  it('P8-D19: 9 templateのcollect式が構文的に正当で実データと一致する', () => {
+  it('P8-D19: 12 templateのcollect式が構文的に正当で実データと一致する', () => {
     const expected: Record<string, string> = {
       'tmpl-collect-teeing-tomap':
         '        .collect(Collectors.teeing(Collectors.toMap(Employee::region, Employee::name, (a, b) -> a, TreeMap::new), Collectors.counting(), RegionIndex::new));',
+      'tmpl-collect-tomap-merge-sumint':
+        '        .collect(Collectors.toMap(Employee::region, Employee::age, Integer::sum));',
+      'tmpl-collect-tomap-merge-sumlong':
+        '        .collect(Collectors.toMap(Employee::region, Employee::salary, Long::sum));',
+      'tmpl-collect-tomap-merge-sumdouble':
+        '        .collect(Collectors.toMap(Employee::region, Employee::evaluation, Double::sum));',
       'tmpl-collect-tomap-identity':
         '        .collect(Collectors.toMap(Employee::name, Function.identity()));',
       'tmpl-collect-tomap-duplicate':
@@ -112,6 +122,9 @@ describe('P8-D19 Javaコード表示', () => {
       ['tmpl-collect-tomap-merge-first', 'Map<String, String>'],
       ['tmpl-collect-tomap-treemap', 'Map<String, Long>'],
       ['tmpl-collect-tomap-grouped', 'Map<String, Map<String, Long>>'],
+      ['tmpl-collect-tomap-merge-sumint', 'Map<String, Integer>'],
+      ['tmpl-collect-tomap-merge-sumlong', 'Map<String, Long>'],
+      ['tmpl-collect-tomap-merge-sumdouble', 'Map<String, Double>'],
     ]
     for (const [templateId, expected] of cases) {
       const last = lastOf(templateId, 'standard')
@@ -146,14 +159,14 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: template総数127 / 実行可能125 / 実行可能×modes 233である', () => {
-    expect(ALL_TEMPLATES).toHaveLength(127)
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(125)
+  it('P8-D20: template総数130 / 実行可能128 / 実行可能×modes 236である', () => {
+    expect(ALL_TEMPLATES).toHaveLength(130)
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(128)
     const combos = EXECUTABLE_TEMPLATES.reduce((n, t) => n + t.supportedModes.length, 0)
-    expect(combos).toBe(233)
-    expect(P8_TEMPLATES).toHaveLength(9)
-    expect(P8_TEMPLATE_MODES).toHaveLength(11)
-    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(9)
+    expect(combos).toBe(236)
+    expect(P8_TEMPLATES).toHaveLength(12)
+    expect(P8_TEMPLATE_MODES).toHaveLength(14)
+    expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'standard')).toHaveLength(12)
     expect(P8_TEMPLATE_MODES.filter((m) => m.mode === 'emptySource')).toHaveLength(2)
   })
 
@@ -163,7 +176,7 @@ describe('P8-D20 catalog / template / source不変条件', () => {
     }
   })
 
-  it('P8-D20: 全Phase 8 template × modeにfixtureが存在する（10件）', () => {
+  it('P8-D20: 全Phase 8 template × modeにfixtureが存在する（14件）', () => {
     const provider = new FixtureScenarioProvider()
     const allowedTemplateIds = ALL_TEMPLATES.map((t) => t.templateId)
     for (const { templateId, mode } of P8_TEMPLATE_MODES) {
@@ -297,6 +310,9 @@ describe('P8-D20 catalog / template / source不変条件', () => {
       'tmpl-collect-tomap-merge-last',
       'tmpl-collect-tomap-merge-concat',
       'tmpl-collect-groupby-mergedemo',
+      'tmpl-collect-tomap-merge-sumint',
+      'tmpl-collect-tomap-merge-sumlong',
+      'tmpl-collect-tomap-merge-sumdouble',
     ]) {
       expect(makeDefinition(templateId, 'standard').dataset.map((e) => e.elementId), templateId).toEqual(
         MERGE_DEMO_EMPLOYEES.map((e) => e.elementId),
@@ -306,8 +322,8 @@ describe('P8-D20 catalog / template / source不変条件', () => {
 })
 
 describe('P8-D21 取込対象外（§7.7）', () => {
-  it('P8-D21: toMapを含む8 templateがimportable: falseで理由文言を持つ', () => {
-    expect(TO_MAP_TEMPLATES).toHaveLength(8)
+  it('P8-D21: toMapを含む11 templateがimportable: falseで理由文言を持つ', () => {
+    expect(TO_MAP_TEMPLATES).toHaveLength(11)
     for (const template of TO_MAP_TEMPLATES) {
       const contract = buildTemplateContract(template)
       expect(contract.importable, template.templateId).toBe(false)
@@ -412,9 +428,9 @@ describe('P8-D22 expectedCompletion総点検（P6-D22の後継常設）', () => 
     }),
   )
 
-  it('P8-D22: 全実行可能template（125件）× mode（233組合せ）を走査している', () => {
-    expect(EXECUTABLE_TEMPLATES).toHaveLength(125)
-    expect(rows).toHaveLength(233)
+  it('P8-D22: 全実行可能template（128件）× mode（236組合せ）を走査している', () => {
+    expect(EXECUTABLE_TEMPLATES).toHaveLength(128)
+    expect(rows).toHaveLength(236)
   })
 
   it('P8-D22: 全組合せがexpectedCompletionどおりの終端へ到達する', () => {

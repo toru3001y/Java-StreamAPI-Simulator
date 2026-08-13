@@ -163,5 +163,9 @@ export function buildP8ExpectedFromCore(): Record<string, unknown> {
     // ---- v0.12: teeing branchへのtoMap配置（左=TreeMapのため実entry順のまま・右=counting） ----
     teeingToMapByRegion: teeingToMap['byRegion'],
     teeingToMapCount: teeingToMap['count'],
+    // ---- v0.13: 数値加算merge（sum系。順序保証なし → 正規化。doubleは素朴加算のため照合可能） ----
+    toMapSumIntByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumint', 'standard'),
+    toMapSumLongByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumlong', 'standard'),
+    toMapSumDoubleByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumdouble', 'standard'),
   }
 }

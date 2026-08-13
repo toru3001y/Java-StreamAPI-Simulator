@@ -424,3 +424,59 @@ Phase 8の8枚を再生成した。再生成後、P8 specを4回連続・全E2E�
   `TreeMap`が含まれ「空のを生成」にならないことを回帰検証する。
 - **UIの`th`へ`scope="row"`を付与**した（toMap構造4行・実行失敗表）。既存の`stats-table`と同じ
   マークアップ規約に揃え、行見出しのアクセシビリティroleを正しくするための追加である。
+
+## 17. 数値加算mergeファミリーの実装（2026-08-13、Phase 10 / v0.13）
+
+v0.11 §2.2で将来拡張とされた数値加算merge（`Long::sum`等）を、Phase 10（ブランチ`phase-10`、
+仕様v0.13差分`docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`）として実装した。
+スコープ（3 ID + 教材template 3本）と統合docxの版運用（v0.13.docxを新規生成）はユーザー決定。
+
+### 17.1 設計判断
+
+- **型付きファミリーとしての設計**（v0.11 §2.2の条件）: `sumInt` / `sumLong` / `sumDouble`の
+  3 IDを`TO_MAP_MERGE_IDS`へ追加し、Java表示は3引数`reduce`のcombiner表記と同一の
+  メソッド参照（`Integer::sum` / `Long::sum` / `Double::sum`）とした。
+- **型制約の一般化**: `TO_MAP_MERGE_META`の`requiresString: boolean`を
+  `requiredValueWrapper: 'String' | 'Integer' | 'Long' | 'Double' | null`へ置換した。
+  既存concatの受理・拒否結果は不変（`'String'`指定が旧`requiresString: true`と同値）で、
+  `validateCollector.ts`のTYPE_MISMATCH生成をwrapper名比較へ一般化した（P8-D03へsum系
+  ×不一致値型4種の拒否テストを追加）。
+- **実行時range checkを追加しない**（v0.13 §3.5）: toMapは手動連携の取込対象外で外部入力経路が
+  ないため、値域保証は固定fixture契約で完結する（int=int32検証+age値設計、long=safe integer
+  検証+salary合計15,700,000、double=IEEE 754で両側一致）。
+- **`Double::sum`はOracle照合対象**（v0.13 §3.4）: `Double.sum`は+演算子の素朴な加算であり、
+  補償付き加算（`Collectors.summingDouble`系）をDoubleStream照合対象外としたPhase 6判断
+  （`docs/phase-6-decisions.md` §7.2）とは非対称に、照合可能側へ倒れる。
+  `(4.1 + 4.4) + 3.9`は丸め誤差が相殺されてちょうど`12.4`になる（JS/JDK両側実測一致）。
+- **snapshot列は既存機構のまま**: 新SnapshotKindなし。sum系templateの列はmerge-first / lastと
+  同形（32件）で、EXPECTED_SNAPSHOT_COUNTSへ3行追加のみ。
+- **対象外注記の反転**: `TO_MAP_OUT_OF_SCOPE_NOTES`から数値加算merge項を削除し、
+  sum系3 templateのjdkNotesへ意味論注記（intラップ〔JLS 15.18.2〕・safe integer限定・
+  doubleの丸め）を新設した。P8-R04の該当assertを書き換え、sum系表示の新テストを追加した。
+
+### 17.2 実施記録
+
+- 新template: `tmpl-collect-tomap-merge-sumint / sumlong / sumdouble`（standardのみ、
+  employeesMergeDemo・regionKeyMapper共通、titleは既存最長〔toMap identity〕以下）。
+  template総数127→130 / 実行可能125→128 / mode組合せ233→236 / P8_TEMPLATE_MODES 11→14。
+- oracle: P8-O01へ`toMapSumIntByRegion` / `toMapSumLongByRegion` / `toMapSumDoubleByRegion`を
+  追加し、JDK 25実測（Docker gradle:9.6.1-jdk25）と完全一致（PASS）。doubleの表記は
+  OracleP8.javaへ`doubleLiteral`（BigDecimal正規化。OracleP6のcoreDoubleと同規則）を追加して
+  両側を揃えた。
+- 統合docx: `build_spec_docx.py` / `verify_spec_docx.py`へ`--v13`（第30章）対応を追加し、
+  v0.13.docxを生成・verify合格（v0.12参照の`§29.x`変換は章番号`>= 30`ガードで第26〜29章の
+  出力を不変に保つ。JLSの節番号は`§`を付けない表記にして本書の節参照と区別した）。
+  Phase 9で更新漏れだったビルダーdocstringもv0.13まで更新した。
+- 検証: Vitest 796（+5）/ lint / typecheck / production build / Playwright E2E 93件成功。
+  視覚回帰基準画像（`e2e/__screenshots__`）の更新ゼロ。E2E実行により現行Phase証跡
+  `artifacts/phase-8/`のキャプチャ11枚が再生成された（toMap系ページは対象外注記の削除を反映。
+  寸法・レイアウトは不変で、groupby比較ページ等の差分はフォント描画レベルの揺れのみ。
+  capture-helperが現行Phaseの証跡を上書きする既存運用どおり）。
+- codexレビュー第1回（2026-08-13）: **承認**（高0・中0・低1）。低1は`PREFACE_30`の
+  「本章への参照行のみを追加」がv0.13の実態（v0.8本文へのポインタ追加なし・第30章の追加のみ）と
+  不一致という指摘で、修正案どおり文言を反映しv0.13.docxを再生成・verify合格を確認した。
+  数値意味論（v0.13 §3）はJavadoc / JLSの一次情報と一致、型制約・実行・Oracle照合方式も
+  問題なしと確認された。
+
+**確定記録**: 実装コミットは`phase-10`ブランチの`77f39ce`、Pull Requestは
+https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/15 。

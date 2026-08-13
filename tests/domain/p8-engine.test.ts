@@ -259,6 +259,84 @@ describe('P8-D10 snapshot列: concat 3件衝突（§8.2 #6）', () => {
   })
 })
 
+describe('P8-D10 snapshot列: sum系merge（v0.13 §4。first / lastと同形の32件）', () => {
+  const expectedSequence = [
+    'INITIAL',
+    ...newPut('emp-101'),
+    ...mergePut('emp-102'),
+    ...mergePut('emp-103'),
+    ...newPut('emp-104'),
+    ...newPut('emp-105'),
+    'RESULT_CONFIRMED',
+    'STREAM_CONSUMED',
+  ]
+
+  it('P8-D10: sum系3 templateがmerge-first / lastと同一のkind列である', () => {
+    for (const templateId of [
+      'tmpl-collect-tomap-merge-sumint',
+      'tmpl-collect-tomap-merge-sumlong',
+      'tmpl-collect-tomap-merge-sumdouble',
+    ]) {
+      const snapshots = snapshotsOf(templateId, 'standard')
+      expect(kindElementPairs(snapshots), templateId).toEqual(expectedSequence)
+      expect(snapshots, templateId).toHaveLength(32)
+    }
+  })
+
+  it('P8-D10: sumLongの2回のmergeが「現在Mapにある値」へ順次適用される（(a+b)+c）', () => {
+    const snapshots = snapshotsOf('tmpl-collect-tomap-merge-sumlong', 'standard')
+    const merges = snapshots.filter((s) => s.kind === 'MERGE_FUNCTION_APPLIED')
+    expect(merges).toHaveLength(2)
+    expect(merges[0]?.processing?.inputLabel).toBe('mergeFunction(5_000_000L, 6_100_000L)')
+    expect(merges[0]?.processing?.evaluation).toBe('5_000_000L, 6_100_000L → 11_100_000L')
+    expect(merges[0]?.processing?.expression).toBe('Long::sum')
+    // 2回目の第1引数は前回merge結果（現在Mapにある値）
+    expect(merges[1]?.processing?.inputLabel).toBe('mergeFunction(11_100_000L, 4_600_000L)')
+    expect(merges[1]?.processing?.evaluation).toBe('11_100_000L, 4_600_000L → 15_700_000L')
+    expect(merges[1]?.explanation.jdkNote).toContain('Map内の既存値, 新しい値')
+    const result = lastOf('tmpl-collect-tomap-merge-sumlong', 'standard').output.result
+    expect(result).toMatchObject({
+      kind: 'MAP',
+      size: 3,
+      entries: [
+        { keyLabel: '関東', value: { valueLabel: '15_700_000L' } },
+        { keyLabel: '関西', value: { valueLabel: '5_200_000L' } },
+        { keyLabel: '中部', value: { valueLabel: '4_900_000L' } },
+      ],
+    })
+  })
+
+  it('P8-D10: sumIntは95、sumDoubleはIEEE 754逐次加算で12.4になる', () => {
+    const intResult = lastOf('tmpl-collect-tomap-merge-sumint', 'standard').output.result
+    expect(intResult).toMatchObject({
+      kind: 'MAP',
+      size: 3,
+      entries: [
+        { keyLabel: '関東', value: { valueLabel: '95' } },
+        { keyLabel: '関西', value: { valueLabel: '33' } },
+        { keyLabel: '中部', value: { valueLabel: '30' } },
+      ],
+    })
+    // (4.1 + 4.4) + 3.9はIEEE 754 binary64でちょうど12.4になる（丸め誤差が相殺される組合せ）
+    const doubleResult = lastOf('tmpl-collect-tomap-merge-sumdouble', 'standard').output.result
+    expect(doubleResult).toMatchObject({
+      kind: 'MAP',
+      size: 3,
+      entries: [
+        { keyLabel: '関東', value: { valueLabel: '12.4' } },
+        { keyLabel: '関西', value: { valueLabel: '4.0' } },
+        { keyLabel: '中部', value: { valueLabel: '3.7' } },
+      ],
+    })
+    // sumDoubleの中間mergeもIEEE 754の素朴加算（4.1 + 4.4 = 8.5）
+    const doubleMerges = snapshotsOf('tmpl-collect-tomap-merge-sumdouble', 'standard').filter(
+      (s) => s.kind === 'MERGE_FUNCTION_APPLIED',
+    )
+    expect(doubleMerges[0]?.processing?.evaluation).toBe('4.1, 4.4 → 8.5')
+    expect(doubleMerges[1]?.processing?.evaluation).toBe('8.5, 3.9 → 12.4')
+  })
+})
+
 describe('P8-D11 snapshot列: TreeMap・CONTAINER_CREATED判定（§8.2 #7 / #8）', () => {
   it('P8-D11: #7 tomap-treemap × standardが確定列と完全一致する（26件）', () => {
     const snapshots = snapshotsOf('tmpl-collect-tomap-treemap', 'standard')

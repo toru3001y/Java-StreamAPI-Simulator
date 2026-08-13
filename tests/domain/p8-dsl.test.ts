@@ -18,7 +18,18 @@ import {
 import { MAPPER_DSL_KINDS } from '../../src/domain/dsl/mapperAst'
 import { resolveMapperOutputType, validateMapperStructure } from '../../src/domain/dsl/validateMapper'
 import { TYPE_EMPLOYEE, TYPE_STRING, formatTypeRef } from '../../src/domain/types/typeRef'
-import { IDENTITY_VALUE, NAME_KEY, NAME_VALUE, REGION_KEY, SALARY_VALUE, toMap2, toMap3, toMap4 } from '../p8-helpers'
+import {
+  AGE_VALUE,
+  EVALUATION_VALUE,
+  IDENTITY_VALUE,
+  NAME_KEY,
+  NAME_VALUE,
+  REGION_KEY,
+  SALARY_VALUE,
+  toMap2,
+  toMap3,
+  toMap4,
+} from '../p8-helpers'
 
 /**
  * P8-D01〜P8-D06: toMapのDSL構造検証・値DSL・mergeホワイトリスト・keyMapper制約・
@@ -166,12 +177,23 @@ describe('P8-D02 ToMapValueDsl（toMap専用の値DSL）', () => {
 })
 
 describe('P8-D03 mergeFunctionホワイトリスト', () => {
-  it('P8-D03: first / last / concatの3 IDを受理し、未知IDを拒否する', () => {
-    expect([...TO_MAP_MERGE_IDS]).toEqual(['first', 'last', 'concat'])
+  it('P8-D03: first / last / concat / sum系3種の6 IDを受理し、未知IDを拒否する', () => {
+    expect([...TO_MAP_MERGE_IDS]).toEqual([
+      'first',
+      'last',
+      'concat',
+      'sumInt',
+      'sumLong',
+      'sumDouble',
+    ])
     for (const id of TO_MAP_MERGE_IDS) {
-      expect(validateCollectorStructure(toMap3(id)).ok, id).toBe(true)
+      // sum系はvalueMapperの値型Uと一致させる（型検証はP8-D03の次のitで検証）
+      const valueMapper =
+        id === 'sumInt' ? AGE_VALUE : id === 'sumLong' ? SALARY_VALUE : id === 'sumDouble' ? EVALUATION_VALUE : NAME_VALUE
+      expect(validateCollectorStructure(toMap3(id, REGION_KEY, valueMapper)).ok, id).toBe(true)
     }
-    for (const id of ['sum', 'Long::sum', 'min', '']) {
+    // Java表記そのもの（Long::sum等）はIDではないため引き続き拒否される（IDはsumLong）
+    for (const id of ['sum', 'Long::sum', 'Integer::sum', 'min', '']) {
       const issues = issuesOf(toMap3(id))
       expect(issues, id).toContainEqual({
         code: 'WHITELIST_KIND',
@@ -204,6 +226,32 @@ describe('P8-D03 mergeFunctionホワイトリスト', () => {
           .ok,
         id,
       ).toBe(true)
+    }
+  })
+
+  it('P8-D03: sum系 × 値型Uの制約（一致wrapperのみ受理。v0.13 §2.2）', () => {
+    const cases = [
+      { id: 'sumInt', match: AGE_VALUE, mismatches: [SALARY_VALUE, EVALUATION_VALUE, NAME_VALUE, IDENTITY_VALUE] },
+      { id: 'sumLong', match: SALARY_VALUE, mismatches: [AGE_VALUE, EVALUATION_VALUE, NAME_VALUE, IDENTITY_VALUE] },
+      { id: 'sumDouble', match: EVALUATION_VALUE, mismatches: [AGE_VALUE, SALARY_VALUE, NAME_VALUE, IDENTITY_VALUE] },
+    ] as const
+    for (const { id, match, mismatches } of cases) {
+      // 一致wrapper（age=Integer / salary=Long / evaluation=Double）は受理される
+      expect(
+        resolveCollectorType(toMap3(id, REGION_KEY, match) as CollectorDsl, TYPE_EMPLOYEE).ok,
+        `${id}: match`,
+      ).toBe(true)
+      // 不一致（他wrapper・String・identity=Employee）はTYPE_MISMATCHで実行前拒否される
+      for (const valueMapper of mismatches) {
+        const dsl = toMap3(id, REGION_KEY, valueMapper) as CollectorDsl
+        expect(validateCollectorStructure(dsl).ok, `${id}: 構造検証は通る`).toBe(true)
+        const typed = resolveCollectorType(dsl, TYPE_EMPLOYEE)
+        expect(typed.ok, `${id} × ${JSON.stringify(valueMapper)}`).toBe(false)
+        if (!typed.ok) {
+          expect(typed.issues[0]?.code).toBe('TYPE_MISMATCH')
+          expect(typed.issues[0]?.path).toBe('collector.mergeFunctionId')
+        }
+      }
     }
   })
 })

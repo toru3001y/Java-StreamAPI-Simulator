@@ -7,10 +7,12 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   + `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`（v0.9 / Phase 7 Gatherers差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md`（v0.11 / Phase 8 Collectors.toMap差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`（v0.12 / Phase 9 teeing×toMap差分）
-  + `docs/Java_Stream_API_Visualization_Spec_v0.12.docx`（上記5文書の統合ビルド。閲覧用。正は各原本）
-- 実装状況: **Phase 9（teeing×toMap）まで実装済み**。Phase 8で唯一未達だったteeing branchへの
-  toMap配置はPhase 9（v0.12）で解消し、**P8必須39 IDを含む全Phaseの必須IDが完全成功**
-  （詳細は `docs/phase-8-completion-report.md` §17-1追記・`docs/phase-8-decisions.md` §9.2）
+  + `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`（v0.13 / Phase 10 数値加算merge差分）
+  + `docs/Java_Stream_API_Visualization_Spec_v0.13.docx`（上記6文書の統合ビルド。閲覧用。正は各原本）
+- 実装状況: **Phase 10（数値加算merge）まで実装済み**。Phase 8で唯一未達だったteeing branchへの
+  toMap配置はPhase 9（v0.12）で解消し（**P8必須39 IDを含む全Phaseの必須IDが完全成功**。
+  `docs/phase-8-completion-report.md` §17-1追記・`docs/phase-8-decisions.md` §9.2）、
+  持越しだった数値加算mergeはPhase 10（v0.13）で実装した（`docs/phase-8-decisions.md` §17）
 - J-2（`Collectors.teeing` の左右2系統と処理中要素数の関係）は Phase 5着手前に仕様確定し、本体へ実装済み
   （`docs/phase-5-decisions.md`。teeingでも「処理中要素は最大1件」の例外なし）
 - Phase 6でAI API接続（サーバーAPI・AI adapter・RemoteScenarioProvider）は**廃止**し、**手動連携方式**へ置換した
@@ -22,9 +24,9 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   `docs/Claude_Code_Phase7_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase8_Implementation_Instructions.md`
   （Phase 3 / Phase 4の指示書は、指示書自身の複製禁止規定によりリポジトリへ含めていない。
-  Phase 9は独立の指示書を作らず、仕様v0.12差分と `docs/phase-8-decisions.md` §9.1のA案を直接実装した）
+  Phase 9 / Phase 10は独立の指示書を作らず、仕様差分（v0.12 / v0.13）を直接実装した）
 
-## 実装済み操作（Phase 9時点）
+## 実装済み操作（Phase 10時点）
 
 - **Stream生成**: `Collection.stream()` / `Arrays.stream()`（object・int[]・long[]・double[]）/ `Stream.of()` /
   `Stream.generate()` / `Stream.iterate(seed, operator)` / `Stream.iterate(seed, predicate, operator)` /
@@ -65,9 +67,16 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
     構造検証で拒否する
   - keyMapperは既存 `ClassifierDsl` を変更なしで流用。valueMapperはtoMap専用の `ToMapValueDsl`
     （`identity`（`Function.identity()`）/ `fieldAccess`）を新設し、共有 `MapperDsl` は変更しない
-  - mergeFunctionは3種のIDホワイトリスト: `first`（`(a, b) -> a` / 既存値を保持・先勝ち）/
-    `last`（`(a, b) -> b` / 新しい値で置換・後勝ち）/ `concat`（`(s, a) -> s + ", " + a`。値型U=Stringのみ）。
+  - mergeFunctionは6種のIDホワイトリスト: `first`（`(a, b) -> a` / 既存値を保持・先勝ち）/
+    `last`（`(a, b) -> b` / 新しい値で置換・後勝ち）/ `concat`（`(s, a) -> s + ", " + a`。値型U=Stringのみ）/
+    **数値加算ファミリー（Phase 10 / v0.13）** `sumInt`（`Integer::sum`。U=Integerのみ）/
+    `sumLong`（`Long::sum`。U=Longのみ）/ `sumDouble`（`Double::sum`。U=Doubleのみ）。
     引数順は（Map内の既存値, 新しい値）で、根拠は `Map.merge` 契約
+  - **数値加算mergeの意味論整理（v0.13 §3）**: intのラップはJLS 15.18.2根拠の補助説明のみ
+    （実行値域はint32検証+fixture設計でラップ不発生を保証）。longはsafe integer範囲に限定。
+    `Double::sum` は+演算子の素朴な加算（IEEE 754）でCoreの加算と一致するためOracle照合対象
+    （補償付き加算の `summingDouble` とは非対称）。実行時range checkは追加しない
+    （toMapは取込対象外で外部入力経路がないため、値域保証はfixture契約で完結）
   - toMapノードは **keyMapper / valueMapper / mergeFunction / mapFactory の常設4行**で表示し、
     省略overloadの行は意味論（「なし（重複キーで`IllegalStateException`）」「なし（Map実装型は無保証）」）を示す
   - **本シミュレーター初の「正常完了しないPipeline」**: 2引数版の重複キーをvalidationで隠さず実行で
@@ -83,8 +92,8 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   - 教材データとして merge実演用の補助データセット `employeesMergeDemo`（関東3件）を追加し、
     「重複キーで失敗」「first / last / concat」「同一データの `groupingBy(region)` 比較」を
     **同一データ・同一keyMapper**で直接比較できる導線を設けた
-  - `toConcurrentMap` / `toUnmodifiableMap` / 数値加算merge（`Long::sum`等）/ key側identity は
-    **実行対象外**（存在と理由を補助説明で表示）。toMapを含むtemplateは**手動連携の取込対象外**
+  - `toConcurrentMap` / `toUnmodifiableMap` / key側identity は**実行対象外**（存在と理由を
+    補助説明で表示）。toMapを含むtemplateは**手動連携の取込対象外**
     （v0.11 §10-6のユーザー決定。将来拡張として持越し）
   - **teeing branchへのtoMap配置（Phase 9 / v0.12）**: teeing merger whitelistへ `RegionIndex::new`
     （`record RegionIndex(Map<String, String> byRegion, long count)`）を追加して解消。
@@ -170,6 +179,10 @@ React UI (src/ui)
 - Phase 9では、teeing走査の `ctx.path` 復元（右branch経路 `['c0','c0.right']`）と、branch Map生成注記の
   発行済み管理（`TeeRuntime` の独立フラグで全snapshot列に正確に1回）を追加し、teeing branchへの
   toMap配置（成功put / merge / 重複キー失敗の3分岐）を既存機構の拡張のみで実現
+- Phase 10では、mergeFunctionの型制約を `requiresString: boolean` から
+  `requiredValueWrapper: 'String' | 'Integer' | 'Long' | 'Double' | null` へ一般化し、
+  数値加算3種を `applyToMapMerge` のswitch追加のみで実装（新SnapshotKindなし。
+  sum系のsnapshot列はmerge-first / lastと同形）
 - 「戻る」は再計算せず保存済みsnapshotを復元（seen・buffer・count・Side Effect履歴・Collectorのbucket /
   蓄積 / finisher / merger結果、toMapのentry蓄積・`ExecutionFailureView` も完全復元）。
   全パネルが同一snapshot IDを描画
@@ -189,11 +202,11 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
                      # P1〜P7は照合のみで、実行前後に artifacts/phase-1〜phase-7 のSHA-256不変を検証する
 ```
 
-## テスト結果（Phase 9 最終）
+## テスト結果（Phase 10 最終）
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8） | 791（67ファイル） | 全成功 |
+| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8） | 796（67ファイル） | 全成功 |
 | E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05 + P7-E01〜05 + P8-E01〜05） | 93 | 全成功 |
 | JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 / P8-O01 + P4-O02 / P8-O02） | 8 suite | 完全一致 |
 
@@ -202,13 +215,15 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
 - P8必須39 IDは、Phase 8終了時点では37 ID完全成功・1 ID部分実装（P8-D15）・1 ID未実装（P8-D18）
   （いずれもteeing branch配置）だったが、**Phase 9（v0.12）で解消し39 IDすべて完全成功**
   （`docs/phase-8-completion-report.md` §17-1追記）
-- P8-O01はPhase 9で `teeingToMapByRegion` / `teeingToMapCount` キーを追加し、JDK 25実測と完全一致
+- P8-O01はPhase 9で `teeingToMapByRegion` / `teeingToMapCount`、Phase 10で
+  `toMapSumIntByRegion` / `toMapSumLongByRegion` / `toMapSumDoubleByRegion` キーを追加し、
+  JDK 25実測と完全一致
 - 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-8/`
-  （Phase 9のOracle証跡は `artifacts/phase-8/oracle-result.md` を更新）
+  （Phase 9 / 10のOracle証跡は `artifacts/phase-8/oracle-result.md` を更新）
 - 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 8では既存35枚を据え置き、toMap表示・FAILED表示の
   新規8枚を追加。新規8枚は最下部`DetailsDisclosure`のみマスクして安定化。thresholdは緩和なし。
-  Phase 9では基準画像の追加・更新なし〔43枚のまま〕）
-- 全実行可能template（125件） × modeの233組合せで、`expectedCompletion`どおりの終端
+  Phase 9 / 10では基準画像の追加・更新なし〔43枚のまま〕）
+- 全実行可能template（128件） × modeの236組合せで、`expectedCompletion`どおりの終端
   （`STREAM_CONSUMED` / `EXECUTION_FAILED`）・snapshot予算内・Javaコード生成を機械検証（P8-D22）
 - production bundleはReact vendor chunkを分離し、各chunk 500 kB未満（`vite.config.ts`）
 
@@ -220,9 +235,10 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
 | `docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md` | v0.9 仕様（Phase 7 Gatherers差分） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md` | v0.11 仕様（Phase 8 Collectors.toMap差分） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md` | v0.12 仕様（Phase 9 teeing×toMap差分） |
+| `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md` | v0.13 仕様（Phase 10 数値加算merge差分。数値意味論の整理を含む） |
 | `docs/Claude_Code_Phase8_Implementation_Instructions.md` | Phase 8実装指示書（確定値・snapshot列・必須テストID） |
-| `docs/phase-8-completion-report.md` | Phase 8完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果。§17-1にPhase 9での解消を追記） |
-| `docs/phase-8-decisions.md` | Phase 8判断記録（補助データセット・実行失敗の伝搬設計・FAILED区分・取込対象外方式・teeing制約。§9.2にPhase 9実施記録） |
+| `docs/phase-8-completion-report.md` | Phase 8完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果。§17にPhase 9 / Phase 10での解消を追記） |
+| `docs/phase-8-decisions.md` | Phase 8判断記録（補助データセット・実行失敗の伝搬設計・FAILED区分・取込対象外方式・teeing制約。§9.2にPhase 9実施記録・§17にPhase 10実施記録） |
 | `docs/Claude_Code_Phase7_Implementation_Instructions.md` | Phase 7実装指示書（確定値・snapshot列・必須テストID） |
 | `docs/phase-7-completion-report.md` | Phase 7完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・差異記録） |
 | `docs/phase-7-decisions.md` | Phase 7判断記録（累積評価の独立実装・list / stringList並存・取込対象外方式・OBSERVATION反映） |
@@ -244,6 +260,6 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
 工程別ブランチで作業し、Pull Request経由で `main` へマージする運用。
 Phase 1は積み上げ式の細分ブランチ（`phase1/00-spec` 〜 `phase1/12-reports`）で進め、
 Phase 2以降は各Phaseにつき1本のブランチ（`phase-2` / `phase-3` / `phase-4` / `phase-5` / `phase-6` /
-`phase-7` / `phase-8` / `phase-9`）を
+`phase-7` / `phase-8` / `phase-9` / `phase-10`）を
 `main` から分岐させ、レビュー後にPull Requestでマージしている。
 各Phaseで作成したファイルは、対応するブランチのコミット（またはmainのマージコミット）の差分で確認できる。

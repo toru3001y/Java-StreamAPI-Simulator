@@ -22,8 +22,8 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
     expect(JSON.stringify(built)).toBe(JSON.stringify(expected))
   })
 
-  it('P8-O01(sync): §8.2の10ケース + v0.12 teeing×toMapがすべて照合対象に含まれる', () => {
-    expect(P8_TEMPLATE_MODES).toHaveLength(11)
+  it('P8-O01(sync): §8.2の10ケース + v0.12 teeing×toMap + v0.13 sum系がすべて照合対象に含まれる', () => {
+    expect(P8_TEMPLATE_MODES).toHaveLength(14)
     for (const key of [
       'identity',
       'identityEmpty',
@@ -42,6 +42,14 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
     // v0.12 teeing×toMap: merger recordのfield値（左=TreeMapの実entry順・右=counting）
     expect(expected['teeingToMapByRegion']).toBe('{中部="小林", 関東="伊藤", 関西="中村"}')
     expect(expected['teeingToMapCount']).toBe('5')
+    // v0.13 sum系: 型ごとの合計（int / long=L表記 / double=IEEE 754素朴加算）
+    expect(expected['toMapSumIntByRegion']).toEqual(['中部=30', '関東=95', '関西=33'])
+    expect(expected['toMapSumLongByRegion']).toEqual([
+      '中部=4_900_000L',
+      '関東=15_700_000L',
+      '関西=5_200_000L',
+    ])
+    expect(expected['toMapSumDoubleByRegion']).toEqual(['中部=3.7', '関東=12.4', '関西=4.0'])
   })
 
   it('P8-O01(sync): 例外契約は型のみで、メッセージ全文を含まない', () => {

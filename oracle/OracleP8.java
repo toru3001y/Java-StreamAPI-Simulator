@@ -30,6 +30,9 @@ import java.util.stream.Collectors;
  *      （要素0件のfalse partitionも空TreeMapが値になる）
  *  +   v0.12: teeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new)
  *      （teeing branchへのtoMap配置。左branchはTreeMapのため実entry順で厳密比較）
+ *  +   v0.13: toMap(region, age, Integer::sum) / toMap(region, salary, Long::sum) /
+ *      toMap(region, evaluation, Double::sum)（数値加算merge。Double::sumは+演算子の
+ *      素朴な加算でありCoreの加算と同一のIEEE 754演算のため厳密照合できる）
  *
  * 照合方式（Phase 5〜7で確立した方式の踏襲。指示§12.5）:
  *   - **順序保証のないMap**（2・3引数版toMap・groupingBy）はキーの表示文字列の**辞書順へ正規化**して
@@ -100,6 +103,16 @@ public class OracleP8 {
             }
         }
         return (negative ? "-" : "") + sb + "L";
+    }
+
+    /**
+     * Coreの`formatDoubleLiteral`と同一表記（整数値なら`.0`付与。OracleP6のcoreDoubleと同じ規則）。
+     * v0.13 sum系の対象値（3.7 / 4.0 / 12.4等）はJava `Double.toString`とJS `String(n)`の
+     * 表記が一致する範囲にあり、BigDecimal経由の正規化で両側の表記を揃える。
+     */
+    private static String doubleLiteral(double v) {
+        String s = new java.math.BigDecimal(Double.toString(v)).stripTrailingZeros().toPlainString();
+        return s.contains(".") ? s : s + ".0";
     }
 
     /** Coreの`formatSimValue`（employee variant）と同じ表記 */
@@ -250,6 +263,14 @@ public class OracleP8 {
                 "{" + String.join(", ", pairs(regionIndex.byRegion(), OracleP8::stringLabel)) + "}";
         String teeingToMapCount = Long.toString(regionIndex.count());
 
+        // ---- v0.13: 数値加算merge（sum系。型ごとの合計。関東3件は(a+b)+cの順次適用） ----
+        Map<String, Integer> sumIntByRegion = employeesMergeDemo.stream()
+                .collect(Collectors.toMap(Employee::region, Employee::age, Integer::sum));
+        Map<String, Long> sumLongByRegion = employeesMergeDemo.stream()
+                .collect(Collectors.toMap(Employee::region, Employee::salary, Long::sum));
+        Map<String, Double> sumDoubleByRegion = employeesMergeDemo.stream()
+                .collect(Collectors.toMap(Employee::region, Employee::evaluation, Double::sum));
+
         // ---- OBSERVATION（厳密比較の対象外。JDKの保証として扱わない） ----
         System.out.println("OBSERVATION: toMap2Arg.exceptionMessage=" + duplicateExceptionMessage);
         List<String> mergeCallOrder = new ArrayList<>();
@@ -296,6 +317,12 @@ public class OracleP8 {
                 .append(jsonStrings(pairs(partitioned.get(true), OracleP8::longLiteral)));
         json.append(",\"teeingToMapByRegion\":").append(jsonString(teeingToMapByRegion));
         json.append(",\"teeingToMapCount\":").append(jsonString(teeingToMapCount));
+        json.append(",\"toMapSumIntByRegion\":")
+                .append(jsonStrings(normalized(pairs(sumIntByRegion, String::valueOf))));
+        json.append(",\"toMapSumLongByRegion\":")
+                .append(jsonStrings(normalized(pairs(sumLongByRegion, OracleP8::longLiteral))));
+        json.append(",\"toMapSumDoubleByRegion\":")
+                .append(jsonStrings(normalized(pairs(sumDoubleByRegion, OracleP8::doubleLiteral))));
         json.append('}');
         System.out.println(json);
     }

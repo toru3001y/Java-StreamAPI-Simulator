@@ -127,6 +127,12 @@ export function describeToMapMerge(mergeId: ToMapMergeId): string {
       return '新しい値で置換（後勝ち）します。ここでの「後」は現在の決定的な逐次実行における入力順を指します。'
     case 'concat':
       return '既存値と新しい値を", "で連結します。'
+    case 'sumInt':
+      return 'Integer.sumにより既存値と新しい値を加算します（+演算子と同じ）。'
+    case 'sumLong':
+      return 'Long.sumにより既存値と新しい値を加算します（+演算子と同じ）。'
+    case 'sumDouble':
+      return 'Double.sumにより既存値と新しい値を加算します（+演算子と同じIEEE 754加算。補償付き加算ではありません）。'
   }
 }
 

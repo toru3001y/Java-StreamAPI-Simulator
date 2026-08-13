@@ -49,5 +49,20 @@
     "高橋=7_200_000L"
   ],
   "teeingToMapByRegion": "{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}",
-  "teeingToMapCount": "5"
+  "teeingToMapCount": "5",
+  "toMapSumIntByRegion": [
+    "中部=30",
+    "関東=95",
+    "関西=33"
+  ],
+  "toMapSumLongByRegion": [
+    "中部=4_900_000L",
+    "関東=15_700_000L",
+    "関西=5_200_000L"
+  ],
+  "toMapSumDoubleByRegion": [
+    "中部=3.7",
+    "関東=12.4",
+    "関西=4.0"
+  ]
 }
