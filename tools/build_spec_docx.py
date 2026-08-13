@@ -32,8 +32,14 @@ v0.14（unmodifiable系Collector差分）の Markdown原本を章として取り
       --v12   docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md \
       --v13   docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md \
       --v14   docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md \
+      --version-label v1.00 \
       --date-label 2026-08-14 \
-      --out   docs/Java_Stream_API_Visualization_Spec_v0.14.docx
+      --out   docs/Java_Stream_API_Visualization_Spec_v1.00.docx
+
+  --version-label を省略すると収録した最後の差分に応じた Draft 表記（例: Draft v0.14）になる。
+  確定版は --version-label v1.00 を指定する（表紙・文書ステータス行・文書情報表・巻末・
+  全ページのフッター・docProps へ一括反映し、§1.1 改訂点表へ v1.00 行を追加する）。
+  v1.00 は v0.9〜v0.14 の全差分を収録した状態を指すため --v14 が必須。
 
   後段の差分（--v14 → --v13 → --v12 → --v11 → --v10）を省略すると、その手前までの統合を
   生成する（--v14 には --v13、--v13 には --v12、--v12 には --v11、--v11 には --v10 が必要）。
@@ -1483,6 +1489,9 @@ def main():
         raise SystemExit('--v13 には --v12 が必要です（v0.13はv0.12までの統合を前提とする）')
     if args.v14 and not args.v13:
         raise SystemExit('--v14 には --v13 が必要です（v0.14はv0.13までの統合を前提とする）')
+    if args.version_label == 'v1.00' and not args.v14:
+        raise SystemExit('--version-label v1.00 には --v14 が必要です'
+                         '（確定版はv0.9〜v0.14の全差分を収録した状態を指す）')
     version_label = args.version_label or (
         'Draft v0.14' if args.v14 else
         'Draft v0.13' if args.v13 else
@@ -1540,6 +1549,11 @@ def main():
                                   '`toUnmodifiableMap`を教材対象へ追加し、Phase 11を新設（第31章）。'
                                   '蓄積ラベルと結果ラベルの分離・finisher可視化・'
                                   '非null不変条件の機械検証を含む'])
+    if version_label == 'v1.00':
+        rev_rows.append(['v1.00', 'v0.14までの内容を変更せずに確定版とした。第1〜25章および'
+                                  '付録A〜FはDraft v0.8の記述のまま、v0.9〜v0.14の差分は'
+                                  '第26〜31章として保持する（章構成の変更はない）。'
+                                  'Phase 1〜11の実装完了に対応する'])
     s.append_rows('教材Pipeline最大ノード数ガイドラインの運用方針', rev_rows)
     report['A §1.1改訂点'] = 1
 
