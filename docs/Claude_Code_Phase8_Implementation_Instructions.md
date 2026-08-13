@@ -244,7 +244,7 @@ export type ToMapMergeId = (typeof TO_MAP_MERGE_IDS)[number]
    entriesは蓄積順（encounter orderの挿入順。TreeMapはキー順）で保持し、UIは並べ替えない。
 4. **toMap構造4行view**: `CollectorNodeView`へ`toMap: { keyMapperLabel; valueMapperLabel; mergeFunctionLabel; mapFactoryLabel } | null`を追加する（toMapノードのみ非null）。省略overloadの行は意味論表示の文言を確定値として含める（mergeFunctionなし→「なし（重複キーでIllegalStateException）」、mapFactoryなし→「なし（Map実装型は無保証）」。v0.11 §5）。フィールド名の細部は実装判断としてよいが、上記の情報がすべて載っていることを契約とする。
 5. 重複検出・merge適用のcontext（重複キー・既存値・新しい値・merge結果）は`ProcessingView`の確定値と上記viewで表現し、UIで独自計算しない。
-6. **merge結果値のID（確定。v0.11 §6.4・§10-3の残項目）**: merge結果へ独立の値ID（ElementId・合成ID）は**付与しない**。Map entryはPipelineを流れる要素ではなく、既存Collector蓄積値（counting等）もElementIdを持たない前例に従う。entryの`keyRef`・`valueLabel`（§7.5-3）と`ExecutionFailureView`だけで復元契約・決定性（P8-D17）を満たすことを契約とし、判断理由を`docs/phase-8-decisions.md`へ記録する。
+6. **merge結果値のID（確定。v0.11 §6.4・§10-5の残項目）**: merge結果へ独立の値ID（ElementId・合成ID）は**付与しない**。Map entryはPipelineを流れる要素ではなく、既存Collector蓄積値（counting等）もElementIdを持たない前例に従う。entryの`keyRef`・`valueLabel`（§7.5-3）と`ExecutionFailureView`だけで復元契約・決定性（P8-D17）を満たすことを契約とし、判断理由を`docs/phase-8-decisions.md`へ記録する。
 
 ### 7.6 templateとfixture（確定。v0.11 §10-4）
 
@@ -378,8 +378,8 @@ gatherのような新slot kindは増えないため、`slotSpecOf`への追加�
 
 | 現行対象 | 更新内容 |
 |---|---|
-| `tests/domain/p6-fullcheck.test.ts`（P6-D22） | 走査母集団を**Phase 7完了時点のtemplate集合**（=toMapを含まない実行可能template）へ固定する最小更新のみ許可。固定後も既存全templateへの検証意味（`STREAM_CONSUMED`終端・予算内・Javaコード生成）を保存する。全template（toMap含む）の総点検はP8-D22が`expectedCompletion`対応で引き継ぐ |
-| `tests/domain/p7-catalog.test.ts`（P7-D20） | template総数118 / 実行可能116 / 組合せ222の固定値検証を、**Phase 7完了時点集合へのスコープ固定**とする最小更新のみ許可（母集団をtoMap非含有templateに限定して同値を検証）。P8の件数検証はP8-D20が担う |
+| `tests/domain/p6-fullcheck.test.ts`（P6-D22） | 走査母集団を**Phase 7完了時点のtemplate集合**へ固定する最小更新のみ許可。固定方法は「`ALL_TEMPLATES`から`P8_TEMPLATES`（`templatesP8.ts`のexport）全件を除外」とする。**「toMap非含有」での抽出は不可**——新設`tmpl-collect-groupby-mergedemo`はtoMap非含有のため、その抽出ではPhase 7時点集合と一致しない。固定後も既存全templateへの検証意味（`STREAM_CONSUMED`終端・予算内・Javaコード生成）を保存する。全template（Phase 8分含む）の総点検はP8-D22が`expectedCompletion`対応で引き継ぐ |
+| `tests/domain/p7-catalog.test.ts`（P7-D20） | template総数118 / 実行可能116 / 組合せ222の固定値検証を、**Phase 7完了時点集合へのスコープ固定**とする最小更新のみ許可。固定方法はP6-D22と同じ「`P8_TEMPLATES`全件を除外」（「toMap非含有」抽出では119 / 117 / 223になり失敗する）。P8の件数検証はP8-D20が担う |
 | `tests/domain/p6-contract.test.ts`（P6-D01〜D03）・`tests/application/p6-session.test.ts`（P6-A03）・`tests/domain/p7-*.test.ts`のうち取込対象templateを走査するもの（P7-D21等） | 「取込対象template」導出（現行: gatherノード非含有）を「gatherノード非含有**かつ**collector slotに`'toMap'`を含まない」へ拡張する最小更新のみ許可（`tests/p6-helpers.ts`のヘルパ更新で一元化）。既存の非gather・非toMap templateへの検証意味を保存する。toMap templateの拒否検証はP8-D21が担う |
 | `tests/domain/p7-review.test.ts`（P7-O02） | Phase 7時点のOracle suite構成をfixtureとして固定する形へのリファクタリングのみ許可（P6-O02前例）。ライブ構成の検証は新規`tests/domain/p8-review.test.ts`（P8-O02）が担う |
 | `tests/domain/p6-javacode.test.ts`（P6-D18） | Phase 6 goldenの既存キー・出力の不変検証はそのまま保持し、**追加キーの許可集合**（現行: Phase 7 gatherのtemplate×modeのみ）を「Phase 7 gather 11件＋Phase 8で確定した10 fixture」へ拡張する最小更新のみ許可。golden JSON自体は書き換えない |
@@ -431,7 +431,7 @@ gatherのような新slot kindは増えないため、`slotSpecOf`への追加�
 | P8-R01 | toMap構造4行 | keyMapper / valueMapper / mergeFunction / mapFactoryの常設4行、省略行の意味論文言（§7.5-4） |
 | P8-R02 | 蓄積・重複・merge表示 | entry蓄積順表示、重複3点表示、merge適用フロー、「既存値を保持（先勝ち）」「新しい値で置換（後勝ち）」併記、（既存値, 新しい値）の引数順 |
 | P8-R03 | 実行失敗表示 | 教材上想定された実行失敗の区分表示・`IllegalStateException`・原因キー・ERRORとの文言区別、`FAILED`での進む / 自動再生の無効化と戻るの有効性。**downstream配置の失敗時に、Collector経路とbucketキーが`executionFailure`（`collectorPath` / `bucketPath`）から表示されること** |
-| P8-R04 | 操作選択・補助説明 | 操作一覧が不変（新operationIdなし）、対象外の補助説明（toConcurrentMap / toUnmodifiableMap / **数値加算merge** / key側identity）、§7.8の教材規約文言 |
+| P8-R04 | 操作選択・補助説明・比較導線 | 操作一覧が不変（新operationIdなし）、対象外の補助説明（toConcurrentMap / toUnmodifiableMap / **数値加算merge** / key側identity）、§7.8の教材規約文言。**groupingBy比較導線**: `tmpl-collect-groupby-mergedemo`とtoMap 4 template（duplicate / first / last / concat）の相互参照文言（title / description / jdkNotes由来）が画面に表示されること（v0.11 §8.6追補・§4の1読み替え） |
 | P8-R05 | 取込UI無効化 | toMap template選択中はコピー・貼付の両方が無効化され理由が表示される。非toMap templateへ戻すと復帰する |
 | P8-R06 | a11y・responsive | toMap表示・FAILED表示を含むキーボード操作・focus-visible・reduced motion・狭幅縦積み |
 
@@ -441,7 +441,7 @@ gatherのような新slot kindは増えないため、`slotSpecOf`への追加�
 |---|---|---|
 | P8-E01 | identity成功E2E | standard実行で`Map<String, Employee>` 4 entryへ到達し、entry蓄積表示と履歴復元を確認する |
 | P8-E02 | 実行失敗E2E | 重複キーで`COLLECT_FAILED`まで到達し、失敗表示（例外型・原因キー）・進む不可・戻る→再前進の復元を確認する |
-| P8-E03 | merge / TreeMap E2E | first / last / concatの結果差（同一データ）、concatの3件連結、TreeMapのキー昇順表示を確認する |
+| P8-E03 | merge / TreeMap / 比較導線E2E | first / last / concatの結果差（同一データ）、concatの3件連結、TreeMapのキー昇順表示を確認する。**`tmpl-collect-groupby-mergedemo`を実行して関東=`[伊藤, 渡辺, 山本]`（List蓄積）へ到達し、同一データのtoMap結果（衝突→merge / 例外）との直接比較と相互参照文言の表示を確認する** |
 | P8-E04 | 総点検回帰 | 既存E2E全件が成功し、全toMap template×modeの到達チェックリスト（§10）と対応する |
 | P8-E05 | 狭幅・視覚回帰 | toMap表示・FAILED表示を含むPC幅 / 狭幅・横スクロール・sticky非遮蔽を確認し、P8基準画像を新設する。既存基準画像に差分が出た場合はdiff確認の上でのみ意図的更新 |
 
@@ -492,7 +492,7 @@ npm run test:oracle
   - 記録対象: `employeesMergeDemo`データセット新設とSource DSL加算的追加の判断（§7.6）、データ選択の単一定義源をFixtureScenarioProviderのdatasetとした判断（§5.2）、merge結果値へ独立IDを付与しない判断（§7.5-6）、midEmpty非対応の判断（§7.6）、`expectedCompletion`フィールドの設計（§5.2）、取込対象外の実装方式（§7.7）、`SnapshotOutput.result` null許容化の棚卸し結果（§7.5）、Javaコード表記の細部（§7.4）、FAILED表示のUI設計（§9）、Oracle照合の表記整合（§12.5）、視覚回帰更新の有無と理由（§10）、その他仕様本文を変更しない範囲の実装判断。
 - `docs/phase-8-completion-report.md`
 - `artifacts/phase-8/`
-  - PC幅 / 狭幅キャプチャ（identity成功・実行失敗・merge対比・TreeMap・downstream形・取込UI無効化を含む）
+  - PC幅 / 狭幅キャプチャ（identity成功・実行失敗・merge対比・**同一データのgroupingBy比較**・TreeMap・downstream形・取込UI無効化を含む）
   - Oracle結果（`oracle-result.md`。例外メッセージのOBSERVATION行を含む）
 - `e2e/__screenshots__/`配下のPhase 8視覚回帰基準画像（新設）
 - `e2e/capture-helper.ts`の`CAPTURE_TARGET_PHASE`を`8`へ変更（この1か所のみ）

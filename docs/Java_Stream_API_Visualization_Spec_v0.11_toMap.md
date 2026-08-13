@@ -2,7 +2,7 @@
 
 ## 1. 版管理（Draft v0.8 §1.2の変更管理に基づく）
 
-- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕・第3回指摘2件〔中2〕・第4回指摘1件〔低1〕を反映。**第4回で承認**。承認後の追補1件: §8.6の同一fixture比較規定の明確化〔Phase 8実装指示書レビュー第1回 高-1に伴う。§8.6末尾参照〕）
+- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕・第3回指摘2件〔中2〕・第4回指摘1件〔低1〕を反映。**第4回で承認**。承認後の追補1件: §8.6の同一fixture比較規定の明確化。**§4の1の読み替えを含む**〔Phase 8実装指示書レビュー第1回 高-1・第2回 高-1に伴う。§8.6末尾参照〕）
 - 本書の構成: **v0.11 = Draft v0.8（`docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`、無編集のまま保持）+ v0.9差分（`docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`、無編集のまま保持）+ v0.10差分（`docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`、無編集のまま保持）+ 本差分文書**。全文転記は行わない。
 - 変更理由: Draft v0.8 付録A.4の対象外として未実装だった`Collectors.toMap`を教材対象へ追加するため（Phase 8）。toMapは「groupingBy = 1キー多値」に対する「toMap = 1キー1値。衝突はmergeか例外」という対比を担う、Collector教材の欠落部分である。
 - 作成日: 2026-08-13
@@ -292,7 +292,7 @@ ToMapValueDsl =
   5. 4引数版・TreeMap（キーの昇順整列を表示）
   6. **downstream形 `groupingBy(…, toMap(…))` を最低1件**（nested Map TypeRef・bucketごとの重複判定の機械検証）
 - 基準template 2〜4（実行失敗・first / last・concat）は**互いに同一fixture・同一keyMapper**を用いる。あわせて、**同一fixtureで実行するgroupingBy(region)比較template（新設可）**を設けてtemplate説明で相互参照し（「groupingByは同じキーの値をListへ蓄積する / toMapは衝突してmergeまたは例外になる」の直接比較。§4の1）、既存の`groupingBy(region)`系教材（基準4件データ）への参照も維持する。
-  〔**追補**（第4回承認後）: 旧規定「既存の`groupingBy(region)`系教材と同一fixture・同一keyMapperを用い」は、上記4「同一キーへ3件以上が衝突するデータ」と基準4件fixture（最大2件衝突）の間で両立しないため、本追補で「template 2〜4は互いに同一fixture＋同一fixtureのgroupingBy比較templateを新設」へ明確化した（Phase 8実装指示書レビュー第1回 高-1）。〕
+  〔**追補**（第4回承認後）: 旧規定「既存の`groupingBy(region)`系教材と同一fixture・同一keyMapperを用い」は、上記4「同一キーへ3件以上が衝突するデータ」と基準4件fixture（最大2件衝突）の間で両立しないため、本追補で「template 2〜4は互いに同一fixture＋同一fixtureのgroupingBy比較templateを新設」へ明確化した。**本追補の適用範囲は本節（旧§8.6末尾）と§4の1の両方**であり、§4の1の「既存の`groupingBy(region)`系教材と同一fixture・同一keyMapperで直接比較できる導線」は「同一fixtureで実行するgroupingBy(region)比較template（新設可）との直接比較の導線（既存教材への参照も維持）」へ読み替える（Phase 8実装指示書レビュー第1回 高-1・第2回 高-1）。〕
 - 手動連携取込候補（v0.10）へのtoMap開放可否はPhase 8中の判断事項とする（§10）。開放する場合も本節の制約を候補検証の契約とする。
 
 ## 9. Phase 8実装契約の概要
