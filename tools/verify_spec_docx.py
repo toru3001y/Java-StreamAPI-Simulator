@@ -6,12 +6,15 @@
   1. v0.8 docx がバイト単位で不変であること
   2. ZIP/XML整合（全part存在・XMLとしてパース可能・styleとnumIdが定義済み）
   3. 差分の限定（v0.8の本文要素が削除されていないこと・変更要素が想定どおりであること）
-  4. 転記の網羅性（差分mdの全ブロックが第26/27章に存在すること）
-  5. §参照の健全性（全参照が実在する見出しを指すこと）
+  4. 転記の網羅性（差分mdの全ブロックが第26/27/28章に存在すること）
+  5. §参照の健全性（全参照が実在する見出しを指すこと。リポジトリ文書への§参照は文脈除外）
 
 使い方:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
-      --v09 <v0.9.md> [--v10 <v0.10.md>] [--dump <章本文の書き出し先>]
+      --v09 <v0.9.md> [--v10 <v0.10.md>] [--v11 <v0.11.md>] [--dump <章本文の書き出し先>]
+
+  --v11 には --v10 が必要（ビルダーと同じ依存関係。v0.11統合docxは第27章を含むため、
+  --v10 を省略すると第27章の転記検証が抜けたまま合格し得る）。
 """
 
 import argparse
@@ -118,6 +121,9 @@ def main():
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
+
+    if args.v11 and not args.v10:
+        raise SystemExit('--v11 には --v10 が必要です（省略すると第27章の転記検証が抜ける）')
 
     if args.v11:
         # v0.11は付録A.4（Collector / Collectors表）へも行を追加する

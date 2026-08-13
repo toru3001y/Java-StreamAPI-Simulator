@@ -3,13 +3,14 @@
 """
 Java Stream API 可視化シミュレーター 仕様書 統合docxビルダー
 
-Draft v0.8 の docx（Pandoc生成）へ、v0.9（Gatherers差分）と v0.10（Phase 6手動連携差分）の
-Markdown差分文書を取り込み、1ファイルで読める統合版 docx を生成する。
+Draft v0.8 の docx（Pandoc生成）へ、v0.9（Gatherers差分）・v0.10（Phase 6手動連携差分）・
+v0.11（Collectors.toMap差分）のMarkdown差分文書を取り込み、1ファイルで読める統合版 docx を
+生成する。
 
 方式:
   - v0.8 本文（第1〜25章・付録A〜F）は書き換えない。既存段落・表行への「追加」のみ行う。
-  - 差分本文は第26章（v0.9）・第27章（v0.10）として末尾へ新設する。
-  - v0.8 側の該当箇所には「→ §26.x / §27.x 参照」の追加行（ポインタ）を差し込む。
+  - 差分本文は第26章（v0.9）・第27章（v0.10）・第28章（v0.11）として末尾へ新設する。
+  - v0.8 側の該当箇所には「→ §26.x / §27.x / §28.x 参照」の追加行（ポインタ）を差し込む。
 
 実装:
   - pandoc / python-docx を使わず、Python標準ライブラリのみで word/document.xml を
@@ -20,14 +21,17 @@ Markdown差分文書を取り込み、1ファイルで読める統合版 docx �
       --base  docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx \
       --v09   docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md \
       --v10   docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md \
-      --out   docs/Java_Stream_API_Visualization_Spec_v0.10.docx
+      --v11   docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md \
+      --date-label 2026-08-13 \
+      --out   docs/Java_Stream_API_Visualization_Spec_v0.11.docx
 
-  --v10 を省略すると v0.9 までの統合（第26章まで）を生成する。
+  --v11 を省略すると v0.10 までの統合（第27章まで）を、さらに --v10 を省略すると
+  v0.9 までの統合（第26章まで）を生成する。--v11 には --v10 が必要。
   出力は決定的で、同じ入力からは常にバイト単位で同一のdocxが得られる。
 
 検証:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
-      --v09 <v0.9.md> --v10 <v0.10.md> --base-sha <v0.8のSHA-256>
+      --v09 <v0.9.md> --v10 <v0.10.md> --v11 <v0.11.md> --base-sha <v0.8のSHA-256>
 """
 
 import argparse
