@@ -380,6 +380,18 @@ export function collectorToJavaExpr(dsl: CollectorDsl): string {
       if (dsl.mapFactoryId !== null) args.push(dsl.mapFactoryId)
       return `Collectors.toMap(${args.join(', ')})`
     }
+    // ---- Phase 11: unmodifiable系（v0.14 §2.1） ----
+    case 'toUnmodifiableList':
+      return 'Collectors.toUnmodifiableList()'
+    case 'toUnmodifiableSet':
+      return 'Collectors.toUnmodifiableSet()'
+    case 'toUnmodifiableMap': {
+      // 2引数 / 3引数の2形のみ（mapFactory版overloadはJavaに存在しない）。toMapと同じく
+      // 省略引数は表示しない
+      const args = [classifierToJavaExpr(dsl.keyMapper), toMapValueToJavaExpr(dsl.valueMapper)]
+      if (dsl.mergeFunctionId !== null) args.push(TO_MAP_MERGE_META[dsl.mergeFunctionId].javaExpr)
+      return `Collectors.toUnmodifiableMap(${args.join(', ')})`
+    }
   }
 }
 

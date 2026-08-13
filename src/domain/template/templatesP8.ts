@@ -1,5 +1,5 @@
 import type { ParameterSlot, PipelineTemplate, PipelineTemplateNode, SnapshotBudget } from './pipelineTemplate'
-import { OP_COLLECT, OP_SOURCE_COLLECTION_STREAM } from '../catalog/operations'
+import { OP_COLLECT, OP_MAP, OP_SOURCE_COLLECTION_STREAM } from '../catalog/operations'
 
 /**
  * Phase 8 toMap教材template（指示§7.6、v0.11 §8.6）。
@@ -87,10 +87,10 @@ const NOTE_FIRST_LAST_MEANING =
 /**
  * 対象外機能の補助説明（v0.11 §2.2。UNIMPLEMENTED_OPERATIONS機構は使わない。指示§9）。
  * 数値加算merge（Long::sum等）はv0.13で実装済みとなったため対象外リストから削除した（v0.13 §4）。
+ * toUnmodifiableMap系はv0.14（Phase 11）で実装済みとなったため削除した（v0.14 §5.1）。
  */
 export const TO_MAP_OUT_OF_SCOPE_NOTES: readonly string[] = [
   'Collectors.toConcurrentMap系はunordered Collectorであり、並列実行での性能最適化が存在意義である。決定的な逐次Step Engineでは意味論を正確に可視化できないため、この教材では実行対象外とする（説明のみ）。',
-  'Collectors.toUnmodifiableMap系はnullキー・null値を禁止し（いずれかのmapping functionがnullを返すとNullPointerException）、変更不可能なMapを返す。toUnmodifiableList / toUnmodifiableSetとあわせて将来のPhaseで一括して扱うため、この教材では実行対象外とする（説明のみ）。',
   'key側のFunction.identity()（Employee自身をキーにする形）は、recordのequalsによるキー等価とTreeMap不可（EmployeeはComparableではない）という別論点を伴うため、この教材ではvalue側identityのみを実行する（key側は説明のみ）。',
 ]
 
@@ -121,6 +121,22 @@ const NOTE_COMPARE_TO_MAP =
 const NOTE_EXISTING_GROUPING_BY_TEMPLATES =
   '基準4件データ（employees）に対するgroupingBy教材は「collect（groupingBy(Employee::region) + counting()）」等で引き続き参照できる。'
 
+/** Phase 11: unmodifiable Set教材で使うmapノード（既存toSet教材と同型の3ノード構成） */
+const MAP_NODE: PipelineTemplateNode = {
+  nodeId: 'node-map',
+  operationId: OP_MAP,
+  role: 'intermediate',
+  slotId: 'slot-mapper-1',
+}
+
+const FIELD_MAPPER_SLOT: ParameterSlot = {
+  slotId: 'slot-mapper-1',
+  targetNodeId: 'node-map',
+  kind: 'mapper',
+  required: true,
+  allowedMapperKinds: ['fieldAccess'],
+}
+
 function p8Template(input: {
   readonly templateId: string
   readonly title: string
@@ -130,6 +146,10 @@ function p8Template(input: {
   readonly jdkNotes: readonly string[]
   readonly expectedCompletion?: 'STREAM_CONSUMED' | 'EXECUTION_FAILED'
   readonly snapshotBudget?: SnapshotBudget
+  /** map等の中間ノードを挟む形（既定はsource → collectの2ノード） */
+  readonly nodes?: readonly PipelineTemplateNode[]
+  /** collector slot以外の追加slot（中間ノード用） */
+  readonly extraSlots?: readonly ParameterSlot[]
 }): PipelineTemplate {
   return {
     templateId: input.templateId,
@@ -138,8 +158,8 @@ function p8Template(input: {
     targetNodeId: 'node-sink',
     title: input.title,
     sourceDefinition: input.source,
-    nodes: [SRC, COLLECT_SINK],
-    parameterSlots: [collectorSlot(input.allowedCollectorKinds)],
+    nodes: input.nodes ?? [SRC, COLLECT_SINK],
+    parameterSlots: [...(input.extraSlots ?? []), collectorSlot(input.allowedCollectorKinds)],
     allowedDslProfile: { predicateKinds: [] },
     supportedModes: input.supportedModes,
     jdkNotes: input.jdkNotes,
@@ -365,6 +385,96 @@ export const TO_MAP_MERGE_SUM_DOUBLE_TEMPLATE = p8Template({
   ],
 })
 
+// ---- Phase 11: unmodifiable系教材3件（v0.14 §5.1） ----
+//
+// 3件とも既存教材との**対比**を主眼とする（違いは不変性だけである点を確認させる）。
+// titleは既存最長（toMap identity template）以下に抑える（v0.14 §1.2。長いoptionは
+// 教材Pipeline selectの内在幅を広げ、全collectorページの視覚回帰基準画像へ波及する）。
+
+const NOTE_UNMOD_LIST_SPEC =
+  'Collectors.toUnmodifiableList()はencounter orderのままunmodifiable Listへ蓄積する（Since 10）。null値を許さず、nullが渡されるとNullPointerExceptionを送出する。'
+
+const NOTE_UNMOD_SET_SPEC =
+  'Collectors.toUnmodifiableSet()はunmodifiable Setへ蓄積する（Since 10）。null値を許さずNullPointerExceptionを送出し、重複要素があればそのうち任意の1件が保持される。unordered Collectorである。'
+
+const NOTE_UNMOD_MAP_SPEC =
+  'Collectors.toUnmodifiableMap(keyMapper, valueMapper)はunmodifiable Mapを返す（Since 10）。nullキー・null値を許さず、いずれかのmapping functionがnullを返すとNullPointerExceptionを送出する。'
+
+const NOTE_UNMOD_CONTAINER =
+  '返却されたコンテナはunmodifiableであり、変更操作（add / remove / put等）を呼ぶと常にUnsupportedOperationExceptionが送出される。この教材では収集後の変更操作を実演せず、実挙動はOracle（JDK 25実測）で確認している。'
+
+const NOTE_UNMOD_ACCUMULATING_LABEL =
+  '画面上の「（蓄積中）」は、unmodifiableへ確定する前であることを示す教材モデル上の状態表示である。JDKが内部で使う中間コンテナ型やfinisherの実装を断定するものではない。'
+
+const NOTE_UNMOD_VS_TO_LIST =
+  'Collectors.toList()が返すListは型・可変性・thread-safetyを保証しない。Collectors.toUnmodifiableList()は不変であることを保証する点が異なる。'
+
+const NOTE_UNMOD_VS_STREAM_TO_LIST =
+  'Stream.toList()とは、変更操作が常にUnsupportedOperationExceptionとなるunmodifiableという点では同じである。ただしnull禁止はCollectors.toUnmodifiableList()に明示された別の契約であり、Stream.toList()の仕様にnull禁止の規定はない。'
+
+const NOTE_UNMOD_VS_TO_SET =
+  'Collectors.toSet()との違いは不変性だけである。unordered Collectorであること、画面の表示順が学習用の安定順序であること（JDKのiteration order保証ではない）はtoSet()と同じである。'
+
+const NOTE_UNMOD_MAP_NO_MAP_FACTORY =
+  'toUnmodifiableMapのoverloadは2引数 / 3引数の2形だけであり、mapFactoryを指定する形は存在しない（返却されるMapがunmodifiableであるため）。Mapの実装型を選びたい場合はtoMapの4引数版を使う。'
+
+const NOTE_UNMOD_MAP_DUPLICATE =
+  '2引数版のtoUnmodifiableMapでキーが重複した場合の扱いはtoMap 2引数版と同じであり、収集の実行時にIllegalStateExceptionが送出される。実行失敗の様子は「collect（toMap・重複キーで実行失敗）」で確認できる（意味論が同一のため専用の教材は設けていない）。'
+
+const NOTE_UNMOD_MAP_VS_TO_MAP =
+  '同じデータ・同じkeyMapper・同じmergeFunction（first）で「collect（toMap + mergeFunction: first — 既存値を保持）」を実行すると、蓄積とmergeの過程は完全に同じになる。違いは結果Mapが不変であることと、mapFactory版のoverloadが存在しないことだけである。'
+
+/** 13. toUnmodifiableList（employees 4件・encounter order保持）。 */
+export const TO_UNMOD_LIST_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tounmod-list',
+  title: 'collect（Collectors.toUnmodifiableList()）',
+  source: EMPLOYEES_SOURCE,
+  allowedCollectorKinds: ['toUnmodifiableList'],
+  supportedModes: ['standard', 'emptySource'],
+  jdkNotes: [
+    NOTE_UNMOD_LIST_SPEC,
+    NOTE_UNMOD_CONTAINER,
+    NOTE_UNMOD_ACCUMULATING_LABEL,
+    NOTE_UNMOD_VS_TO_LIST,
+    NOTE_UNMOD_VS_STREAM_TO_LIST,
+  ],
+})
+
+/** 14. map(Employee::region) + toUnmodifiableSet（重複除去。既存toSet教材と同型）。 */
+export const TO_UNMOD_SET_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tounmod-set',
+  title: 'collect（map(region) + toUnmodifiableSet()）',
+  source: EMPLOYEES_SOURCE,
+  allowedCollectorKinds: ['toUnmodifiableSet'],
+  supportedModes: ['standard', 'emptySource'],
+  nodes: [SRC, MAP_NODE, COLLECT_SINK],
+  extraSlots: [FIELD_MAPPER_SLOT],
+  jdkNotes: [
+    NOTE_UNMOD_SET_SPEC,
+    NOTE_UNMOD_CONTAINER,
+    NOTE_UNMOD_ACCUMULATING_LABEL,
+    NOTE_UNMOD_VS_TO_SET,
+  ],
+})
+
+/** 15. toUnmodifiableMap 3引数版（employeesMergeDemo・region × name・first）。 */
+export const TO_UNMOD_MAP_TEMPLATE = p8Template({
+  templateId: 'tmpl-collect-tounmod-map',
+  title: 'collect（toUnmodifiableMap(region, name, first)）',
+  source: MERGE_DEMO_SOURCE,
+  allowedCollectorKinds: ['toUnmodifiableMap'],
+  supportedModes: ['standard'],
+  jdkNotes: [
+    NOTE_UNMOD_MAP_SPEC,
+    NOTE_UNMOD_CONTAINER,
+    NOTE_UNMOD_ACCUMULATING_LABEL,
+    NOTE_UNMOD_MAP_NO_MAP_FACTORY,
+    NOTE_MERGE_ARG_ORDER,
+    NOTE_UNMOD_MAP_DUPLICATE,
+    NOTE_UNMOD_MAP_VS_TO_MAP,
+  ],
+})
+
 export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   TO_MAP_IDENTITY_TEMPLATE,
   TO_MAP_DUPLICATE_TEMPLATE,
@@ -378,6 +488,16 @@ export const P8_TEMPLATES: readonly PipelineTemplate[] = [
   TO_MAP_MERGE_SUM_INT_TEMPLATE,
   TO_MAP_MERGE_SUM_LONG_TEMPLATE,
   TO_MAP_MERGE_SUM_DOUBLE_TEMPLATE,
+  TO_UNMOD_LIST_TEMPLATE,
+  TO_UNMOD_SET_TEMPLATE,
+  TO_UNMOD_MAP_TEMPLATE,
+]
+
+/** Phase 11で追加したunmodifiable系template ID（v0.14 §5.1） */
+export const P11_TEMPLATE_IDS: readonly string[] = [
+  TO_UNMOD_LIST_TEMPLATE.templateId,
+  TO_UNMOD_SET_TEMPLATE.templateId,
+  TO_UNMOD_MAP_TEMPLATE.templateId,
 ]
 
 /** Phase 8で追加したtemplate ID（既存走査母集団をPhase 7完了時点へ固定する際の除外集合） */

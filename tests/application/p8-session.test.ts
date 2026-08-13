@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../../src/ui/appInstance'
 import { FakeScheduler } from '../helpers'
-import { P8_TEMPLATES } from '../../src/domain/template/templatesP8'
-import { TO_MAP_NOT_IMPORTABLE_REASON } from '../../src/application/importContract'
+import { P11_TEMPLATE_IDS, P8_TEMPLATES } from '../../src/domain/template/templatesP8'
+import {
+  TO_MAP_NOT_IMPORTABLE_REASON,
+  UNMODIFIABLE_NOT_IMPORTABLE_REASON,
+} from '../../src/application/importContract'
 import { expectedCompletionOf } from '../../src/domain/template/pipelineTemplate'
 import { P8_TEMPLATE_MODES } from '../p8-helpers'
 
@@ -66,8 +69,8 @@ describe('P8-A01 シナリオ切替', () => {
 })
 
 describe('P8-A02 再生・復元', () => {
-  it('P8-A02: 全12 template × 全modeで期待終端へ到達し、snapshotCountが一致する', () => {
-    expect(P8_TEMPLATE_MODES).toHaveLength(14)
+  it('P8-A02: 全15 template × 全modeで期待終端へ到達し、snapshotCountが一致する', () => {
+    expect(P8_TEMPLATE_MODES).toHaveLength(19)
     for (const { templateId, mode } of P8_TEMPLATE_MODES) {
       const { app } = newApp()
       app.selectScenario(templateId, mode)
@@ -235,7 +238,7 @@ describe('P8-A04 既存経路回帰・取込Result経路', () => {
     }
   })
 
-  it('P8-A04: toMap template選択中の取込系操作はthrowせず失敗理由を返す', () => {
+  it('P8-A04: toMap / unmodifiable template選択中の取込系操作はthrowせず失敗理由を返す', () => {
     const { app } = newApp()
     for (const template of P8_TEMPLATES) {
       const importability = app.importabilityOf(template.templateId)
@@ -245,7 +248,13 @@ describe('P8-A04 既存経路回帰・取込Result経路', () => {
         continue
       }
       expect(importability.importable, template.templateId).toBe(false)
-      expect(importability.reason, template.templateId).toBe(TO_MAP_NOT_IMPORTABLE_REASON)
+      // v0.14（Phase 11）でunmodifiable系3 templateがP8_TEMPLATESへ加わった。
+      // 取込対象外である点は同じで、理由文言だけがkindごとに分かれる
+      expect(importability.reason, template.templateId).toBe(
+        P11_TEMPLATE_IDS.includes(template.templateId)
+          ? UNMODIFIABLE_NOT_IMPORTABLE_REASON
+          : TO_MAP_NOT_IMPORTABLE_REASON,
+      )
       const mode = template.supportedModes[0]!
       expect(() => app.generatePrompt(template.templateId, mode)).not.toThrow()
       expect(app.generatePrompt(template.templateId, mode).ok).toBe(false)

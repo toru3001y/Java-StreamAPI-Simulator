@@ -35,6 +35,7 @@ import {
   reductionToJavaExpr,
 } from '../dsl/javaCode'
 import { distinctKeyOf } from './distinctKey'
+import { notifyGatherEmission } from './boundaryTap'
 import { EngineInvariantError } from '../types/invariantError'
 import type { CollectorRuntime } from './collectorRuntime'
 import {
@@ -44,8 +45,10 @@ import {
   collectorCreateContainer,
   collectorFinalLabel,
   collectorFinish,
+  collectorKindAtPath,
   collectorNeedsContainerCreated,
   collectorResultView,
+  collectorUnmodifiableResultNote,
   collectorUsesOutputItems,
   createCollectorRuntime,
 } from './collectorRuntime'
@@ -103,7 +106,11 @@ function shortLabel(value: SimValue): string {
   return value.kind === 'employee' ? value.value.name : formatSimValue(value)
 }
 
-function boxValue(value: SimValue): SimValue {
+/**
+ * boxed操作の値生成handler（MapperDslを経由しない値生成runtime）。
+ * exportはv0.14 §4の評価器単位の列挙評価のため（実装・呼出し経路は変更していない）。
+ */
+export function boxValue(value: SimValue): SimValue {
   switch (value.kind) {
     case 'int':
       return { kind: 'boxedInt', value: value.value }
@@ -1176,6 +1183,11 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           failure.bucketPath.length === 0
             ? ''
             : `（${failure.bucketPath.map((entry) => entry.keyLabel).join(' → ')}のbucket内）`
+        // Phase 11: 失敗した重複キーがtoUnmodifiableMapのものなら説明文言を分岐する（v0.14 §2.3）。
+        // ExecutionFailureViewの構造（kind / exceptionType）はtoMapファミリー共用で変更しない
+        const failedKind = collectorKindAtPath(rt, failure.collectorPath)
+        const failedCollectorName =
+          failedKind === 'toUnmodifiableMap' ? 'toUnmodifiableMap' : 'toMap'
         b.push({
           kind: 'COLLECT_FAILED',
           activeNode: sink,
@@ -1186,12 +1198,13 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
             inputLabel: `重複キー ${failure.duplicateKeyLabel}${bucketText}`,
             expression: failure.exceptionType,
             evaluation: `既存値 ${failure.existingValueLabel} / 新しい値 ${failure.incomingValueLabel}`,
-            outcome:
-              'mergeFunctionのないtoMapは重複キーを解決できないため、collectがここで失敗します',
+            outcome: `mergeFunctionのない${failedCollectorName}は重複キーを解決できないため、collectがここで失敗します`,
           },
           currentText: `Collectorの実行が失敗しました。キー${failure.duplicateKeyLabel}が重複し、mergeFunctionがないため解決できません。JDKで実行した場合、ここで${failure.exceptionType}が送出されます。結果は確定せず、残りの要素は評価されません。`,
           jdkNote:
-            'Collectors.toMap(keyMapper, valueMapper)は "If the mapped keys contain duplicates (according to Object.equals(Object)), an IllegalStateException is thrown when the collection operation is performed." と定義されています。この教材では例外型のみを契約とし、例外メッセージ全文はJDK実装詳細として扱いません。',
+            failedKind === 'toUnmodifiableMap'
+              ? 'Collectors.toUnmodifiableMap(keyMapper, valueMapper)は "If the mapped keys contain duplicates (according to Object.equals(Object)), an IllegalStateException is thrown when the collection operation is performed." と定義されています。この教材では例外型のみを契約とし、例外メッセージ全文はJDK実装詳細として扱いません。'
+              : 'Collectors.toMap(keyMapper, valueMapper)は "If the mapped keys contain duplicates (according to Object.equals(Object)), an IllegalStateException is thrown when the collection operation is performed." と定義されています。この教材では例外型のみを契約とし、例外メッセージ全文はJDK実装詳細として扱いません。',
           confirmed: false,
           completion: 'EXECUTION_FAILED',
           executionFailure: failure,
@@ -2015,6 +2028,7 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
           })
           // 1入力→1出力。出力IDは入力要素のIDを継承する（map系1→1変換と同一規則。§7.3-4）
           rt.emitted.push({ id: elementId, label: formatSimValue(after), memberIds: null })
+          notifyGatherEmission(after, rt.gatherer.kind)
           b.setState(elementId, node.nodeId, 'PASSED')
           b.setLatest(elementId, 'PASSED')
           syncContext(rt)
@@ -2483,6 +2497,9 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
       b.setLatest(member.id, 'PASSED')
     }
     rt.emitted.push({ id: windowId, label: windowLabel, memberIds })
+    // 合成List値はCollectorへ構造的に到達できない（assertNotCompositeList）ため、
+    // window producerの意味値検査はこの放出点を最終観測点とする（v0.14 §4-2b）
+    notifyGatherEmission(windowValue, rt.gatherer.kind)
     syncContext(rt)
     b.push({
       kind: 'GATHER_EMITTED',
@@ -2519,6 +2536,7 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
     b.setState(resultId, rt.node.nodeId, 'PASSED')
     b.setLatest(resultId, 'PROCESSING')
     rt.emitted.push({ id: resultId, label: resultLabel, memberIds: null })
+    notifyGatherEmission(acc, rt.gatherer.kind)
     syncContext(rt)
     b.push({
       kind: 'GATHER_EMITTED',
@@ -2982,7 +3000,10 @@ function buildTimeline(def: PipelineDefinition): Snapshot[] {
       jdkNote:
         rt.op === 'collectTriple'
           ? 'sequential実行のためcombinerは呼ばれませんでした（呼出し0回）。combinerはparallel reductionで必要になります。'
-          : 'Collectors.toList()等が返すコンテナの型・可変性・iteration orderはJDKの保証対象ではありません（Stream.toList()のunmodifiableとは異なります）。',
+          : // Phase 11: unmodifiable系はコンテナが不変であることを注記する（v0.14 §3.3）。
+            // 既存文言（可変性は無保証）は該当しない場合のみ従来どおり適用する
+            (collectorUnmodifiableResultNote(rt) ??
+              'Collectors.toList()等が返すコンテナの型・可変性・iteration orderはJDKの保証対象ではありません（Stream.toList()のunmodifiableとは異なります）。'),
       confirmed: true,
     })
   } else if (!terminalRt) {

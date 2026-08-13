@@ -4,19 +4,24 @@
 Java Stream API 可視化シミュレーター 仕様書 統合docxビルダー
 
 Draft v0.8 の docx（Pandoc生成）へ、v0.9（Gatherers差分）・v0.10（Phase 6手動連携差分）・
-v0.11（Collectors.toMap差分）・v0.12（teeing × toMap差分）・v0.13（数値加算merge差分）の
-Markdown差分文書を取り込み、1ファイルで読める統合版 docx を生成する。
+v0.11（Collectors.toMap差分）・v0.12（teeing × toMap差分）・v0.13（数値加算merge差分）・
+v0.14（unmodifiable系Collector差分）の Markdown原本を章として取り込み、
+1ファイルで読める統合版 docx を生成する。
 
-方式:
+方針:
   - v0.8 本文（第1〜25章・付録A〜F）は書き換えない。既存段落・表行への「追加」のみ行う。
   - 差分本文は第26章（v0.9）・第27章（v0.10）・第28章（v0.11）・第29章（v0.12）・
-    第30章（v0.13）として末尾へ新設する。
-  - v0.8 側の該当箇所には「→ §26.x / §27.x / §28.x 参照」の追加行（ポインタ）を差し込む
-    （v0.12 / v0.13はv0.8本文への注記を追加せず、章の追加のみ）。
+    第30章（v0.13）・第31章（v0.14）として末尾へ新設する。
+  - v0.8 側の該当箇所には「→ §26.x / §27.x / §28.x 参照」の追加行（ポインタ）を挿入する
+    （v0.12 / v0.13 / v0.14はv0.8本文への注記を追加せず、章の追加のみ）。
+  - リポジトリ内の別文書（完了報告・判断記録・実装指示書）への§参照は本書の節ではないため、
+    EXC_V* と EXTERNAL_DOC_REF_PREFIXES で章番号への読み替えから除外する。
+    保護漏れは assert_external_refs_protected がビルド時に検出し、
+    verify 側も同じ EXTERNAL_DOC_REF_PREFIXES で内部参照の集計から除外する。
 
-実装:
+制約:
   - pandoc / python-docx を使わず、Python標準ライブラリのみで word/document.xml を
-    文字列手術する。これにより v0.8 由来のXMLは挿入箇所以外バイト単位で不変になる。
+    直接操作する。これにより v0.8 由来のXMLは挿入箇所以外バイト単位で不変になる。
 
 使い方:
   python tools/build_spec_docx.py \
@@ -26,17 +31,18 @@ Markdown差分文書を取り込み、1ファイルで読める統合版 docx �
       --v11   docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md \
       --v12   docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md \
       --v13   docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md \
-      --date-label 2026-08-13 \
-      --out   docs/Java_Stream_API_Visualization_Spec_v0.13.docx
+      --v14   docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md \
+      --date-label 2026-08-14 \
+      --out   docs/Java_Stream_API_Visualization_Spec_v0.14.docx
 
-  後段の差分（--v13 → --v12 → --v11 → --v10）を省略すると、その手前までの統合を生成する
-  （--v13 には --v12、--v12 には --v11、--v11 には --v10 が必要）。
+  後段の差分（--v14 → --v13 → --v12 → --v11 → --v10）を省略すると、その手前までの統合を
+  生成する（--v14 には --v13、--v13 には --v12、--v12 には --v11、--v11 には --v10 が必要）。
   出力は決定的で、同じ入力からは常にバイト単位で同一のdocxが得られる。
 
 検証:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
       --v09 <v0.9.md> --v10 <v0.10.md> --v11 <v0.11.md> --v12 <v0.12.md> \
-      --v13 <v0.13.md> --base-sha <v0.8のSHA-256>
+      --v13 <v0.13.md> --v14 <v0.14.md> --base-sha <v0.8のSHA-256>
 """
 
 import argparse
@@ -595,6 +601,10 @@ class RefResolver:
                       lambda m: prot(m.group(1)), text)
         text = re.sub(r'(?:Draft\s+)?v0\.8\s*(§\d+(?:\.\d+)*)',
                       lambda m: prot(m.group(1)), text)
+        if self.chapter >= 31:
+            # 第31章（v0.14）から導入。第26〜30章の出力を変えないため章番号で限定する
+            text = re.sub(r'v0\.13\s*§(\d+(?:\.\d+)*)',
+                          lambda m: prot('§30.' + m.group(1)), text)
         if self.chapter >= 30:
             # 第30章（v0.13）から導入。第26〜29章の出力を変えないため章番号で限定する
             text = re.sub(r'v0\.12\s*§(\d+(?:\.\d+)*)',
@@ -699,6 +709,59 @@ EXC_V13 = [
      '（`docs/phase-6-decisions.md` ' + _prot('§7.2') + '）の根拠'),
 ]
 
+# ---------------------------------------------------------------- 外部文書への§参照
+#
+# 統合版の本文には、リポジトリ内の別文書（完了報告・判断記録・実装指示書）の節番号を指す
+# §参照が現れる。これらは**本書の節ではない**ため、
+#   - ビルド時: 章番号への読み替え（§N → §<章>.N）から除外する（EXC_V* の _prot で保護）
+#   - 検証時 : §参照の健全性チェックと内部参照件数の集計から除外する
+# の両方で外部参照として扱う必要がある。両者が乖離すると、
+# 「保護はされているが内部参照として集計される」（＝件数が不正確・偶然合格）状態になるため、
+# **判定の単一定義源をここに置き、verify_spec_docx.py からも読み込む**。
+#
+# 各要素は「§の直前に現れる文字列」。docxのテキスト抽出ではmarkdownのバッククォートが
+# 落ちるため、判定側で ` を除去して比較する。
+EXTERNAL_DOC_REF_PREFIXES = [
+    # 完了報告・判断記録・実装指示書（文書名を明示して参照する形）
+    'Phase 8完了報告',
+    'Phase 5実装指示書',
+    'Phase 5指示',
+    # 「Phase 5 §14.4」のように文書名を省いてPhase番号だけで参照する形（末尾の空白まで含める）
+    'Phase 5 ',
+    # リポジトリパスを明示して参照する形（末尾の空白まで含める）
+    'docs/phase-5-decisions.md ',
+    'docs/phase-6-decisions.md ',
+    'docs/phase-8-decisions.md ',
+    'docs/phase-8-completion-report.md ',
+]
+
+
+def is_external_doc_ref(preceding_text):
+    """`§`の直前テキストが外部文書への参照を示すか（ビルダーとverifyの共通判定）。
+
+    `preceding_text`は本文中で`§`の直前にある文字列（末尾側が直近）。
+    markdownのバッククォートはdocxテキストに残らないため除去して比較する。
+    """
+    normalized = preceding_text.replace('`', '')
+    return any(normalized.endswith(prefix) for prefix in EXTERNAL_DOC_REF_PREFIXES)
+
+
+EXC_V14 = [
+    # リポジトリ文書（完了報告・実装指示書）内の節番号であり、本書の節ではない
+    ('Phase 8完了報告§17の持越し事項3番の解消。',
+     'Phase 8完了報告' + _prot('§17') + 'の持越し事項3番の解消。'),
+    ('Phase 8完了報告§17の持越し事項の解消記録を追記する',
+     'Phase 8完了報告' + _prot('§17') + 'の持越し事項の解消記録を追記する'),
+    ('（Phase 5実装指示書§9.1）',
+     '（Phase 5実装指示書' + _prot('§9.1') + '）'),
+    ('Phase 5実装指示書§9.1の発行表',
+     'Phase 5実装指示書' + _prot('§9.1') + 'の発行表'),
+    ('（Phase 5指示§9.1）',
+     '（Phase 5指示' + _prot('§9.1') + '）'),
+    ('`docs/phase-8-completion-report.md` §17の持越し事項3番へ',
+     '`docs/phase-8-completion-report.md` ' + _prot('§17') + 'の持越し事項3番へ'),
+]
+
 # v0.10 §1.2 対応表：第1列は v0.8 の箇所を無印で挙げている
 V10_MAPPING_HEADER = ['v0.8箇所', '記述の要旨', '扱い', '本書']
 
@@ -715,6 +778,58 @@ class NumAlloc:
         self.n += 1
         self.created.append((v, 99411 if kind == 'ol' else 991))
         return v
+
+
+def exception_spans(md_text, exceptions):
+    """例外文脈が本文中で占める位置区間 [(start, end), …] を返す。
+
+    `RefResolver.apply_exceptions`は例外文脈の**出現位置**を置換するため、
+    保護されるのはその区間内の§だけである。文脈は一意であることを前提とする
+    （一意でなければ`apply_exceptions`自身が`AssertionError`を出す）。
+    """
+    spans = []
+    for ctx, _ in exceptions:
+        start = md_text.find(ctx)
+        if start < 0:
+            continue
+        spans.append((start, start + len(ctx)))
+    return spans
+
+
+def assert_external_refs_protected(md_text, chapter, exceptions):
+    """差分mdの外部文書§参照が、章番号への読み替えから確実に外れることを確認する。
+
+    外部参照が保護されないと、`Phase 5実装指示書§9.1`のような参照が`§<章>.9.1`へ
+    誤って読み替えられる。次のいずれかで保護されていなければ`AssertionError`とする。
+      - EXC_V* の例外文脈の**占有区間内にある**（`_prot`で保護される）
+      - §11〜§25（v0.8本文の節番号としてRefResolverが素通しする範囲）に該当する
+
+    判定は**参照の出現位置**で行う。「同じ節番号を含む例外文脈が文書のどこかにある」で
+    判定すると、別位置の未保護参照（例: 保護済み`Phase 5実装指示書§9.1`と未登録の
+    `Phase 5指示§9.1`が併存する場合の後者）を見逃す。
+    """
+    spans = exception_spans(md_text, exceptions)
+    unprotected = []
+    for m in re.finditer(r'§(\d+(?:\.\d+)*)', md_text):
+        preceding = md_text[max(0, m.start() - 40):m.start()]
+        if not is_external_doc_ref(preceding):
+            continue
+        section = m.group(1)
+        # RefResolverが素通しする範囲（§11〜§25。小数部があっても先頭が範囲内なら素通し）
+        head = section.split('.')[0]
+        if re.match(r'^(1[1-9]|2[0-5])$', head):
+            continue
+        # この参照が例外文脈の占有区間に収まっているか（位置で照合する）
+        covered = any(start <= m.start() and m.end() <= end for start, end in spans)
+        if not covered:
+            unprotected.append(
+                '%s（位置 %d、前後: …%s%s…）' % (m.group(0), m.start(), preceding[-20:], section)
+            )
+    if unprotected:
+        raise AssertionError(
+            '第%d章: 外部文書への§参照が保護されていません（EXC_V*へ追加が必要）: %s'
+            % (chapter, ' / '.join(unprotected))
+        )
 
 
 def build_chapter(blocks, chapter, title, resolver, nums, bid_start, preface):
@@ -1146,7 +1261,7 @@ def apply_v11_pointers(s):
 # ---------------------------------------------------------------- メタデータ更新
 
 def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=False,
-               has_v13=False):
+               has_v13=False, has_v14=False):
     """本書自身の版を表す記述を更新し、読み方の凡例を冒頭へ置く。
 
     ここで書き換えるのは「この文書は何版か」を述べている箇所だけである。
@@ -1167,7 +1282,17 @@ def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=Fal
     s.replace_text('Draft v0.8 終了', '%s 終了' % version_label)
 
     # 冒頭の読み方（統合版を単独で読むための全体凡例）
-    if has_v13:
+    if has_v14:
+        # v0.14もv0.8本文への注記を追加しない（変更は第31章の追加のみ）
+        diff_names = ('、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）、'
+                      'v0.12（teeing × toMap差分）、v0.13（数値加算merge差分）、'
+                      'v0.14（unmodifiable系Collector差分）')
+        vers = 'v0.9・v0.10・v0.11'
+        notes = '【v0.9による追加】【v0.10による変更】【v0.11による追加】'
+        chapters = '第26章〜第28章'
+        chapter_map = ('第26章（v0.9）・第27章（v0.10）・第28章（v0.11）・第29章（v0.12）・'
+                       '第30章（v0.13）・第31章（v0.14）')
+    elif has_v13:
         # v0.13もv0.12と同様にv0.8本文への注記を追加しない（変更は第30章の追加のみ）
         diff_names = ('、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）、'
                       'v0.12（teeing × toMap差分）、v0.13（数値加算merge差分）')
@@ -1313,6 +1438,17 @@ PREFACE_29 = [
     '§参照は、当該文書内の節番号であり本書の節ではない。',
 ]
 
+PREFACE_31 = [
+    '本章は、v0.14差分文書（`docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md`）の'
+    '全文を章立てで収録したものである。第1〜25章および付録A〜Fは、先行差分で追加済みの参照行を除き'
+    'Draft v0.8本文を変更しておらず、本章は末尾に追加している。',
+    '本章の記述で「本書」とあるのは本章（v0.14差分）を、「v0.8」とあるのは本書の第1〜25章および'
+    '付録A〜F、「v0.9」とあるのは第26章、「v0.10」とあるのは第27章、「v0.11」とあるのは第28章、'
+    '「v0.12」とあるのは第29章、「v0.13」とあるのは第30章を指す。本章内の節を指す参照は§31.x、'
+    'v0.9〜v0.13の節を指す参照は§26.x〜§30.xで表記している。なお本章内のPhase 5実装指示書・'
+    'Phase 8完了報告等のリポジトリ文書への§参照は、当該文書内の節番号であり本書の節ではない。',
+]
+
 PREFACE_30 = [
     '本章は、v0.13差分文書（`docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`）の'
     '全文を章立てで収録したものである。第1〜25章および付録A〜Fは、先行差分で追加済みの参照行を除き'
@@ -1333,6 +1469,7 @@ def main():
     ap.add_argument('--v11')
     ap.add_argument('--v12')
     ap.add_argument('--v13')
+    ap.add_argument('--v14')
     ap.add_argument('--out', required=True)
     ap.add_argument('--version-label', default=None)
     ap.add_argument('--date-label', default='2026-08-12')
@@ -1344,7 +1481,10 @@ def main():
         raise SystemExit('--v12 には --v11 が必要です（v0.12はv0.11までの統合を前提とする）')
     if args.v13 and not args.v12:
         raise SystemExit('--v13 には --v12 が必要です（v0.13はv0.12までの統合を前提とする）')
+    if args.v14 and not args.v13:
+        raise SystemExit('--v14 には --v13 が必要です（v0.14はv0.13までの統合を前提とする）')
     version_label = args.version_label or (
+        'Draft v0.14' if args.v14 else
         'Draft v0.13' if args.v13 else
         'Draft v0.12' if args.v12 else
         'Draft v0.11' if args.v11 else 'Draft v0.10' if args.v10 else 'Draft v0.9')
@@ -1364,7 +1504,7 @@ def main():
 
     # A: メタデータ（章追加より前に行う。章本文がv0.8の版表記を引用するため）
     apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11), bool(args.v12),
-               bool(args.v13))
+               bool(args.v13), bool(args.v14))
     report['A メタデータ'] = 7
 
     # 目次
@@ -1372,7 +1512,8 @@ def main():
                          + ([['27', 'v0.10差分：Phase 6 手動連携']] if args.v10 else [])
                          + ([['28', 'v0.11差分：Collectors.toMap']] if args.v11 else [])
                          + ([['29', 'v0.12差分：teeing × toMap']] if args.v12 else [])
-                         + ([['30', 'v0.13差分：数値加算merge']] if args.v13 else []))
+                         + ([['30', 'v0.13差分：数値加算merge']] if args.v13 else [])
+                         + ([['31', 'v0.14差分：unmodifiable系Collector']] if args.v14 else []))
     report['A 目次'] = 1
 
     # §1.1 改訂点
@@ -1394,6 +1535,11 @@ def main():
         rev_rows.append(['v0.13', 'toMapのmergeFunctionへ型付き数値加算ファミリー'
                                   '（Integer::sum / Long::sum / Double::sum）を追加（第30章）。'
                                   'オーバーフロー・safe integer範囲・doubleの丸めの整理を含む'])
+    if args.v14:
+        rev_rows.append(['v0.14', '`Collectors.toUnmodifiableList` / `toUnmodifiableSet` / '
+                                  '`toUnmodifiableMap`を教材対象へ追加し、Phase 11を新設（第31章）。'
+                                  '蓄積ラベルと結果ラベルの分離・finisher可視化・'
+                                  '非null不変条件の機械検証を含む'])
     s.append_rows('教材Pipeline最大ノード数ガイドラインの運用方針', rev_rows)
     report['A §1.1改訂点'] = 1
 
@@ -1410,6 +1556,7 @@ def main():
 
     # C: 差分章
     md09 = open(args.v09, encoding='utf-8').read()
+    assert_external_refs_protected(md09, 26, EXC_V09)
     r09 = RefResolver(26, EXC_V09)
     x26, bid = build_chapter(parse_markdown(md09), 26,
                              'v0.9差分：Stream.gather / Gatherers', r09, nums, 500, PREFACE_26)
@@ -1421,6 +1568,7 @@ def main():
 
     if args.v10:
         md10 = open(args.v10, encoding='utf-8').read()
+        assert_external_refs_protected(md10, 27, EXC_V10)
         r10 = RefResolver(27, EXC_V10)
         x27, bid = build_chapter(parse_markdown(md10), 27,
                                  'v0.10差分：Phase 6 手動連携', r10, nums, bid, PREFACE_27)
@@ -1432,6 +1580,7 @@ def main():
 
     if args.v11:
         md11 = open(args.v11, encoding='utf-8').read()
+        assert_external_refs_protected(md11, 28, EXC_V11)
         r11 = RefResolver(28, EXC_V11)
         x28, bid = build_chapter(parse_markdown(md11), 28,
                                  'v0.11差分：Collectors.toMap', r11, nums, bid, PREFACE_28)
@@ -1443,6 +1592,7 @@ def main():
 
     if args.v12:
         md12 = open(args.v12, encoding='utf-8').read()
+        assert_external_refs_protected(md12, 29, EXC_V12)
         r12 = RefResolver(29, EXC_V12)
         x29, bid = build_chapter(parse_markdown(md12), 29,
                                  'v0.12差分：teeing × toMap', r12, nums, bid, PREFACE_29)
@@ -1454,6 +1604,7 @@ def main():
 
     if args.v13:
         md13 = open(args.v13, encoding='utf-8').read()
+        assert_external_refs_protected(md13, 30, EXC_V13)
         r13 = RefResolver(30, EXC_V13)
         x30, bid = build_chapter(parse_markdown(md13), 30,
                                  'v0.13差分：数値加算merge', r13, nums, bid, PREFACE_30)
@@ -1462,6 +1613,18 @@ def main():
         unused = [c for c, _ in EXC_V13 if c not in r13.used]
         if unused:
             raise AssertionError('v0.13の未適用例外: %r' % unused)
+
+    if args.v14:
+        md14 = open(args.v14, encoding='utf-8').read()
+        assert_external_refs_protected(md14, 31, EXC_V14)
+        r14 = RefResolver(31, EXC_V14)
+        x31, bid = build_chapter(parse_markdown(md14), 31,
+                                 'v0.14差分：unmodifiable系Collector', r14, nums, bid, PREFACE_31)
+        s.insert_chapter_before('付録A. 実装対象メソッド一覧', x31)
+        report['C 第31章'] = 1
+        unused = [c for c, _ in EXC_V14 if c not in r14.used]
+        if unused:
+            raise AssertionError('v0.14の未適用例外: %r' % unused)
 
     numbering = extend_numbering(numbering, nums.created)
     core = re.sub(r'(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)',

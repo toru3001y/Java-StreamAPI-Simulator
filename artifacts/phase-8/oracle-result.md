@@ -1,6 +1,6 @@
 # P8-O01 JDK 25 Oracle Test 結果
 
-実行日時: 2026-08-13T13:27:40.743Z
+実行日時: 2026-08-13T21:25:37.946Z
 Dockerイメージ: gradle:9.6.1-jdk25
 対象: OracleP8.java
 
@@ -12,13 +12,20 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
 ```
 
 ## 照合結果
-- 期待値（Simulation Core由来）: {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"]}
-- 実測値（JDK 25実行結果）    : {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"]}
+- 期待値（Simulation Core由来）: {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"],"unmodifiableList":["佐藤（age=35）","鈴木（age=27）","高橋（age=42）","田中（age=29）"],"unmodifiableSet":["\"中部\"","\"関東\"","\"関西\""],"unmodifiableMapMergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"uoeOnListAdd":"UnsupportedOperationException","uoeOnSetAdd":"UnsupportedOperationException","uoeOnMapPut":"UnsupportedOperationException"}
+- 実測値（JDK 25実行結果）    : {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"],"unmodifiableList":["佐藤（age=35）","鈴木（age=27）","高橋（age=42）","田中（age=29）"],"unmodifiableSet":["\"中部\"","\"関東\"","\"関西\""],"unmodifiableMapMergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"uoeOnListAdd":"UnsupportedOperationException","uoeOnSetAdd":"UnsupportedOperationException","uoeOnMapPut":"UnsupportedOperationException"}
 - 比較方式: JSON.parse後のオブジェクトをJSON.stringifyし文字列完全一致で判定（64bit境界値は10進文字列のまま比較し、numberへ変換しない）
 - 判定: PASS（完全一致）
 
 ## 観測記録（厳密比較の対象外。JDKの保証として扱わない）
 - toMap2Arg.exceptionMessage=Duplicate key 関東 (attempted merging values 伊藤 and 渡辺)
+- uoeOnListAdd.exceptionMessage=null
+- uoeOnSetAdd.exceptionMessage=null
+- uoeOnMapPut.exceptionMessage=null
+- unmodifiableList.returnedClass=ListN
+- unmodifiableSet.returnedClass=SetN
+- unmodifiableMap.returnedClass=MapN
+- unmodifiableSet.iterationOrder=[中部, 関西, 関東]
 - toMap3Arg.mergeCallOrder=merge(伊藤, 渡辺) | merge(伊藤, 渡辺, 山本)
 - toMap3Arg.mergeLoggedResult=伊藤, 渡辺, 山本
 - toMap2Arg.returnedMapClass=HashMap
@@ -35,6 +42,9 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
   - 2引数版の重複キーは例外**型のみ**を契約として照合する（assertThrows(IllegalStateException.class, …)相当）。実測の例外メッセージはOBSERVATION行として観測記録に保存し、厳密比較の対象にしない
   - mergeFunctionの呼出し順はOBSERVATION行として記録し、厳密比較の対象にしない
   - longは3桁区切り + L表記（formatLongLiteral）へ両側で揃えて厳密照合し、numberへ変換しない。Employee要素はCoreのformatSimValueと同じ`氏名（age=NN）`表記、String値はクォート付き表記へ揃える
+  - v0.14のunmodifiable系は結果3キー（unmodifiableList / unmodifiableSet / unmodifiableMapMergeFirst）とUnsupportedOperationException契約3キー（uoeOnListAdd / uoeOnSetAdd / uoeOnMapPut）を追加した。unmodifiableListはencounter orderのまま照合し、Set / Mapは表示文字列の辞書順へ正規化する（返却コンテナのiteration orderは契約にしない）
+  - v0.14のUOE契約は返却されたList / Set / Mapへ変更操作（add / add / put）を実行し、送出された例外の**型名のみ**を照合する。例外が送出されなかった場合はNO_EXCEPTION(...)形式の文字列で必ず値化して見逃しを防ぐ。例外メッセージと返却実装クラス名（ImmutableCollections.*等）はOBSERVATION行として観測記録に残し、厳密比較の対象にしない（JDK内部実装を断定しない）
+  - v0.14のUOE契約3キーはSimulation Core側が収集後の変更操作を実行しないため（v0.14 §3.4）、Core導出値ではなくv0.14 §3.1の公式仕様を根拠とする固定リテラルを期待値へ置いている（結果3キーはCore実走行から導出）。この区分はtests/p8-oracle-expected.tsのコメントで明示している
 - P8-O02: PASS（Oracle運用検証）
   - 必須8 suite（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 / P8-O01）が各1件存在（欠落・重複なし）: PASS
   - 証跡書込みは現行Phase（P8）のみ（書込み先はartifacts/phase-8/oracle-result.mdだけ。P1〜P7はwriteReportPath: nullの照合のみ）: PASS

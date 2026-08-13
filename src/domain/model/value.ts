@@ -28,6 +28,40 @@ export type SimValue =
   | { readonly kind: 'longArray'; readonly value: readonly number[] }
   | { readonly kind: 'doubleArray'; readonly value: readonly number[] }
 
+/**
+ * `SimValue`の全variant（kind）の単一定義源（v0.14 §4の値variant網羅性）。
+ *
+ * 非null不変条件の機械検証は、この定数から意味値検査器の定義漏れを検出する。
+ * `satisfies`により**新しいvariantを`SimValue`へ追加してここへ足し忘れると型エラー**になり、
+ * 逆に存在しないkindを書いても型エラーになる（下の`_AllSimValueKindsCovered`が
+ * 網羅の欠落を検出する）。
+ */
+export const SIM_VALUE_KINDS = [
+  'employee',
+  'department',
+  'localDate',
+  'string',
+  'int',
+  'long',
+  'double',
+  'boxedInt',
+  'boxedLong',
+  'boxedDouble',
+  'stringList',
+  'list',
+  'intArray',
+  'longArray',
+  'doubleArray',
+] as const satisfies readonly SimValue['kind'][]
+
+export type SimValueKind = (typeof SIM_VALUE_KINDS)[number]
+
+/** `SIM_VALUE_KINDS`が`SimValue`の全variantを覆っていることの型レベル検証 */
+type _AllSimValueKindsCovered =
+  Exclude<SimValue['kind'], SimValueKind> extends never ? true : never
+const _allSimValueKindsCovered: _AllSimValueKindsCovered = true
+void _allSimValueKindsCovered
+
 export function formatDoubleLiteral(n: number): string {
   return Number.isInteger(n) ? `${n}.0` : String(n)
 }

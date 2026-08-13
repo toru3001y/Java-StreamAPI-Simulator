@@ -8,11 +8,15 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   + `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md`（v0.11 / Phase 8 Collectors.toMap差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md`（v0.12 / Phase 9 teeing×toMap差分）
   + `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`（v0.13 / Phase 10 数値加算merge差分）
-  + `docs/Java_Stream_API_Visualization_Spec_v0.13.docx`（上記6文書の統合ビルド。閲覧用。正は各原本）
-- 実装状況: **Phase 10（数値加算merge）まで実装済み**。Phase 8で唯一未達だったteeing branchへの
+  + `docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md`（v0.14 / Phase 11 unmodifiable系Collector差分）
+  + `docs/Java_Stream_API_Visualization_Spec_v0.14.docx`（上記7文書の統合ビルド。閲覧用。正は各原本）
+- 実装状況: **Phase 11（unmodifiable系Collector）まで実装済み**。Phase 8で唯一未達だったteeing branchへの
   toMap配置はPhase 9（v0.12）で解消し（**P8必須39 IDを含む全Phaseの必須IDが完全成功**。
   `docs/phase-8-completion-report.md` §17-1追記・`docs/phase-8-decisions.md` §9.2）、
-  持越しだった数値加算mergeはPhase 10（v0.13）で実装した（`docs/phase-8-decisions.md` §17）
+  持越しだった数値加算mergeはPhase 10（v0.13）で実装した（`docs/phase-8-decisions.md` §17）。
+  unmodifiable系（`toUnmodifiableList` / `toUnmodifiableSet` / `toUnmodifiableMap`）は
+  Phase 11（v0.14）で一括実装した（`docs/phase-8-completion-report.md` §17-3追記・
+  `docs/phase-8-decisions.md` §18）
 - J-2（`Collectors.teeing` の左右2系統と処理中要素数の関係）は Phase 5着手前に仕様確定し、本体へ実装済み
   （`docs/phase-5-decisions.md`。teeingでも「処理中要素は最大1件」の例外なし）
 - Phase 6でAI API接続（サーバーAPI・AI adapter・RemoteScenarioProvider）は**廃止**し、**手動連携方式**へ置換した
@@ -24,9 +28,10 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   `docs/Claude_Code_Phase7_Implementation_Instructions.md` /
   `docs/Claude_Code_Phase8_Implementation_Instructions.md`
   （Phase 3 / Phase 4の指示書は、指示書自身の複製禁止規定によりリポジトリへ含めていない。
-  Phase 9 / Phase 10は独立の指示書を作らず、仕様差分（v0.12 / v0.13）を直接実装した）
+  Phase 9 / Phase 10 / Phase 11は独立の指示書を作らず、仕様差分（v0.12 / v0.13 / v0.14）を
+  直接実装した）
 
-## 実装済み操作（Phase 10時点）
+## 実装済み操作（Phase 11時点）
 
 - **Stream生成**: `Collection.stream()` / `Arrays.stream()`（object・int[]・long[]・double[]）/ `Stream.of()` /
   `Stream.generate()` / `Stream.iterate(seed, operator)` / `Stream.iterate(seed, predicate, operator)` /
@@ -92,8 +97,9 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
   - 教材データとして merge実演用の補助データセット `employeesMergeDemo`（関東3件）を追加し、
     「重複キーで失敗」「first / last / concat」「同一データの `groupingBy(region)` 比較」を
     **同一データ・同一keyMapper**で直接比較できる導線を設けた
-  - `toConcurrentMap` / `toUnmodifiableMap` / key側identity は**実行対象外**（存在と理由を
-    補助説明で表示）。toMapを含むtemplateは**手動連携の取込対象外**
+  - `toConcurrentMap` / key側identity は**実行対象外**（存在と理由を補助説明で表示）。
+    `toUnmodifiableMap` はPhase 11（v0.14）で実装済みとなり対象外注記から外した。
+    toMapを含むtemplateは**手動連携の取込対象外**
     （v0.11 §10-6のユーザー決定。将来拡張として持越し）
   - **teeing branchへのtoMap配置（Phase 9 / v0.12）**: teeing merger whitelistへ `RegionIndex::new`
     （`record RegionIndex(Map<String, String> byRegion, long count)`）を追加して解消。
@@ -103,6 +109,31 @@ Java Stream API の処理の流れ（要素の通過・除外、型遷移、遅�
     全snapshot列で正確に1回発行する。右branch失敗時の経路は `['c0','c0.right']`（`ctx.path` 復元）。
     教材template `tmpl-collect-teeing-tomap`（standard、snapshot実測40件）を追加
     （`docs/phase-8-decisions.md` §9.2）
+- **Collector: unmodifiable系（Phase 11 / v0.14）**: `Collectors.toUnmodifiableList()` /
+  `toUnmodifiableSet()` / `toUnmodifiableMap(keyMapper, valueMapper[, mergeFunction])` を追加
+  - 3 kindとも子を持たない **leaf Collector** で、`downstream` / `left` / `right` へ配置できる
+    （toMapと同じ位置規則）。**新しいoperationは登録しない**（操作総数46は不変）
+  - `toUnmodifiableMap` のoverloadは**2引数 / 3引数の2形のみ**。Javaにmap Factory版が存在しないため
+    `mapFactoryId` キーは許可キー集合に含めず、**存在するだけで構造検証が拒否**する。
+    keyMapper / valueMapper / mergeFunction 6種の検証は既存toMapを変更なしで流用する
+  - 結果型のTypeRefは既存の `List<T>` / `Set<T>` / `Map<K, U>` のままとし、不変性の軸を
+    TypeRefへ追加しない（toCollectionが `ArrayList` をTypeRefに入れず表示ラベルで持つ既存方針の踏襲）
+  - **蓄積ラベルと結果ラベルを分離**して表示する: 蓄積中は `List（蓄積中）` / `Set（蓄積中）` /
+    `Map（蓄積中）`、確定後は `List（unmodifiable）` / `Set（unmodifiable）` / `Map（unmodifiable）`。
+    発行点ごとに使うラベルを静的に定めることで、「戻る」の復元契約と機械検証が一意になる
+  - **finisher snapshotで不変コンテナへの確定を可視化**する（Phase 5発行表の加算的拡張）。
+    適用前後で値とTypeRefは同一であり、前後の識別は
+    `List（蓄積中）[…] → List（unmodifiable）[…]` のコンテナラベル遷移で行う。
+    配置別の発行契約（通常root 1件 / bucketごと / teeing branch直下は `TEE_BRANCH_FINISHED` のみ /
+    branch内部nestedは別事象 / 二重発行なし / 空入力でも確定）を機械検証している
+  - **収集後の変更操作は実演しない**（Step Engineの契約はStream実行の終端まで）。
+    不変性の実挙動は Oracle（JDK 25実測）で `add` / `add` / `put` が
+    `UnsupportedOperationException` になることを照合して担保する
+  - null禁止（`NullPointerException`）は実行対象外のまま補助説明で示し、その前提となる
+    **非null不変条件**を明文化して3層の機械検証を新設した（v0.14 §4）
+  - 教材template 3件を追加し、既存教材（`Collectors.toList()` / `Stream.toList()` / `toSet()` /
+    toMap merge first）との対比導線を補助説明へ付した。unmodifiable系を含むtemplateは
+    **手動連携の取込対象外**（v0.14 §5.2）
 - **Gatherer（Phase 7）**: `gather(Gatherer)`（STATEFUL中間操作）
   - 組み込みGatherer: `Gatherers.windowFixed` / `windowSliding` / `scan` / `fold`
   - Gatherer<T, A, R>の4構成要素（initializer / integrator / combiner / finisher）を**常設4行**で表示し、
@@ -202,11 +233,11 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
                      # P1〜P7は照合のみで、実行前後に artifacts/phase-1〜phase-7 のSHA-256不変を検証する
 ```
 
-## テスト結果（Phase 10 最終）
+## テスト結果（Phase 11 最終）
 
 | 種別 | 件数 | 結果 |
 |---|---|---|
-| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8） | 796（67ファイル） | 全成功 |
+| Vitest（Domain / Application / React、P1 + P2 + P3 + P4 + P5 + P6 + P7 + P8 + P11） | 885（73ファイル） | 全成功 |
 | E2E・視覚回帰（P1-E01〜11 + P2-E01〜10 + P3-E01〜10 + P4-E01〜10 + P5-E01〜10 + P6-E01〜05 + P7-E01〜05 + P8-E01〜05） | 93 | 全成功 |
 | JDK 25 Oracle（P1-O01 / P2-O01 / P3-O01 / P4-O01 / P5-O01 / P6-O01 / P7-O01 / P8-O01 + P4-O02 / P8-O02） | 8 suite | 完全一致 |
 
@@ -216,15 +247,22 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
   （いずれもteeing branch配置）だったが、**Phase 9（v0.12）で解消し39 IDすべて完全成功**
   （`docs/phase-8-completion-report.md` §17-1追記）
 - P8-O01はPhase 9で `teeingToMapByRegion` / `teeingToMapCount`、Phase 10で
-  `toMapSumIntByRegion` / `toMapSumLongByRegion` / `toMapSumDoubleByRegion` キーを追加し、
-  JDK 25実測と完全一致
+  `toMapSumIntByRegion` / `toMapSumLongByRegion` / `toMapSumDoubleByRegion`、Phase 11で
+  結果3キー（`unmodifiableList` / `unmodifiableSet` / `unmodifiableMapMergeFirst`）と
+  UnsupportedOperationException契約3キー（`uoeOnListAdd` / `uoeOnSetAdd` / `uoeOnMapPut`）を
+  追加し、JDK 25実測と完全一致
 - 画面キャプチャ・Oracle結果・snapshot予算実測: `artifacts/phase-1/`〜`artifacts/phase-8/`
-  （Phase 9 / 10のOracle証跡は `artifacts/phase-8/oracle-result.md` を更新）
+  （Phase 9 / 10 / 11のOracle証跡は `artifacts/phase-8/oracle-result.md` を更新）
 - 視覚回帰の期待画像: `e2e/__screenshots__/`（Phase 8では既存35枚を据え置き、toMap表示・FAILED表示の
   新規8枚を追加。新規8枚は最下部`DetailsDisclosure`のみマスクして安定化。thresholdは緩和なし。
-  Phase 9 / 10では基準画像の追加・更新なし〔43枚のまま〕）
-- 全実行可能template（128件） × modeの236組合せで、`expectedCompletion`どおりの終端
+  Phase 9 / 10 / 11では基準画像の追加・更新なし〔43枚のまま〕）
+- 全実行可能template（131件） × modeの241組合せで、`expectedCompletion`どおりの終端
   （`STREAM_CONSUMED` / `EXECUTION_FAILED`）・snapshot予算内・Javaコード生成を機械検証（P8-D22）
+- Phase 11では**非null不変条件の3層機械検証**を新設した（v0.14 §4）。producer登録集合を
+  OperationCatalog全46 operationの全域分類と識別可能union実軸の互換直積から機械導出し、
+  全producerが`VALUE_REACHED` / `ZERO_EMISSION` / `INVARIANT_BLOCKED`のいずれかで検証済み
+  であることを検証する（P11-D16 / P11-D17。`INVARIANT_BLOCKED`はPhase 7の構造的不変条件により
+  Collector境界へ到達できないwindow系のみ）
 - production bundleはReact vendor chunkを分離し、各chunk 500 kB未満（`vite.config.ts`）
 
 ## ドキュメント
@@ -236,9 +274,10 @@ npm run test:oracle  # JDK 25照合 P1-O01〜P8-O01（要: Docker + gradle:9.6.1
 | `docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md` | v0.11 仕様（Phase 8 Collectors.toMap差分） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md` | v0.12 仕様（Phase 9 teeing×toMap差分） |
 | `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md` | v0.13 仕様（Phase 10 数値加算merge差分。数値意味論の整理を含む） |
+| `docs/Java_Stream_API_Visualization_Spec_v0.14_Unmodifiable.md` | v0.14 仕様（Phase 11 unmodifiable系Collector差分。ラベル分離・finisher可視化・非null不変条件を含む） |
 | `docs/Claude_Code_Phase8_Implementation_Instructions.md` | Phase 8実装指示書（確定値・snapshot列・必須テストID） |
-| `docs/phase-8-completion-report.md` | Phase 8完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果。§17にPhase 9 / Phase 10での解消を追記） |
-| `docs/phase-8-decisions.md` | Phase 8判断記録（補助データセット・実行失敗の伝搬設計・FAILED区分・取込対象外方式・teeing制約。§9.2にPhase 9実施記録・§17にPhase 10実施記録） |
+| `docs/phase-8-completion-report.md` | Phase 8完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果。§17にPhase 9 / Phase 10 / Phase 11での解消を追記） |
+| `docs/phase-8-decisions.md` | Phase 8判断記録（補助データセット・実行失敗の伝搬設計・FAILED区分・取込対象外方式・teeing制約。§9.2にPhase 9実施記録・§17にPhase 10実施記録・§18にPhase 11実施記録） |
 | `docs/Claude_Code_Phase7_Implementation_Instructions.md` | Phase 7実装指示書（確定値・snapshot列・必須テストID） |
 | `docs/phase-7-completion-report.md` | Phase 7完了報告（判定・証跡・必須39 ID対応表・総点検・Oracle結果・差異記録） |
 | `docs/phase-7-decisions.md` | Phase 7判断記録（累積評価の独立実装・list / stringList並存・取込対象外方式・OBSERVATION反映） |

@@ -189,6 +189,33 @@ export const TO_MAP_NO_MERGE_LABEL = 'なし（重複キーでIllegalStateExcept
 /** mapFactory省略（2・3引数版）の意味論表示（v0.11 §5、指示§7.5-4） */
 export const TO_MAP_NO_MAP_FACTORY_LABEL = 'なし（Map実装型は無保証）'
 
+// ---- Phase 11: unmodifiable系（v0.14 §2） ----
+
+/**
+ * unmodifiable系Collectorのkind（v0.14 §2.1）。3 kindとも子を持たないleaf Collectorで、
+ * downstream / left / rightへの配置を許可する（toMapと同じ位置規則）。
+ * 結果型のTypeRefは既存のList<T> / Set<T> / Map<K, U>のままとし、不変性はTypeRefでは
+ * なく表示ラベルで持つ（v0.14 §2.1・§3.3）。
+ */
+export const UNMODIFIABLE_COLLECTOR_KINDS = [
+  'toUnmodifiableList',
+  'toUnmodifiableSet',
+  'toUnmodifiableMap',
+] as const
+export type UnmodifiableCollectorKind = (typeof UNMODIFIABLE_COLLECTOR_KINDS)[number]
+
+export function isUnmodifiableCollectorKind(kind: string): kind is UnmodifiableCollectorKind {
+  return (UNMODIFIABLE_COLLECTOR_KINDS as readonly string[]).includes(kind)
+}
+
+/**
+ * toUnmodifiableMapのmapFactory意味論表示（v0.14 §3.3）。JavaのtoUnmodifiableMapに
+ * mapFactory版のoverloadは存在しない（v0.14 §2.2）ため、常設4行のmapFactory行は
+ * この意味論表示で埋める（v0.11 §5の省略overload表示と同じ方式）。
+ */
+export const TO_UNMOD_MAP_NO_MAP_FACTORY_LABEL =
+  'なし（unmodifiable Mapを返す。mapFactory版のoverloadは存在しない）'
+
 /** teeingのmerger ID（許可済み結果record構造。Draft v0.8 §9.1 Teeing merger、v0.12 §2） */
 export const TEEING_MERGER_IDS = ['SalarySummary::new', 'RegionIndex::new'] as const
 export type TeeingMergerId = (typeof TEEING_MERGER_IDS)[number]
@@ -290,6 +317,17 @@ export type CollectorDsl =
       /** 4引数版のみ非null（既存TreeMap::newを流用。mergeFunctionIdがnullなら構造検証で拒否） */
       readonly mapFactoryId: CollectorMapFactoryId | null
     }
+  // ---- Phase 11: unmodifiable系（leaf Collector。子を持たない。v0.14 §2.1〜§2.2） ----
+  | { readonly kind: 'toUnmodifiableList' }
+  | { readonly kind: 'toUnmodifiableSet' }
+  | {
+      readonly kind: 'toUnmodifiableMap'
+      /** 既存toMapのkeyMapper検証を変更なしで流用する（v0.14 §2.2） */
+      readonly keyMapper: ClassifierDsl
+      readonly valueMapper: ToMapValueDsl
+      /** 2引数版はnull。JavaにmapFactory版overloadは存在しないため`mapFactoryId`キー自体を持たない */
+      readonly mergeFunctionId: ToMapMergeId | null
+    }
 
 export const COLLECTOR_DSL_KINDS = [
   'toList',
@@ -309,6 +347,7 @@ export const COLLECTOR_DSL_KINDS = [
   'partitioningBy',
   'teeing',
   'toMap',
+  ...UNMODIFIABLE_COLLECTOR_KINDS,
 ] as const
 
 /** downstream / left / rightを持つ合成Collectorのkind */
@@ -417,6 +456,16 @@ export function numericKindFamily(
 export function toMapArity(dsl: Extract<CollectorDsl, { kind: 'toMap' }>): 2 | 3 | 4 {
   if (dsl.mergeFunctionId === null) return 2
   return dsl.mapFactoryId === null ? 3 : 4
+}
+
+/**
+ * toUnmodifiableMapのoverload形（2引数 / 3引数）を導出する（v0.14 §2.1）。
+ * mapFactory版のoverloadはJavaに存在しないため4引数形はない。
+ */
+export function toUnmodifiableMapArity(
+  dsl: Extract<CollectorDsl, { kind: 'toUnmodifiableMap' }>,
+): 2 | 3 {
+  return dsl.mergeFunctionId === null ? 2 : 3
 }
 
 /** joiningのoverload形（引数なし / delimiter単独 / 3引数）を導出する。 */

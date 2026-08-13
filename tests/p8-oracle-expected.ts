@@ -71,6 +71,15 @@ function orderedEntries(templateId: string, mode: ScenarioMode): string[] {
   return entryPairs(mapResultOf(templateId, mode))
 }
 
+/** COLLECTION結果の要素ラベル列（v0.14 unmodifiable List / Set。表示順はview確定順のまま） */
+function collectionLabels(templateId: string, mode: ScenarioMode): string[] {
+  const result = lastSnapshotOf(templateId, mode).output.result
+  if (!result || result.kind !== 'COLLECTION') {
+    throw new Error(`COLLECTION結果ではありません: ${templateId}:${mode} (${result?.kind})`)
+  }
+  return result.items.map((item) => item.label)
+}
+
 /** teeing merger結果record（v0.12 teeing×toMap。fieldのvalueLabelを名前で引く） */
 function recordFieldsOf(templateId: string, mode: ScenarioMode): Record<string, string> {
   const result = lastSnapshotOf(templateId, mode).output.result
@@ -167,5 +176,20 @@ export function buildP8ExpectedFromCore(): Record<string, unknown> {
     toMapSumIntByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumint', 'standard'),
     toMapSumLongByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumlong', 'standard'),
     toMapSumDoubleByRegion: normalizedEntries('tmpl-collect-tomap-merge-sumdouble', 'standard'),
+    // ---- v0.14: unmodifiable系の結果3キー（**Core実走行から導出する値**。§5.3） ----
+    // Listはencounter orderのまま、Set / Mapは表示文字列の辞書順へ正規化する
+    // （返却コンテナのiteration orderはJDKの保証対象外であり照合契約にしない）
+    unmodifiableList: collectionLabels('tmpl-collect-tounmod-list', 'standard'),
+    unmodifiableSet: [...collectionLabels('tmpl-collect-tounmod-set', 'standard')].sort(),
+    unmodifiableMapMergeFirst: normalizedEntries('tmpl-collect-tounmod-map', 'standard'),
+    // ---- v0.14: UnsupportedOperationException契約3キー（**仕様由来の固定リテラル**。§5.3） ----
+    // 上の結果3キーと異なり、Simulation Coreは収集後の変更操作を実行しない（v0.14 §3.4）。
+    // したがってここはCore導出値ではなく、v0.14 §3.1の公式仕様
+    // （java.util.List / Set / Mapの「Calling any mutator method on the … will always cause
+    // UnsupportedOperationException to be thrown.」）を根拠とする期待値リテラルである。
+    // JDK 25実測との一致はOracle側（oracle/OracleP8.java）が担保する。
+    uoeOnListAdd: 'UnsupportedOperationException',
+    uoeOnSetAdd: 'UnsupportedOperationException',
+    uoeOnMapPut: 'UnsupportedOperationException',
   }
 }

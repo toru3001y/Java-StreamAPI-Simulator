@@ -33,6 +33,9 @@ import java.util.stream.Collectors;
  *  +   v0.13: toMap(region, age, Integer::sum) / toMap(region, salary, Long::sum) /
  *      toMap(region, evaluation, Double::sum)（数値加算merge。Double::sumは+演算子の
  *      素朴な加算でありCoreの加算と同一のIEEE 754演算のため厳密照合できる）
+ *  +   v0.14: toUnmodifiableList() / map(region) + toUnmodifiableSet() /
+ *      toUnmodifiableMap(region, name, (a, b) -> a)（結果3キー）と、
+ *      返却コンテナへの変更操作が送出する例外型（UOE契約3キー。v0.14 §5.3）
  *
  * 照合方式（Phase 5〜7で確立した方式の踏襲。指示§12.5）:
  *   - **順序保証のないMap**（2・3引数版toMap・groupingBy）はキーの表示文字列の**辞書順へ正規化**して
@@ -45,6 +48,11 @@ import java.util.stream.Collectors;
  *   - **2引数版の重複キーは例外型のみ**を契約として照合する
  *     （assertThrows(IllegalStateException.class, …)相当）。実測の例外メッセージは
  *     `OBSERVATION:`接頭辞の観測記録として保存し、厳密比較の対象にしない。
+ *   - **v0.14のUOE契約も例外型名のみ**を照合する。例外が送出されなかった場合は
+ *     `NO_EXCEPTION(...)`形式の文字列で必ず値化し、見逃しを防ぐ。例外メッセージと
+ *     返却実装クラス名（ImmutableCollections.*等）は`OBSERVATION:`行に留める。
+ *   - **unmodifiableList はencounter orderのまま**照合し、unmodifiableSet /
+ *     unmodifiableMap は表示文字列の辞書順へ正規化する（iteration orderは契約にしない）。
  *   - mergeFunctionの呼出し順もOBSERVATION行として記録し、厳密比較の対象にしない。
  *
  * 数値・値の表記合わせ（Simulation Coreのformat表記へ揃える）:
@@ -271,8 +279,57 @@ public class OracleP8 {
         Map<String, Double> sumDoubleByRegion = employeesMergeDemo.stream()
                 .collect(Collectors.toMap(Employee::region, Employee::evaluation, Double::sum));
 
+        // ---- v0.14: unmodifiable系（結果3キー。§5.3） ----
+        List<Employee> unmodifiableList = employees.stream()
+                .collect(Collectors.toUnmodifiableList());
+        Set<String> unmodifiableSet = employees.stream()
+                .map(Employee::region)
+                .collect(Collectors.toUnmodifiableSet());
+        Map<String, String> unmodifiableMapMergeFirst = employeesMergeDemo.stream()
+                .collect(Collectors.toUnmodifiableMap(Employee::region, Employee::name, (a, b) -> a));
+
+        // ---- v0.14: UnsupportedOperationException契約3キー（例外の型名のみを照合する） ----
+        // 例外が送出されなかった場合はNO_EXCEPTION(...)形式で必ず値化し、見逃しを防ぐ
+        String uoeOnListAdd;
+        String uoeOnListAddMessage = "";
+        try {
+            unmodifiableList.add(unmodifiableList.get(0));
+            uoeOnListAdd = "NO_EXCEPTION(size=" + unmodifiableList.size() + ")";
+        } catch (UnsupportedOperationException e) {
+            uoeOnListAdd = e.getClass().getSimpleName();
+            uoeOnListAddMessage = String.valueOf(e.getMessage());
+        }
+        String uoeOnSetAdd;
+        String uoeOnSetAddMessage = "";
+        try {
+            unmodifiableSet.add("新規");
+            uoeOnSetAdd = "NO_EXCEPTION(size=" + unmodifiableSet.size() + ")";
+        } catch (UnsupportedOperationException e) {
+            uoeOnSetAdd = e.getClass().getSimpleName();
+            uoeOnSetAddMessage = String.valueOf(e.getMessage());
+        }
+        String uoeOnMapPut;
+        String uoeOnMapPutMessage = "";
+        try {
+            unmodifiableMapMergeFirst.put("新規", "値");
+            uoeOnMapPut = "NO_EXCEPTION(size=" + unmodifiableMapMergeFirst.size() + ")";
+        } catch (UnsupportedOperationException e) {
+            uoeOnMapPut = e.getClass().getSimpleName();
+            uoeOnMapPutMessage = String.valueOf(e.getMessage());
+        }
+
         // ---- OBSERVATION（厳密比較の対象外。JDKの保証として扱わない） ----
         System.out.println("OBSERVATION: toMap2Arg.exceptionMessage=" + duplicateExceptionMessage);
+        System.out.println("OBSERVATION: uoeOnListAdd.exceptionMessage=" + uoeOnListAddMessage);
+        System.out.println("OBSERVATION: uoeOnSetAdd.exceptionMessage=" + uoeOnSetAddMessage);
+        System.out.println("OBSERVATION: uoeOnMapPut.exceptionMessage=" + uoeOnMapPutMessage);
+        System.out.println("OBSERVATION: unmodifiableList.returnedClass="
+                + unmodifiableList.getClass().getSimpleName());
+        System.out.println("OBSERVATION: unmodifiableSet.returnedClass="
+                + unmodifiableSet.getClass().getSimpleName());
+        System.out.println("OBSERVATION: unmodifiableMap.returnedClass="
+                + unmodifiableMapMergeFirst.getClass().getSimpleName());
+        System.out.println("OBSERVATION: unmodifiableSet.iterationOrder=" + unmodifiableSet);
         List<String> mergeCallOrder = new ArrayList<>();
         Map<String, String> mergeLogged = employeesMergeDemo.stream()
                 .collect(Collectors.toMap(Employee::region, Employee::name, (a, b) -> {
@@ -323,6 +380,18 @@ public class OracleP8 {
                 .append(jsonStrings(normalized(pairs(sumLongByRegion, OracleP8::longLiteral))));
         json.append(",\"toMapSumDoubleByRegion\":")
                 .append(jsonStrings(normalized(pairs(sumDoubleByRegion, OracleP8::doubleLiteral))));
+        // v0.14: unmodifiable系の結果3キー。ListはencounterOrderのまま、Set / Mapは辞書順へ正規化
+        json.append(",\"unmodifiableList\":")
+                .append(jsonStrings(unmodifiableList.stream().map(OracleP8::employeeLabel).toList()));
+        json.append(",\"unmodifiableSet\":")
+                .append(jsonStrings(
+                        normalized(unmodifiableSet.stream().map(OracleP8::stringLabel).toList())));
+        json.append(",\"unmodifiableMapMergeFirst\":")
+                .append(jsonStrings(normalized(pairs(unmodifiableMapMergeFirst, OracleP8::stringLabel))));
+        // v0.14: UOE契約3キー（例外の型名のみ。NO_EXCEPTION(...)で値化して見逃しを防ぐ）
+        json.append(",\"uoeOnListAdd\":").append(jsonString(uoeOnListAdd));
+        json.append(",\"uoeOnSetAdd\":").append(jsonString(uoeOnSetAdd));
+        json.append(",\"uoeOnMapPut\":").append(jsonString(uoeOnMapPut));
         json.append('}');
         System.out.println(json);
     }

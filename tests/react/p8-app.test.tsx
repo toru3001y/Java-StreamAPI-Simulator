@@ -6,8 +6,15 @@ import { App } from '../../src/ui/App'
 import { createApp, type AppInstance } from '../../src/ui/appInstance'
 import { FakeScheduler } from '../helpers'
 import type { Snapshot } from '../../src/domain/engine/snapshot'
-import { P8_TEMPLATES } from '../../src/domain/template/templatesP8'
-import { TO_MAP_NOT_IMPORTABLE_REASON } from '../../src/application/importContract'
+import {
+  P11_TEMPLATE_IDS,
+  P8_TEMPLATES,
+  TO_MAP_OUT_OF_SCOPE_NOTES,
+} from '../../src/domain/template/templatesP8'
+import {
+  TO_MAP_NOT_IMPORTABLE_REASON,
+  UNMODIFIABLE_NOT_IMPORTABLE_REASON,
+} from '../../src/application/importContract'
 import { P8_TEMPLATE_MODES } from '../p8-helpers'
 
 /**
@@ -286,17 +293,23 @@ describe('P8-R04 操作選択・補助説明・比較導線', () => {
     }
   })
 
-  it('P8-R04: 対象外の補助説明（toConcurrentMap / toUnmodifiableMap / key側identity）が表示される', async () => {
+  it('P8-R04: 対象外の補助説明（toConcurrentMap / key側identity）が表示される', async () => {
     const user = userEvent.setup()
     renderApp()
     await openTemplate(user, 'tmpl-collect-tomap-identity')
     const details = screen.getByTestId('details-disclosure')
     const text = details.textContent ?? ''
     expect(text).toContain('toConcurrentMap')
-    expect(text).toContain('toUnmodifiableMap')
     expect(text).toContain('key側のFunction.identity()')
-    // 数値加算mergeはv0.13で実装済みとなり、対象外の説明はもう表示されない
+    // 数値加算mergeはv0.13で、toUnmodifiableMap系はv0.14（Phase 11）で実装済みとなり、
+    // 対象外の説明はもう表示されない（実行できる教材が別途ある）
     expect(text).not.toContain('数値加算merge')
+    expect(text).not.toContain('実行対象外とする（説明のみ）。toUnmodifiableList')
+    // 対象外注記は2件だけになった
+    expect(TO_MAP_OUT_OF_SCOPE_NOTES).toHaveLength(2)
+    for (const note of TO_MAP_OUT_OF_SCOPE_NOTES) {
+      expect(text, note.slice(0, 20)).toContain(note)
+    }
   })
 
   it('P8-R04: sum系templateに数値意味論の補助説明（v0.13 §3）が表示される', async () => {
@@ -372,7 +385,7 @@ describe('P8-R04 操作選択・補助説明・比較導線', () => {
 })
 
 describe('P8-R05 取込UI無効化', () => {
-  it('P8-R05: toMap template選択中はコピー・貼付の両方が無効化され理由が表示される', async () => {
+  it('P8-R05: toMap / unmodifiable template選択中はコピー・貼付の両方が無効化され理由が表示される', async () => {
     const user = userEvent.setup()
     renderApp()
     for (const template of P8_TEMPLATES) {
@@ -381,10 +394,15 @@ describe('P8-R05 取込UI無効化', () => {
       expect(screen.getByTestId('copy-prompt-button'), template.templateId).toBeDisabled()
       expect(screen.getByTestId('import-button'), template.templateId).toBeDisabled()
       expect(screen.getByTestId('import-textarea'), template.templateId).toBeDisabled()
+      // v0.14（Phase 11）でunmodifiable系が加わり、理由文言だけがkindごとに分かれる
       expect(
         screen.getByTestId('import-disabled-reason').textContent,
         template.templateId,
-      ).toContain(TO_MAP_NOT_IMPORTABLE_REASON)
+      ).toContain(
+        P11_TEMPLATE_IDS.includes(template.templateId)
+          ? UNMODIFIABLE_NOT_IMPORTABLE_REASON
+          : TO_MAP_NOT_IMPORTABLE_REASON,
+      )
     }
   })
 

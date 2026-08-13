@@ -23,7 +23,7 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
   })
 
   it('P8-O01(sync): §8.2の10ケース + v0.12 teeing×toMap + v0.13 sum系がすべて照合対象に含まれる', () => {
-    expect(P8_TEMPLATE_MODES).toHaveLength(14)
+    expect(P8_TEMPLATE_MODES).toHaveLength(19)
     for (const key of [
       'identity',
       'identityEmpty',
@@ -50,6 +50,24 @@ describe('P8-O01(sync) expected-p8-from-core.jsonとSimulation Coreの一致', (
       '関西=5_200_000L',
     ])
     expect(expected['toMapSumDoubleByRegion']).toEqual(['中部=3.7', '関東=12.4', '関西=4.0'])
+    // v0.14 unmodifiable系: 結果3キー（Core導出）+ UOE契約3キー（仕様由来リテラル）
+    expect(expected['unmodifiableList']).toEqual([
+      '佐藤（age=35）',
+      '鈴木（age=27）',
+      '高橋（age=42）',
+      '田中（age=29）',
+    ])
+    expect(expected['unmodifiableSet']).toEqual(['"中部"', '"関東"', '"関西"'])
+    expect(expected['unmodifiableMapMergeFirst']).toEqual([
+      '中部="小林"',
+      '関東="伊藤"',
+      '関西="中村"',
+    ])
+    // 同一データ・同一merge（first）のtoMap教材と結果が一致する（違いは不変性だけ）
+    expect(expected['unmodifiableMapMergeFirst']).toEqual(expected['mergeFirst'])
+    for (const key of ['uoeOnListAdd', 'uoeOnSetAdd', 'uoeOnMapPut']) {
+      expect(expected[key], key).toBe('UnsupportedOperationException')
+    }
   })
 
   it('P8-O01(sync): 例外契約は型のみで、メッセージ全文を含まない', () => {
