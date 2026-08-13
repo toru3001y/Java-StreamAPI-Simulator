@@ -282,6 +282,8 @@ merger IDを追加して到達可能にしても**未実装のまま残る**。�
 
 **確定記録**: codexレビュー第2回（2026-08-13）で指摘なし承認。実装コミットは`phase-9`ブランチの
 `89dd241`、Pull Requestは https://github.com/toru3001y/Java-StreamAPI-Simulator/pull/12 。
+PR #12は2026-08-13にmainへマージされた（merge commit **`c994e43`**）。これによりPhase 8必須39 IDは
+すべて完全成功となった。
 
 ## 10. FAILED状態のstopReason（指示§7.2、v0.11 §6.2の3・4）
 
