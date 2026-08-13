@@ -610,6 +610,14 @@ python tools/verify_spec_docx.py \
    Oracle確認とあわせて将来の「unmodifiable系一括Phase」へ持越す（v0.11 §2.2）。
 4. **数値加算merge（`Long::sum` 等）** — オーバーフロー・safe integer範囲・doubleの丸めを整理したうえで
    型付きの数値mergeファミリーとして設計する必要があるため持越す（v0.11 §2.2）。
+
+   **解消（2026-08-13追記、Phase 10）**: 本項はPhase 10（仕様v0.13差分
+   `docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`・ブランチ`phase-10`）で解消した。
+   `sumInt` / `sumLong` / `sumDouble`の3 ID（Java表示は`Integer::sum` / `Long::sum` / `Double::sum`）を
+   型付きファミリーとして追加し、v0.13 §3が求められていた整理（intラップ・safe integer範囲・
+   doubleの丸め）に回答した。教材template 3件（employeesMergeDemo × region × age / salary /
+   evaluation）を追加し、P8-O01へ3キーを追加してJDK 25実測と完全一致。
+   記録は`docs/phase-8-decisions.md` §17。
 5. **`Collectors.toConcurrentMap` 系** — unordered Collectorであり決定的な逐次Step Engineでは
    意味論を正確に可視化できないため対象外のまま（補助説明のみ）。
 6. **key側 `Function.identity()`（Employeeキー）** — recordのequalsによるキー等価と TreeMap不可

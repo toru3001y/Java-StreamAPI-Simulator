@@ -945,7 +945,7 @@ const P7_FIXTURES: readonly FixtureDefinition[] = [
 ]
 
 /**
- * Phase 8 toMap fixture（指示§7.6。standard 8 + emptySource 2 = 10件）。
+ * Phase 8 toMap fixture（指示§7.6、v0.12 §5、v0.13 §4。standard 12 + emptySource 2 = 14件）。
  *
  * duplicate / merge-first / merge-last / merge-concatの4件は**同一データセット
  * （MERGE_DEMO_EMPLOYEES）・同一keyMapper（region）**を用い、mergeの有無と種類による
@@ -961,6 +961,8 @@ const nameKeyMapper = { kind: 'employeeField', field: 'name' } as const
 const identityValueMapper = { kind: 'identity' } as const
 const nameValueMapper = { kind: 'fieldAccess', field: 'name' } as const
 const salaryValueMapper = { kind: 'fieldAccess', field: 'salary' } as const
+const ageValueMapper = { kind: 'fieldAccess', field: 'age' } as const
+const evaluationValueMapper = { kind: 'fieldAccess', field: 'evaluation' } as const
 
 const P8_FIXTURES: readonly FixtureDefinition[] = [
   // ---- 2引数版・全キー一意・value側identity（v0.11 §4の5の必須教材） ----
@@ -1144,6 +1146,55 @@ const P8_FIXTURES: readonly FixtureDefinition[] = [
         },
         right: { kind: 'counting' },
         mergerId: 'RegionIndex::new',
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  // ---- 数値加算merge（sum系。v0.13 §4。merge対比templateと同一データ・同一keyMapper） ----
+  fx(
+    'tmpl-collect-tomap-merge-sumint',
+    'standard',
+    'collect(toMap(region, age, Integer::sum))標準',
+    'valueMapperをageにし、mergeFunctionをInteger::sumにすると、同じキーの値が合計されます。関東は3件衝突するためmergeが2回順次適用され、31 + 38 + 26 = 95になります。期待結果は{関東=95, 関西=33, 中部=30}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: ageValueMapper,
+        mergeFunctionId: 'sumInt',
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-merge-sumlong',
+    'standard',
+    'collect(toMap(region, salary, Long::sum))標準',
+    'valueMapperをsalaryにし、mergeFunctionをLong::sumにすると、地域別の給与合計が得られます。関東は5_000_000L + 6_100_000L + 4_600_000L = 15_700_000Lです。期待結果は{関東=15_700_000L, 関西=5_200_000L, 中部=4_900_000L}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: salaryValueMapper,
+        mergeFunctionId: 'sumLong',
+        mapFactoryId: null,
+      },
+    },
+    MERGE_DEMO_EMPLOYEES,
+  ),
+  fx(
+    'tmpl-collect-tomap-merge-sumdouble',
+    'standard',
+    'collect(toMap(region, evaluation, Double::sum))標準',
+    'valueMapperをevaluationにし、mergeFunctionをDouble::sumにすると、IEEE 754の加算（+演算子そのもの）で合計されます。関東は(4.1 + 4.4) + 3.9 = 12.4です。期待結果は{関東=12.4, 関西=4.0, 中部=3.7}です。',
+    {
+      'slot-collector': {
+        kind: 'toMap',
+        keyMapper: regionKeyMapper,
+        valueMapper: evaluationValueMapper,
+        mergeFunctionId: 'sumDouble',
+        mapFactoryId: null,
       },
     },
     MERGE_DEMO_EMPLOYEES,

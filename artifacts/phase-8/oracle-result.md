@@ -1,6 +1,6 @@
 # P8-O01 JDK 25 Oracle Test 結果
 
-実行日時: 2026-08-13T11:35:20.635Z
+実行日時: 2026-08-13T13:27:40.743Z
 Dockerイメージ: gradle:9.6.1-jdk25
 対象: OracleP8.java
 
@@ -12,8 +12,8 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
 ```
 
 ## 照合結果
-- 期待値（Simulation Core由来）: {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5"}
-- 実測値（JDK 25実行結果）    : {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5"}
+- 期待値（Simulation Core由来）: {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"]}
+- 実測値（JDK 25実行結果）    : {"identity":["佐藤=佐藤（age=35）","田中=田中（age=29）","鈴木=鈴木（age=27）","高橋=高橋（age=42）"],"identityEmpty":[],"duplicateExceptionType":"IllegalStateException","duplicateKey":"関東","duplicateExistingValue":"\"伊藤\"","duplicateIncomingValue":"\"渡辺\"","mergeFirst":["中部=\"小林\"","関東=\"伊藤\"","関西=\"中村\""],"mergeLast":["中部=\"小林\"","関東=\"山本\"","関西=\"中村\""],"mergeConcat":["中部=\"小林\"","関東=\"伊藤, 渡辺, 山本\"","関西=\"中村\""],"groupingByMergeDemo":["中部=[小林（age=30）]","関東=[伊藤（age=31）, 渡辺（age=38）, 山本（age=26）]","関西=[中村（age=33）]"],"treeMapOrdered":["中部=4_800_000L","関東=5_500_000L","関西=4_200_000L"],"treeMapEmpty":[],"groupedToMap":["中部={田中=4_800_000L}","関東={佐藤=5_500_000L, 高橋=7_200_000L}","関西={鈴木=4_200_000L}"],"partitionFalseEmpty":[],"partitionTrue":["佐藤=5_500_000L","田中=4_800_000L","鈴木=4_200_000L","高橋=7_200_000L"],"teeingToMapByRegion":"{中部=\"小林\", 関東=\"伊藤\", 関西=\"中村\"}","teeingToMapCount":"5","toMapSumIntByRegion":["中部=30","関東=95","関西=33"],"toMapSumLongByRegion":["中部=4_900_000L","関東=15_700_000L","関西=5_200_000L"],"toMapSumDoubleByRegion":["中部=3.7","関東=12.4","関西=4.0"]}
 - 比較方式: JSON.parse後のオブジェクトをJSON.stringifyし文字列完全一致で判定（64bit境界値は10進文字列のまま比較し、numberへ変換しない）
 - 判定: PASS（完全一致）
 
@@ -27,7 +27,8 @@ OpenJDK 64-Bit Server VM Temurin-25.0.3+9 (build 25.0.3+9-LTS, mixed mode, shari
 
 ## P8必須Oracle IDの結果（P8-O01・P8-O02）
 - P8-O01: PASS（JDK 25実測値とSimulation Core期待値のJSON完全一致）
-  - 対象は§8.2の10ケース（standard 8 + emptySource 2）の実行結果と、partitioningBy空partitionの追加照合、およびv0.12のteeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new)（teeing branchへのtoMap配置。左branchはTreeMapのため実entry順で厳密比較）
+  - 対象は§8.2の10ケース（standard 8 + emptySource 2）の実行結果と、partitioningBy空partitionの追加照合、v0.12のteeing(toMap(region, name, first, TreeMap::new), counting(), RegionIndex::new)（teeing branchへのtoMap配置。左branchはTreeMapのため実entry順で厳密比較）、およびv0.13の数値加算merge 3件（toMap(region, age, Integer::sum) / (region, salary, Long::sum) / (region, evaluation, Double::sum)）
+  - v0.13のDouble::sumは+演算子の素朴な加算（IEEE 754）でありCoreの加算と同一演算のため厳密照合できる（補償付き加算を使うCollectors.summingDouble系をDoubleStream照合対象外としたP6判断とは非対称。doubleの表記はformatDoubleLiteral / BigDecimal正規化で両側を揃える）
   - 順序保証のないMap（2・3引数版toMap・groupingBy）はキーの表示文字列の辞書順へ**正規化**してから照合する（返却Mapのentry反復順序はJDKの保証対象外であり照合契約にしない。正規化は比較のためだけであり、iteration order保証を意味しない）
   - TreeMap（4引数版）だけは実entry順（中部 → 関東 → 関西）を厳密比較する（順序自体が検証対象）
   - encounter order・mergeの適用順は返却Mapの反復順ではなく**結果値**で検証する（first / lastの結果差〔伊藤 / 山本〕が「(既存値, 新しい値)」の適用順を、concatの連結順〔伊藤, 渡辺, 山本〕が順次適用のencounter orderを実証する）

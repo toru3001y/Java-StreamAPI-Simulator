@@ -4,13 +4,15 @@
 Java Stream API 可視化シミュレーター 仕様書 統合docxビルダー
 
 Draft v0.8 の docx（Pandoc生成）へ、v0.9（Gatherers差分）・v0.10（Phase 6手動連携差分）・
-v0.11（Collectors.toMap差分）のMarkdown差分文書を取り込み、1ファイルで読める統合版 docx を
-生成する。
+v0.11（Collectors.toMap差分）・v0.12（teeing × toMap差分）・v0.13（数値加算merge差分）の
+Markdown差分文書を取り込み、1ファイルで読める統合版 docx を生成する。
 
 方式:
   - v0.8 本文（第1〜25章・付録A〜F）は書き換えない。既存段落・表行への「追加」のみ行う。
-  - 差分本文は第26章（v0.9）・第27章（v0.10）・第28章（v0.11）として末尾へ新設する。
-  - v0.8 側の該当箇所には「→ §26.x / §27.x / §28.x 参照」の追加行（ポインタ）を差し込む。
+  - 差分本文は第26章（v0.9）・第27章（v0.10）・第28章（v0.11）・第29章（v0.12）・
+    第30章（v0.13）として末尾へ新設する。
+  - v0.8 側の該当箇所には「→ §26.x / §27.x / §28.x 参照」の追加行（ポインタ）を差し込む
+    （v0.12 / v0.13はv0.8本文への注記を追加せず、章の追加のみ）。
 
 実装:
   - pandoc / python-docx を使わず、Python標準ライブラリのみで word/document.xml を
@@ -22,16 +24,19 @@ v0.11（Collectors.toMap差分）のMarkdown差分文書を取り込み、1フ�
       --v09   docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md \
       --v10   docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md \
       --v11   docs/Java_Stream_API_Visualization_Spec_v0.11_toMap.md \
+      --v12   docs/Java_Stream_API_Visualization_Spec_v0.12_TeeingToMap.md \
+      --v13   docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md \
       --date-label 2026-08-13 \
-      --out   docs/Java_Stream_API_Visualization_Spec_v0.11.docx
+      --out   docs/Java_Stream_API_Visualization_Spec_v0.13.docx
 
-  --v11 を省略すると v0.10 までの統合（第27章まで）を、さらに --v10 を省略すると
-  v0.9 までの統合（第26章まで）を生成する。--v11 には --v10 が必要。
+  後段の差分（--v13 → --v12 → --v11 → --v10）を省略すると、その手前までの統合を生成する
+  （--v13 には --v12、--v12 には --v11、--v11 には --v10 が必要）。
   出力は決定的で、同じ入力からは常にバイト単位で同一のdocxが得られる。
 
 検証:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
-      --v09 <v0.9.md> --v10 <v0.10.md> --v11 <v0.11.md> --base-sha <v0.8のSHA-256>
+      --v09 <v0.9.md> --v10 <v0.10.md> --v11 <v0.11.md> --v12 <v0.12.md> \
+      --v13 <v0.13.md> --base-sha <v0.8のSHA-256>
 """
 
 import argparse
@@ -590,6 +595,10 @@ class RefResolver:
                       lambda m: prot(m.group(1)), text)
         text = re.sub(r'(?:Draft\s+)?v0\.8\s*(§\d+(?:\.\d+)*)',
                       lambda m: prot(m.group(1)), text)
+        if self.chapter >= 30:
+            # 第30章（v0.13）から導入。第26〜29章の出力を変えないため章番号で限定する
+            text = re.sub(r'v0\.12\s*§(\d+(?:\.\d+)*)',
+                          lambda m: prot('§29.' + m.group(1)), text)
         if self.chapter >= 29:
             # 第29章（v0.12）から導入。第26〜28章の出力を変えないため章番号で限定する
             text = re.sub(r'v0\.11\s*§(\d+(?:\.\d+)*)',
@@ -680,6 +689,14 @@ EXC_V12 = [
     # リポジトリ文書（phase-8-decisions.md）内の節番号であり、本書の節ではない
     ('`docs/phase-8-decisions.md` §9.1のA案の実施',
      '`docs/phase-8-decisions.md` ' + _prot('§9.1') + 'のA案の実施'),
+]
+
+EXC_V13 = [
+    # リポジトリ文書（phase-6-decisions.md）内の節番号であり、本書の節ではない
+    ('`docs/phase-6-decisions.md` §7.3の既存判断の踏襲',
+     '`docs/phase-6-decisions.md` ' + _prot('§7.3') + 'の既存判断の踏襲'),
+    ('（`docs/phase-6-decisions.md` §7.2）の根拠',
+     '（`docs/phase-6-decisions.md` ' + _prot('§7.2') + '）の根拠'),
 ]
 
 # v0.10 §1.2 対応表：第1列は v0.8 の箇所を無印で挙げている
@@ -1128,7 +1145,8 @@ def apply_v11_pointers(s):
 
 # ---------------------------------------------------------------- メタデータ更新
 
-def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=False):
+def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=False,
+               has_v13=False):
     """本書自身の版を表す記述を更新し、読み方の凡例を冒頭へ置く。
 
     ここで書き換えるのは「この文書は何版か」を述べている箇所だけである。
@@ -1149,7 +1167,16 @@ def apply_meta(s, version_label, date_label, has_v10, has_v11=False, has_v12=Fal
     s.replace_text('Draft v0.8 終了', '%s 終了' % version_label)
 
     # 冒頭の読み方（統合版を単独で読むための全体凡例）
-    if has_v12:
+    if has_v13:
+        # v0.13もv0.12と同様にv0.8本文への注記を追加しない（変更は第30章の追加のみ）
+        diff_names = ('、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）、'
+                      'v0.12（teeing × toMap差分）、v0.13（数値加算merge差分）')
+        vers = 'v0.9・v0.10・v0.11'
+        notes = '【v0.9による追加】【v0.10による変更】【v0.11による追加】'
+        chapters = '第26章〜第28章'
+        chapter_map = ('第26章（v0.9）・第27章（v0.10）・第28章（v0.11）・第29章（v0.12）・'
+                       '第30章（v0.13）')
+    elif has_v12:
         # v0.12はv0.8本文への注記を追加しない（変更は第28章の規定の実装確定と第29章の追加のみ）
         # ため、注記の凡例はv0.11までのまま、差分名と章対応だけを広げる
         diff_names = ('、v0.10（Phase 6手動連携差分）、v0.11（Collectors.toMap差分）、'
@@ -1286,6 +1313,17 @@ PREFACE_29 = [
     '§参照は、当該文書内の節番号であり本書の節ではない。',
 ]
 
+PREFACE_30 = [
+    '本章は、v0.13差分文書（`docs/Java_Stream_API_Visualization_Spec_v0.13_NumericMerge.md`）の'
+    '全文を章立てで収録したものである。第1〜25章および付録A〜Fは、先行差分で追加済みの参照行を除き'
+    'Draft v0.8本文を変更しておらず、本章は末尾に追加している。',
+    '本章の記述で「本書」とあるのは本章（v0.13差分）を、「v0.8」とあるのは本書の第1〜25章および'
+    '付録A〜F、「v0.9」とあるのは第26章、「v0.10」とあるのは第27章、「v0.11」とあるのは第28章、'
+    '「v0.12」とあるのは第29章を指す。本章内の節を指す参照は§30.x、v0.9〜v0.12の節を指す参照は'
+    '§26.x〜§29.xで表記している。なおJLS（Java言語仕様）の節番号（JLS 15.18.2等）と、本章内の'
+    '`docs/phase-6-decisions.md`等のリポジトリ文書への§参照は、外部文書の節番号であり本書の節ではない。',
+]
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -1294,6 +1332,7 @@ def main():
     ap.add_argument('--v10')
     ap.add_argument('--v11')
     ap.add_argument('--v12')
+    ap.add_argument('--v13')
     ap.add_argument('--out', required=True)
     ap.add_argument('--version-label', default=None)
     ap.add_argument('--date-label', default='2026-08-12')
@@ -1303,7 +1342,10 @@ def main():
         raise SystemExit('--v11 には --v10 が必要です（v0.11はv0.10までの統合を前提とする）')
     if args.v12 and not args.v11:
         raise SystemExit('--v12 には --v11 が必要です（v0.12はv0.11までの統合を前提とする）')
+    if args.v13 and not args.v12:
+        raise SystemExit('--v13 には --v12 が必要です（v0.13はv0.12までの統合を前提とする）')
     version_label = args.version_label or (
+        'Draft v0.13' if args.v13 else
         'Draft v0.12' if args.v12 else
         'Draft v0.11' if args.v11 else 'Draft v0.10' if args.v10 else 'Draft v0.9')
 
@@ -1321,14 +1363,16 @@ def main():
     report = {}
 
     # A: メタデータ（章追加より前に行う。章本文がv0.8の版表記を引用するため）
-    apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11), bool(args.v12))
+    apply_meta(s, version_label, args.date_label, bool(args.v10), bool(args.v11), bool(args.v12),
+               bool(args.v13))
     report['A メタデータ'] = 7
 
     # 目次
     s.insert_rows_before('>A〜F</w:t>', [['26', 'v0.9差分：Stream.gather / Gatherers']]
                          + ([['27', 'v0.10差分：Phase 6 手動連携']] if args.v10 else [])
                          + ([['28', 'v0.11差分：Collectors.toMap']] if args.v11 else [])
-                         + ([['29', 'v0.12差分：teeing × toMap']] if args.v12 else []))
+                         + ([['29', 'v0.12差分：teeing × toMap']] if args.v12 else [])
+                         + ([['30', 'v0.13差分：数値加算merge']] if args.v13 else []))
     report['A 目次'] = 1
 
     # §1.1 改訂点
@@ -1346,6 +1390,10 @@ def main():
         rev_rows.append(['v0.12', 'teeing branchへのtoMap配置を解消するmerger record'
                                   '（RegionIndex）を追加（第29章）。Phase 8持越しの'
                                   'P8-D18 / P8-D15第6配置を完了'])
+    if args.v13:
+        rev_rows.append(['v0.13', 'toMapのmergeFunctionへ型付き数値加算ファミリー'
+                                  '（Integer::sum / Long::sum / Double::sum）を追加（第30章）。'
+                                  'オーバーフロー・safe integer範囲・doubleの丸めの整理を含む'])
     s.append_rows('教材Pipeline最大ノード数ガイドラインの運用方針', rev_rows)
     report['A §1.1改訂点'] = 1
 
@@ -1403,6 +1451,17 @@ def main():
         unused = [c for c, _ in EXC_V12 if c not in r12.used]
         if unused:
             raise AssertionError('v0.12の未適用例外: %r' % unused)
+
+    if args.v13:
+        md13 = open(args.v13, encoding='utf-8').read()
+        r13 = RefResolver(30, EXC_V13)
+        x30, bid = build_chapter(parse_markdown(md13), 30,
+                                 'v0.13差分：数値加算merge', r13, nums, bid, PREFACE_30)
+        s.insert_chapter_before('付録A. 実装対象メソッド一覧', x30)
+        report['C 第30章'] = 1
+        unused = [c for c, _ in EXC_V13 if c not in r13.used]
+        if unused:
+            raise AssertionError('v0.13の未適用例外: %r' % unused)
 
     numbering = extend_numbering(numbering, nums.created)
     core = re.sub(r'(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)',

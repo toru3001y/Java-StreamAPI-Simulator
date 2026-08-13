@@ -286,7 +286,7 @@ describe('P8-R04 操作選択・補助説明・比較導線', () => {
     }
   })
 
-  it('P8-R04: 対象外の補助説明（toConcurrentMap / toUnmodifiableMap / 数値加算merge / key側identity）が表示される', async () => {
+  it('P8-R04: 対象外の補助説明（toConcurrentMap / toUnmodifiableMap / key側identity）が表示される', async () => {
     const user = userEvent.setup()
     renderApp()
     await openTemplate(user, 'tmpl-collect-tomap-identity')
@@ -294,8 +294,34 @@ describe('P8-R04 操作選択・補助説明・比較導線', () => {
     const text = details.textContent ?? ''
     expect(text).toContain('toConcurrentMap')
     expect(text).toContain('toUnmodifiableMap')
-    expect(text).toContain('Long::sum')
     expect(text).toContain('key側のFunction.identity()')
+    // 数値加算mergeはv0.13で実装済みとなり、対象外の説明はもう表示されない
+    expect(text).not.toContain('数値加算merge')
+  })
+
+  it('P8-R04: sum系templateに数値意味論の補助説明（v0.13 §3）が表示される', async () => {
+    const user = userEvent.setup()
+    renderApp()
+    // sum系共通: +演算子による素朴な加算と型制約
+    await openTemplate(user, 'tmpl-collect-tomap-merge-sumint')
+    const sumIntText = screen.getByTestId('details-disclosure').textContent ?? ''
+    expect(sumIntText).toContain('Integer::sum')
+    expect(sumIntText).toContain('as per the + operator')
+    // int: ラップ意味論はJLS根拠つきの説明のみ（実行対象外のまま）
+    expect(sumIntText).toContain('JLS §15.18.2')
+    // long: safe integer範囲の限定
+    await openTemplate(user, 'tmpl-collect-tomap-merge-sumlong')
+    const sumLongText = screen.getByTestId('details-disclosure').textContent ?? ''
+    expect(sumLongText).toContain('Long::sum')
+    expect(sumLongText).toContain('safe integer範囲')
+    // double: 素朴加算（補償付き加算との違い）
+    await openTemplate(user, 'tmpl-collect-tomap-merge-sumdouble')
+    const sumDoubleText = screen.getByTestId('details-disclosure').textContent ?? ''
+    expect(sumDoubleText).toContain('Double.sum')
+    expect(sumDoubleText).toContain('補償付き加算ではない')
+    expect(sumDoubleText).toContain('summingDouble')
+    // 相互参照導線（groupingByとの対比）
+    expect(sumDoubleText).toContain('1つの合計値へ畳み込む')
   })
 
   it('P8-R04: §7.8の教材規約文言が表示される', async () => {

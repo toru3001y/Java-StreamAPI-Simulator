@@ -127,33 +127,59 @@ export type ToMapValueDsl =
 export const TO_MAP_VALUE_KINDS = ['identity', 'fieldAccess'] as const
 export type ToMapValueKind = (typeof TO_MAP_VALUE_KINDS)[number]
 
-/** toMapのmergeFunction ID（定義済みIDホワイトリスト。v0.11 §8.4） */
-export const TO_MAP_MERGE_IDS = ['first', 'last', 'concat'] as const
+/** toMapのmergeFunction ID（定義済みIDホワイトリスト。v0.11 §8.4、数値加算ファミリーはv0.13 §2） */
+export const TO_MAP_MERGE_IDS = ['first', 'last', 'concat', 'sumInt', 'sumLong', 'sumDouble'] as const
 export type ToMapMergeId = (typeof TO_MAP_MERGE_IDS)[number]
 
+/** mergeFunctionが値型Uへ課す制約（v0.13 §2.2。nullは任意の同一型U） */
+export type ToMapMergeValueWrapper = 'String' | 'Integer' | 'Long' | 'Double'
+
 /**
- * mergeFunction IDごとのJava表示・意味（UI併記）・型制約（v0.11 §8.4、指示§7.4・§7.8）。
+ * mergeFunction IDごとのJava表示・意味（UI併記）・型制約（v0.11 §8.4、v0.13 §2、指示§7.4・§7.8）。
  * 引数順は（Map内の既存値, 新しい値）。根拠は`Map.merge`契約（v0.11 §3.2）。
  */
 export const TO_MAP_MERGE_META: Readonly<
   Record<
     ToMapMergeId,
     {
-      /** Java表示式（ASCII構文のlambda） */
+      /** Java表示式（lambdaまたはメソッド参照。sum系は3引数reduceのcombiner表記と同一） */
       readonly javaExpr: string
       /** UI併記の意味論ラベル（「先勝ち」「後勝ち」だけにしない） */
       readonly meaningLabel: string
-      /** 値型UがStringに限られるか（concatのみtrue） */
-      readonly requiresString: boolean
+      /** 値型Uが特定wrapper型に限られる場合その型名（v0.13 §2.2。nullは任意の同一型U） */
+      readonly requiredValueWrapper: ToMapMergeValueWrapper | null
     }
   >
 > = {
-  first: { javaExpr: '(a, b) -> a', meaningLabel: '既存値を保持（先勝ち）', requiresString: false },
-  last: { javaExpr: '(a, b) -> b', meaningLabel: '新しい値で置換（後勝ち）', requiresString: false },
+  first: {
+    javaExpr: '(a, b) -> a',
+    meaningLabel: '既存値を保持（先勝ち）',
+    requiredValueWrapper: null,
+  },
+  last: {
+    javaExpr: '(a, b) -> b',
+    meaningLabel: '新しい値で置換（後勝ち）',
+    requiredValueWrapper: null,
+  },
   concat: {
     javaExpr: '(s, a) -> s + ", " + a',
     meaningLabel: '既存値と新しい値を文字列連結',
-    requiresString: true,
+    requiredValueWrapper: 'String',
+  },
+  sumInt: {
+    javaExpr: 'Integer::sum',
+    meaningLabel: '既存値と新しい値を加算',
+    requiredValueWrapper: 'Integer',
+  },
+  sumLong: {
+    javaExpr: 'Long::sum',
+    meaningLabel: '既存値と新しい値を加算',
+    requiredValueWrapper: 'Long',
+  },
+  sumDouble: {
+    javaExpr: 'Double::sum',
+    meaningLabel: '既存値と新しい値を加算',
+    requiredValueWrapper: 'Double',
   },
 }
 

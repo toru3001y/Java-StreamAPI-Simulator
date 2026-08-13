@@ -6,15 +6,16 @@
   1. v0.8 docx がバイト単位で不変であること
   2. ZIP/XML整合（全part存在・XMLとしてパース可能・styleとnumIdが定義済み）
   3. 差分の限定（v0.8の本文要素が削除されていないこと・変更要素が想定どおりであること）
-  4. 転記の網羅性（差分mdの全ブロックが第26/27/28章に存在すること）
+  4. 転記の網羅性（差分mdの全ブロックが第26〜30章に存在すること）
   5. §参照の健全性（全参照が実在する見出しを指すこと。リポジトリ文書への§参照は文脈除外）
 
 使い方:
   python tools/verify_spec_docx.py --base <v0.8.docx> --out <統合.docx> \
-      --v09 <v0.9.md> [--v10 <v0.10.md>] [--v11 <v0.11.md>] [--dump <章本文の書き出し先>]
+      --v09 <v0.9.md> [--v10 <v0.10.md>] [--v11 <v0.11.md>] [--v12 <v0.12.md>] \
+      [--v13 <v0.13.md>] [--dump <章本文の書き出し先>]
 
-  --v11 には --v10 が必要（ビルダーと同じ依存関係。v0.11統合docxは第27章を含むため、
-  --v10 を省略すると第27章の転記検証が抜けたまま合格し得る）。
+  後段の差分には手前の差分が必要（ビルダーと同じ依存関係。--v13 には --v12、--v12 には
+  --v11、--v11 には --v10。省略すると該当章の転記検証が抜けたまま合格し得る）。
 """
 
 import argparse
@@ -28,7 +29,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
 from build_spec_docx import (parse_markdown, RefResolver, EXC_V09, EXC_V10, EXC_V11,
-                             EXC_V12, V10_MAPPING_HEADER, tokenize_inline)
+                             EXC_V12, EXC_V13, V10_MAPPING_HEADER, tokenize_inline)
 
 W = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 FAILS = []
@@ -118,6 +119,7 @@ def main():
     ap.add_argument('--v10')
     ap.add_argument('--v11')
     ap.add_argument('--v12')
+    ap.add_argument('--v13')
     ap.add_argument('--dump')
     ap.add_argument('--base-sha')
     args = ap.parse_args()
@@ -126,6 +128,8 @@ def main():
         raise SystemExit('--v11 には --v10 が必要です（省略すると第27章の転記検証が抜ける）')
     if args.v12 and not args.v11:
         raise SystemExit('--v12 には --v11 が必要です（省略すると第28章の転記検証が抜ける）')
+    if args.v13 and not args.v12:
+        raise SystemExit('--v13 には --v12 が必要です（省略すると第29章の転記検証が抜ける）')
 
     if args.v10:
         # §20 Phase表へのPhase 7行追加はapply_v10_pointers（--v10指定時）だけが行う。
@@ -216,13 +220,14 @@ def main():
     ch_start = {}
     for idx, rec in enumerate(texts):
         if rec[0] == 'p' and rec[2] == 'Heading1':
-            if re.match(r'^(26|27|28|29)\. ', rec[1]):
+            if re.match(r'^(26|27|28|29|30)\. ', rec[1]):
                 ch_start[rec[1][:2]] = idx
             elif rec[1].startswith('付録A'):
                 ch_start['付録'] = idx
-    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11, '29': EXC_V12}
-    next_ch = {'26': '27', '27': '28', '28': '29', '29': None}
-    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11), ('29', args.v12)):
+    exc_map = {'26': EXC_V09, '27': EXC_V10, '28': EXC_V11, '29': EXC_V12, '30': EXC_V13}
+    next_ch = {'26': '27', '27': '28', '28': '29', '29': '30', '30': None}
+    for ch, mdpath in (('26', args.v09), ('27', args.v10), ('28', args.v11), ('29', args.v12),
+                       ('30', args.v13)):
         if not mdpath:
             continue
         start = ch_start[ch]

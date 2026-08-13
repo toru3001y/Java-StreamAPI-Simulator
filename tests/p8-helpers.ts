@@ -19,7 +19,7 @@ import { localCollectTemplate } from './p5-helpers'
 
 export type CollectorContext = Extract<OperationContextView, { kind: 'collector' }>
 
-/** P8 template × supportedModeの全組合せ（11件。指示§8.2の10ケース + v0.12 teeing×toMap） */
+/** P8 template × supportedModeの全組合せ（14件。指示§8.2の10ケース + v0.12 teeing×toMap + v0.13 sum系3件） */
 export const P8_TEMPLATE_MODES: readonly { templateId: string; mode: ScenarioMode }[] =
   P8_TEMPLATES.flatMap((t) => t.supportedModes.map((mode) => ({ templateId: t.templateId, mode })))
 
@@ -108,6 +108,8 @@ export const REGION_KEY = { kind: 'employeeField', field: 'region' } as const
 export const NAME_KEY = { kind: 'employeeField', field: 'name' } as const
 export const NAME_VALUE = { kind: 'fieldAccess', field: 'name' } as const
 export const SALARY_VALUE = { kind: 'fieldAccess', field: 'salary' } as const
+export const AGE_VALUE = { kind: 'fieldAccess', field: 'age' } as const
+export const EVALUATION_VALUE = { kind: 'fieldAccess', field: 'evaluation' } as const
 export const IDENTITY_VALUE = { kind: 'identity' } as const
 
 /** 2引数版toMap（重複キーで実行失敗する） */
