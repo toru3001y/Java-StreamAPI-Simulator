@@ -2,7 +2,7 @@
 
 ## 1. 版管理（Draft v0.8 §1.2の変更管理に基づく）
 
-- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕・第3回指摘2件〔中2〕を反映）
+- 版番号: **v0.11**（第7版ドラフト。codexレビュー第1回指摘9件〔高4・中4・低1〕・第2回指摘3件〔中2・低1〕・第3回指摘2件〔中2〕・第4回指摘1件〔低1〕を反映。**第4回で承認**）
 - 本書の構成: **v0.11 = Draft v0.8（`docs/Java_Stream_API_Visualization_Spec_Draft_v0.8.docx`、無編集のまま保持）+ v0.9差分（`docs/Java_Stream_API_Visualization_Spec_v0.9_Gatherers.md`、無編集のまま保持）+ v0.10差分（`docs/Java_Stream_API_Visualization_Spec_v0.10_Phase6_ManualLink.md`、無編集のまま保持）+ 本差分文書**。全文転記は行わない。
 - 変更理由: Draft v0.8 付録A.4の対象外として未実装だった`Collectors.toMap`を教材対象へ追加するため（Phase 8）。toMapは「groupingBy = 1キー多値」に対する「toMap = 1キー1値。衝突はmergeか例外」という対比を担う、Collector教材の欠落部分である。
 - 作成日: 2026-08-13
@@ -115,7 +115,7 @@ V newValue = (oldValue == null) ? value :
 | 既存kind | toMapでの用途 |
 |---|---|
 | `CONTAINER_CREATED` | Mapコンテナ生成の確定。**root配置かつ4引数版（supplier指定あり）のtoMapに限り**`INITIAL`直後に1回発行する。現行の発行対象は3引数collectとtoCollectionのみであり（supplier可視化が教材ポイントの場合に限る判断。`docs/phase-5-decisions.md` §14.3）、toMap 4引数版の`TreeMap::new`はこの前例に該当する。2・3引数版はtoList / toSet / groupingByのrootコンテナと同様に**発行しない**（Map実装型は無保証〔§3.1〕でありsupplierを教材化しない）。downstream配置時は§6.3の配置別規則 |
-| `CONTAINER_UPDATED` | Mapへの蓄積更新の確定（新規put / merge結果による置換の両方。新規か置換かはcontextで区別。元から汎用のコンテナ更新kindであり意味拡張にならない） |
+| `CONTAINER_UPDATED` | Mapへの蓄積更新の確定（新規put / merge結果による置換の両方。新規か置換かはcontextで区別。元から汎用のコンテナ更新kindであり意味拡張にならない）。**teeing branch rootでは§6.3の排他規則により`TEE_BRANCH_ACCUMULATED`がMap更新を兼ねる** |
 
 `CLASSIFIER_EVALUATED`は**再利用しない**。Phase 5判断記録が「`CLASSIFIER_EVALUATED`はgroupingBy専用」と確定しており（`docs/phase-5-decisions.md` §14.2。partitioningByが同理由で`PREDICATE_EVALUATED`を再利用した）、toMapの引数はclassifierではなくkeyMapperであるため、既存kindの意味を拡張しない。同じ理由でvalueMapper評価にもmapping系専用の`MAPPING_APPLIED`を再利用せず、いずれも新設する。
 
@@ -126,7 +126,7 @@ V newValue = (oldValue == null) ? value :
 | `TO_MAP_KEY_EVALUATED` | keyMapper評価の確定（キーの確定） |
 | `TO_MAP_VALUE_EVALUATED` | valueMapper評価の確定（値の確定） |
 | `DUPLICATE_KEY_DETECTED` | 重複キー検出の確定。キー・既存値・新しい値をcontextで表示する。2引数版（この後失敗）・3引数版（この後merge）で共通 |
-| `MERGE_FUNCTION_APPLIED` | mergeFunction適用結果の**計算**確定（Map更新は含まない。更新は後続の`CONTAINER_UPDATED`。既存のMAPPING_APPLIED / MAPPED_EMITTED分離と同じ原則） |
+| `MERGE_FUNCTION_APPLIED` | mergeFunction適用結果の**計算**確定（Map更新は含まない。更新は後続の`CONTAINER_UPDATED`。teeing branch rootでは§6.3の排他規則により`TEE_BRANCH_ACCUMULATED`がMap更新を兼ねる。既存のMAPPING_APPLIED / MAPPED_EMITTED分離と同じ原則） |
 | `COLLECT_FAILED` | 教材上想定された実行失敗の確定。**timelineの最終snapshot**となる（§6.2） |
 
 ### 6.2 実行失敗契約（新設。v0.8 §12の完了契約への追加）
